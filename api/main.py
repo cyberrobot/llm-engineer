@@ -4,10 +4,19 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from openai import OpenAI
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
 
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
@@ -25,7 +34,7 @@ class ChatResponse(BaseModel):
 def health_check():
     return {"status": "healthy"}
 
-@app.post("/v1/chat/completions", response_model=ChatResponse)
+@app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
     try:
         response = client.responses.create(

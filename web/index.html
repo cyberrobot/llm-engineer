@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+  <head>
+    <title>LLM Chat</title>
+  </head>
+  <body>
+    <h2>LLM Chat</h2>
+
+    <textarea
+      id="input"
+      rows="4"
+      cols="50"
+      placeholder="Type your message..."
+    ></textarea>
+    <br /><br />
+    <button onclick="sendMessage()">Send</button>
+
+    <h3>Response:</h3>
+    <pre id="output"></pre>
+
+    <script>
+      async function sendMessage() {
+        document.getElementById('output').textContent = 'Thinking...';
+        const input = document.getElementById('input').value;
+
+        const res = await fetch('http://127.0.0.1:8000/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ message: input }),
+        });
+
+        const data = await res.json();
+
+        document.getElementById('output').textContent = data.reply;
+      }
+    </script>
+  </body>
+</html>
