@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from openai import OpenAI
 from fastapi.middleware.cors import CORSMiddleware
+from api.routes import ingest
 
 load_dotenv()
 
@@ -17,6 +18,8 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
+
+app.include_router(ingest.router)
 
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
