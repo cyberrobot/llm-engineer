@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 import uuid
 
@@ -13,6 +13,23 @@ class IngestRequest(BaseModel):
     
 def chunk_text(text: str, size: int = 500):
     return [text[i:i+size] for i in range(0, len(text), size)]
+
+def search_chunks(query: str, limit: int = 3):
+    results = []
+
+    query_lower = query.lower()
+
+    for chunk in CHUNKS:
+        text_lower = chunk["text"].lower()
+
+        score = sum(1 for word in query_lower.split() if word in text_lower)
+
+        if score > 0:
+            results.append((score, chunk))
+
+    results.sort(key=lambda x: x[0], reverse=True)
+
+    return [chunk for _, chunk in results[:limit]]
 
 @router.post("/ingest")
 def ingest(request: IngestRequest):
@@ -40,3 +57,12 @@ def ingest(request: IngestRequest):
 @router.get("/chunks")
 def get_chunks():
     return CHUNKS
+
+@router.get("/search")
+def search(query: str = Query(..., description="Search query")):
+    results = search_chunks(query)
+
+    return {
+        "query": query,
+        "results": results
+    }
