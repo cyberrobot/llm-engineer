@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 import uuid
+from api.services.embeddings import get_embedding, cosine_similarity
 
 router = APIRouter()
 
@@ -15,17 +16,12 @@ def chunk_text(text: str, size: int = 500):
     return [text[i:i+size] for i in range(0, len(text), size)]
 
 def search_chunks(query: str, limit: int = 3):
+    query_embedding = get_embedding(query)
     results = []
 
-    query_lower = query.lower()
-
     for chunk in CHUNKS:
-        text_lower = chunk["text"].lower()
-
-        score = sum(1 for word in query_lower.split() if word in text_lower)
-
-        if score > 0:
-            results.append((score, chunk))
+        score = cosine_similarity(query_embedding, chunk["embedding"])
+        results.append((score, chunk))
 
     results.sort(key=lambda x: x[0], reverse=True)
 
@@ -47,6 +43,7 @@ def ingest(request: IngestRequest):
             "id": str(uuid.uuid4()),
             "doc_id": doc_id,
             "text": chunk,
+            "embedding": get_embedding(chunk)
         })
 
     return {
