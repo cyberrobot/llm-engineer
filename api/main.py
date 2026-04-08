@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from openai import OpenAI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routes import ingest
+from api.routes import rag
 
 load_dotenv()
 
@@ -20,6 +21,7 @@ app.add_middleware(
 )
 
 app.include_router(ingest.router)
+app.include_router(rag.router)
 
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
