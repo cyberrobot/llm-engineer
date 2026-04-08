@@ -2,11 +2,11 @@ import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from openai import OpenAI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routes import ingest
-from api.routes import rag
+from openai import OpenAI
+from pydantic import BaseModel
+
+from api.routes import ingest, rag
 
 load_dotenv()
 
@@ -29,27 +29,31 @@ if not api_key:
 
 client = OpenAI(api_key=api_key)
 
+
 class ChatRequest(BaseModel):
     message: str
+
 
 class ChatResponse(BaseModel):
     reply: str
 
+
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
     try:
         response = client.responses.create(
             model="gpt-5.4-nano",
-            input=f"You are a helpful assistant. Reply clearly and briefly.\n\nUser: {request.message}"
+            input=f"You are a helpful assistant. Reply clearly and briefly.\n\nUser: {request.message}",
         )
 
         reply = response.output_text.strip()
 
         return ChatResponse(reply=reply)
-    
+
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

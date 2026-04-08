@@ -1,7 +1,8 @@
-from api.services.embeddings import get_embedding, cosine_similarity
+from api.services.embeddings import cosine_similarity, get_embedding
 
 DOCUMENTS = []
 CHUNKS = []
+
 
 def search_chunks(query: str, limit: int = 3):
     query_embedding = get_embedding(query)
