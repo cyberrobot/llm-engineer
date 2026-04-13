@@ -11,14 +11,14 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 def ask_rag(question: str, chunks: list[dict]) -> str:
     context = "\n\n".join([f"[Source: {chunk['id']}]\n{chunk['text']}" for chunk in chunks])
 
-    prompt = f"""You are a helpful assistant that answers questions based on the provided context. Use the following context to answer the question. If the answer is not in the context, say you don't know.
+    prompt = f"""You are a strict assistant answering only from provided context.
 
 Rules:
 - Always use the provided context to answer the question.
 - If the answer is not supported by the context, say: "I don't know based on the provided documents."
 - Be concise and clear in your answer.
 - Do not make up information that is not in the context.
-- Mention source ids when relevant.
+- Cite sources using [Source: id]
 
 Context:
 {context}

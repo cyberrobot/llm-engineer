@@ -13,20 +13,28 @@ class RagChatRequest(BaseModel):
 
 class RagChatResponse(BaseModel):
     reply: str
-    sources: list[str]
+    sources: list[dict]
 
 
 @router.post("/rag-chat", response_model=RagChatResponse)
 def rag_chat(request: RagChatRequest):
     try:
-        chunks = search_chunks(request.message)
-        if not chunks:
+        results = search_chunks(request.message)
+        chunks = [chunk for _, chunk in results]
+        if not results:
             return RagChatResponse(
                 reply="I could not find relevant information in the provided documents.", sources=[]
             )
         reply = ask_rag(request.message, chunks)
 
-        sources = [chunk["id"] for chunk in chunks]
+        sources = [
+            {
+                "id": chunk["id"],
+                "score": results[0][0],
+                "text": chunk["text"][:150],
+            }
+            for chunk in chunks
+        ]
 
         return RagChatResponse(reply=reply, sources=sources)
 
