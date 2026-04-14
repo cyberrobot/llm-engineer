@@ -9,6 +9,7 @@ router = APIRouter()
 
 class RagChatRequest(BaseModel):
     message: str
+    user_role: str = "user"
 
 
 class RagChatResponse(BaseModel):
@@ -19,7 +20,7 @@ class RagChatResponse(BaseModel):
 @router.post("/rag-chat", response_model=RagChatResponse)
 def rag_chat(request: RagChatRequest):
     try:
-        results = search_chunks(request.message)
+        results = search_chunks(request.message, request.user_role, limit=3)
         chunks = [chunk for _, chunk in results]
         if not results:
             return RagChatResponse(

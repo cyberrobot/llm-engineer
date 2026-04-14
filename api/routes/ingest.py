@@ -12,6 +12,7 @@ router = APIRouter()
 class IngestRequest(BaseModel):
     text: str
     doc_type: str = "general"
+    access_roles: list[str] = ["user"]
 
 
 def chunk_text(text: str, size: int = 500):
@@ -26,6 +27,7 @@ def ingest(request: IngestRequest):
         {
             "id": doc_id,
             "type": request.doc_type,
+            "access_roles": request.access_roles,
         }
     )
 
@@ -38,6 +40,7 @@ def ingest(request: IngestRequest):
                 "doc_id": doc_id,
                 "text": chunk,
                 "embedding": get_embedding(chunk),
+                "access_roles": request.access_roles,
             }
         )
 

@@ -7,6 +7,7 @@ CHUNKS = []
 
 def search_chunks(
     query: str,
+    user_role: str,
     limit: int = CHUNKS_SEARCH_RESULTS_LIMIT,
     threshold: float = CHUNKS_SIMILARITY_THRESHOLD,
 ):
@@ -14,6 +15,8 @@ def search_chunks(
     results = []
 
     for chunk in CHUNKS:
+        if user_role not in chunk["access_roles"]:
+            continue
         score = cosine_similarity(query_embedding, chunk["embedding"])
 
         if score >= threshold:
