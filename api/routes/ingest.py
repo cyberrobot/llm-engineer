@@ -52,8 +52,13 @@ def get_chunks():
     return CHUNKS
 
 
-@router.get("/search")
-def search(query: str = Query(..., description="Search query")):
-    results = search_chunks(query)
+class SearchRequest(BaseModel):
+    query: str = Query(..., description="Search query")
+    access_role: str = Query("user", description="Access role for filtering results")
 
-    return {"query": query, "results": results}
+
+@router.get("/search")
+def search(request: SearchRequest):
+    results = search_chunks(request.query, request.access_role)
+
+    return {"query": request.query, "results": results}
