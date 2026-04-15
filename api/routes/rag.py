@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from api.services.audit import log_rag_event
 from api.services.llm import ask_rag
 from api.services.retrieval import search_chunks
 
@@ -27,6 +28,13 @@ def rag_chat(request: RagChatRequest):
                 reply="I could not find relevant information in the provided documents.", sources=[]
             )
         reply = ask_rag(request.message, chunks)
+
+        log_rag_event(
+            user_role=request.user_role,
+            question=request.message,
+            results=results,
+            reply=reply,
+        )
 
         sources = [
             {
