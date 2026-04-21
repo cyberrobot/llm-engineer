@@ -4,7 +4,8 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from api.services.embeddings import get_embedding
-from api.services.retrieval import CHUNKS, DOCUMENTS, search_chunks
+from api.services.retrieval import search_chunks
+from api.services.storage import get_all_chunks, save_chunk, save_document
 
 router = APIRouter()
 
@@ -23,25 +24,17 @@ def chunk_text(text: str, size: int = 500):
 def ingest(request: IngestRequest):
     doc_id = str(uuid.uuid4())
 
-    DOCUMENTS.append(
-        {
-            "id": doc_id,
-            "type": request.doc_type,
-            "access_roles": request.access_roles,
-        }
-    )
+    save_document(doc_id, request.doc_type, request.access_roles)
 
     chunks = chunk_text(request.text)
 
     for chunk in chunks:
-        CHUNKS.append(
-            {
-                "id": str(uuid.uuid4()),
-                "doc_id": doc_id,
-                "text": chunk,
-                "embedding": get_embedding(chunk),
-                "access_roles": request.access_roles,
-            }
+        save_chunk(
+            chunk_id=str(uuid.uuid4()),
+            doc_id=doc_id,
+            text=chunk,
+            embedding=get_embedding(chunk),
+            access_roles=request.access_roles,
         )
 
     return {"doc_id": doc_id, "chunks_created": len(chunks)}
@@ -49,7 +42,7 @@ def ingest(request: IngestRequest):
 
 @router.get("/chunks")
 def get_chunks():
-    return CHUNKS
+    return get_all_chunks()
 
 
 class SearchRequest(BaseModel):

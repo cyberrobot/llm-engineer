@@ -1,8 +1,6 @@
 from api.services.embeddings import cosine_similarity, get_embedding
 from api.services.settings import CHUNKS_SEARCH_RESULTS_LIMIT, CHUNKS_SIMILARITY_THRESHOLD
-
-DOCUMENTS = []
-CHUNKS = []
+from api.services.storage import get_all_chunks
 
 
 def search_chunks(
@@ -12,9 +10,11 @@ def search_chunks(
     threshold: float = CHUNKS_SIMILARITY_THRESHOLD,
 ):
     query_embedding = get_embedding(query)
+    chunks = get_all_chunks()
+
     results = []
 
-    for chunk in CHUNKS:
+    for chunk in chunks:
         if user_role not in chunk["access_roles"]:
             continue
         score = cosine_similarity(query_embedding, chunk["embedding"])

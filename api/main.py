@@ -6,10 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
 
+from api.db.database import init_db
 from api.routes import audit, ingest, rag
 
 load_dotenv()
 
+init_db()
 app = FastAPI()
 
 app.add_middleware(
