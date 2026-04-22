@@ -30,3 +30,8 @@ Question:
     response = client.responses.create(model="gpt-5.4-nano", input=prompt)
 
     return response.output_text.strip()
+
+
+def estimate_tokens(text: str) -> int:
+    # Simple estimation: 1 token ~ 4 characters
+    return len(text) // 4

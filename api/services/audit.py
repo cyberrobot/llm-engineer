@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from api.db.database import get_connection
 
 
-def log_rag_event(user_role: str, question: str, results: list[tuple], reply: str):
+def log_rag_event(user_role: str, question: str, results: list[tuple], reply: str, metrics: dict):
     retrieved_chunks = [
         {
             "id": chunk["id"],
@@ -21,10 +21,17 @@ def log_rag_event(user_role: str, question: str, results: list[tuple], reply: st
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO audit_logs (timestamp, user_role, question, reply, retrieved_chunks)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO audit_logs (timestamp, user_role, question, reply, retrieved_chunks, metrics)
+                VALUES (%s, %s, %s, %s, %s, %s)
             """,
-                (timestamp, user_role, question, reply, json.dumps(retrieved_chunks)),
+                (
+                    timestamp,
+                    user_role,
+                    question,
+                    reply,
+                    json.dumps(retrieved_chunks),
+                    json.dumps(metrics),
+                ),
             )
 
 
@@ -33,7 +40,7 @@ def get_audit_logs():
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, timestamp, user_role, question, reply, retrieved_chunks 
+                SELECT id, timestamp, user_role, question, reply, retrieved_chunks, metrics 
                 FROM audit_logs 
                 ORDER BY id DESC
                 """
@@ -47,6 +54,7 @@ def get_audit_logs():
                     "question": row[3],
                     "reply": row[4],
                     "retrieved_chunks": row[5],
+                    "metrics": row[6],
                 }
                 for row in rows
             ]
