@@ -5,7 +5,11 @@ from pydantic import BaseModel
 
 from api.services.embeddings import get_embedding
 from api.services.retrieval import search_chunks
-from api.services.storage import get_all_chunks, save_chunk, save_document
+from api.services.storage import (
+    list_all_chunks,
+    save_chunk,
+    save_document,
+)
 
 router = APIRouter()
 
@@ -42,7 +46,7 @@ def ingest(request: IngestRequest):
 
 @router.get("/chunks")
 def get_chunks():
-    return get_all_chunks()
+    return list_all_chunks()
 
 
 class SearchRequest(BaseModel):

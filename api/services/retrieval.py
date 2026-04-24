@@ -1,31 +1,18 @@
-from api.services.embeddings import cosine_similarity, get_embedding
-from api.services.settings import CHUNKS_SEARCH_RESULTS_LIMIT, CHUNKS_SIMILARITY_THRESHOLD
-from api.services.storage import get_all_chunks
+from api.services.embeddings import get_embedding
+from api.services.settings import CHUNKS_MAX_DISTANCE, CHUNKS_SEARCH_RESULTS_LIMIT
+from api.services.storage import search_chunks_by_embedding
 
 
 def search_chunks(
     query: str,
     user_role: str,
     limit: int = CHUNKS_SEARCH_RESULTS_LIMIT,
-    threshold: float = CHUNKS_SIMILARITY_THRESHOLD,
+    max_distance: float = CHUNKS_MAX_DISTANCE,
 ):
     query_embedding = get_embedding(query)
-    chunks = get_all_chunks()
+    top_results = search_chunks_by_embedding(query_embedding, user_role, max_distance, limit)
 
-    results = []
-
-    for chunk in chunks:
-        if user_role not in chunk["access_roles"]:
-            continue
-        score = cosine_similarity(query_embedding, chunk["embedding"])
-
-        if score >= threshold:
-            results.append((score, chunk))
-
-    results.sort(key=lambda x: x[0], reverse=True)
-    top_results = results[:limit]
-
-    if not top_results or top_results[0][0] < threshold:
+    if not top_results or top_results[0]["distance"] > max_distance:
         return []
 
     return top_results

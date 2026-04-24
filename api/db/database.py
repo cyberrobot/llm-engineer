@@ -30,7 +30,7 @@ def init_db():
                     id TEXT PRIMARY KEY,
                     doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
                     text TEXT NOT NULL,
-                    embedding JSONB NOT NULL,
+                    embedding VECTOR(1536),
                     access_roles JSONB NOT NULL
                 )
             """)

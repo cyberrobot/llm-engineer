@@ -4,15 +4,15 @@ from datetime import datetime, timezone
 from api.db.database import get_connection
 
 
-def log_rag_event(user_role: str, question: str, results: list[tuple], reply: str, metrics: dict):
+def log_rag_event(user_role: str, question: str, results: list[dict], reply: str, metrics: dict):
     retrieved_chunks = [
         {
             "id": chunk["id"],
             "doc_id": chunk["doc_id"],
-            "score": score,
+            "distance": chunk["distance"],
             "text_snippet": chunk["text"][:150],
         }
-        for score, chunk in results
+        for chunk in results
     ]
 
     timestamp = datetime.now(timezone.utc).isoformat()

@@ -26,13 +26,12 @@ def rag_chat(request: RagChatRequest):
         start_time = time.time()
         results = search_chunks(request.message, request.user_role, limit=3)
         retrieval_time = time.time() - start_time
-        chunks = [chunk for _, chunk in results]
         if not results:
             return RagChatResponse(
                 reply="I could not find relevant information in the provided documents.", sources=[]
             )
         llm_start_time = time.time()
-        reply = ask_rag(request.message, chunks)
+        reply = ask_rag(request.message, results)
         input_tokens = estimate_tokens(request.message)
         output_tokens = estimate_tokens(reply)
         llm_time = time.time() - llm_start_time
@@ -55,10 +54,10 @@ def rag_chat(request: RagChatRequest):
         sources = [
             {
                 "id": chunk["id"],
-                "score": results[0][0],
+                "distance": chunk["distance"],
                 "text": chunk["text"][:150],
             }
-            for chunk in chunks
+            for chunk in results
         ]
 
         return RagChatResponse(reply=reply, sources=sources)
