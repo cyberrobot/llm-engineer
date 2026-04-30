@@ -1,7 +1,11 @@
 import json
 
 from api.db.database import get_connection
-from api.services.settings import CHUNKS_SEARCH_RESULTS_LIMIT
+from api.services.settings import (
+    CHUNKS_SEARCH_RESULTS_LIMIT,
+    WEIGHT_EMBEDDING_SIMILARITY,
+    WEIGHT_KEYWORD_MATCH,
+)
 
 
 def save_document(doc_id: str, doc_type: str, access_roles: list[str]):
@@ -32,27 +36,34 @@ def save_chunk(
 
 def search_chunks_by_embedding(
     query_embedding: list[float],
+    keyword_query: str,
     access_role: str,
-    max_distance: float,
     limit: int = CHUNKS_SEARCH_RESULTS_LIMIT,
+    weight_keyword_match: float = WEIGHT_KEYWORD_MATCH,
+    weight_embedding_similarity: float = WEIGHT_EMBEDDING_SIMILARITY,
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, doc_id, text, embedding <=> %s::vector AS distance, access_roles 
-                FROM chunks
-                WHERE access_roles::jsonb ? %s
-                  AND embedding <=> %s::vector <= %s
-                ORDER BY embedding <=> %s::vector
+                WITH ranked_chunks AS (
+                  SELECT id, doc_id, text, embedding <=> %s::vector AS distance, access_roles,
+                    (text ILIKE '%%' || %s || '%%')::int AS keyword_match
+                  FROM chunks
+                  WHERE access_roles::jsonb ? %s
+                )
+                SELECT id, doc_id, text, distance, access_roles, keyword_match,
+                    ((1 - distance) * %s + keyword_match * %s) AS hybrid_score
+                FROM ranked_chunks
+                ORDER BY hybrid_score DESC
                 LIMIT %s
             """,
                 (
                     query_embedding,
+                    keyword_query,
                     access_role,
-                    query_embedding,
-                    max_distance,
-                    query_embedding,
+                    weight_embedding_similarity,
+                    weight_keyword_match,
                     limit,
                 ),
             )
@@ -64,6 +75,8 @@ def search_chunks_by_embedding(
                     "text": row[2],
                     "distance": row[3],
                     "access_roles": row[4],
+                    "keyword_match": row[5],
+                    "hybrid_score": row[6],
                 }
                 for row in rows
             ]

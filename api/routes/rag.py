@@ -12,6 +12,7 @@ router = APIRouter()
 
 class RagChatRequest(BaseModel):
     message: str
+    keyword_query: str
     user_role: str = "user"
 
 
@@ -24,7 +25,7 @@ class RagChatResponse(BaseModel):
 def rag_chat(request: RagChatRequest):
     try:
         start_time = time.time()
-        results = search_chunks(request.message, request.user_role, limit=3)
+        results = search_chunks(request.message, request.keyword_query, request.user_role, limit=3)
         retrieval_time = time.time() - start_time
         if not results:
             return RagChatResponse(
@@ -54,8 +55,10 @@ def rag_chat(request: RagChatRequest):
         sources = [
             {
                 "id": chunk["id"],
-                "distance": chunk["distance"],
                 "text": chunk["text"][:150],
+                "distance": chunk["distance"],
+                "keyword_match": chunk["keyword_match"],
+                "hybrid_score": chunk["hybrid_score"],
             }
             for chunk in results
         ]

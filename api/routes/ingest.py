@@ -4,7 +4,6 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from api.services.embeddings import get_embedding
-from api.services.retrieval import search_chunks
 from api.services.storage import (
     list_all_chunks,
     save_chunk,
@@ -52,10 +51,3 @@ def get_chunks():
 class SearchRequest(BaseModel):
     query: str = Query(..., description="Search query")
     access_role: str = Query("user", description="Access role for filtering results")
-
-
-@router.get("/search")
-def search(request: SearchRequest):
-    results = search_chunks(request.query, request.access_role)
-
-    return {"query": request.query, "results": results}

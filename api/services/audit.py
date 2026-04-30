@@ -9,8 +9,10 @@ def log_rag_event(user_role: str, question: str, results: list[dict], reply: str
         {
             "id": chunk["id"],
             "doc_id": chunk["doc_id"],
-            "distance": chunk["distance"],
             "text_snippet": chunk["text"][:150],
+            "distance": chunk["distance"],
+            "keyword_match": chunk["keyword_match"],
+            "hybrid_score": chunk["hybrid_score"],
         }
         for chunk in results
     ]
