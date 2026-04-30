@@ -13,7 +13,7 @@ router = APIRouter()
 
 class RagChatRequest(BaseModel):
     message: str
-    keyword_query: str
+    keyword_query: str = ""
     user_role: str = "user"
 
 
