@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from api.services.audit import log_rag_event
 from api.services.llm import ask_rag, estimate_tokens
+from api.services.rerank import rerank_chunks
 from api.services.retrieval import search_chunks
 
 router = APIRouter()
@@ -31,8 +32,9 @@ def rag_chat(request: RagChatRequest):
             return RagChatResponse(
                 reply="I could not find relevant information in the provided documents.", sources=[]
             )
+        reranked = rerank_chunks(request.message, results)
         llm_start_time = time.time()
-        reply = ask_rag(request.message, results)
+        reply = ask_rag(request.message, reranked)
         input_tokens = estimate_tokens(request.message)
         output_tokens = estimate_tokens(reply)
         llm_time = time.time() - llm_start_time

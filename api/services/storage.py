@@ -48,7 +48,10 @@ def search_chunks_by_embedding(
                 """
                 WITH ranked_chunks AS (
                   SELECT id, doc_id, text, embedding <=> %s::vector AS distance, access_roles,
-                    (text ILIKE '%%' || %s || '%%')::int AS keyword_match
+                  CASE 
+                    WHEN %s <> '' AND text ILIKE '%%' || %s || '%%' THEN 1
+                    ELSE 0
+                  END AS keyword_match
                   FROM chunks
                   WHERE access_roles::jsonb ? %s
                 )
@@ -60,6 +63,7 @@ def search_chunks_by_embedding(
             """,
                 (
                     query_embedding,
+                    keyword_query,
                     keyword_query,
                     access_role,
                     weight_embedding_similarity,
