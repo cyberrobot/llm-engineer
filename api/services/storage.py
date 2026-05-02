@@ -36,7 +36,7 @@ def save_chunk(
 
 def search_chunks_by_embedding(
     query_embedding: list[float],
-    keyword_query: str,
+    query: str,
     access_role: str,
     limit: int = CHUNKS_SEARCH_RESULTS_LIMIT,
     weight_keyword_match: float = WEIGHT_KEYWORD_MATCH,
@@ -48,10 +48,10 @@ def search_chunks_by_embedding(
                 """
                 WITH ranked_chunks AS (
                   SELECT id, doc_id, text, embedding <=> %s::vector AS distance, access_roles,
-                  CASE 
-                    WHEN %s <> '' AND text ILIKE '%%' || %s || '%%' THEN 1
-                    ELSE 0
-                  END AS keyword_match
+                  ts_rank(
+                    text_search,
+                    plainto_tsquery('english', %s)
+                    ) AS keyword_match
                   FROM chunks
                   WHERE access_roles::jsonb ? %s
                 )
@@ -63,8 +63,7 @@ def search_chunks_by_embedding(
             """,
                 (
                     query_embedding,
-                    keyword_query,
-                    keyword_query,
+                    query,
                     access_role,
                     weight_embedding_similarity,
                     weight_keyword_match,
@@ -79,7 +78,7 @@ def search_chunks_by_embedding(
                     "text": row[2],
                     "distance": row[3],
                     "access_roles": row[4],
-                    "keyword_match": row[5],
+                    "keyword_match": float(row[5]),
                     "hybrid_score": row[6],
                 }
                 for row in rows
