@@ -59,9 +59,6 @@ def rag_chat(request: RagChatRequest):
             {
                 "id": chunk["id"],
                 "text": chunk["text"][:150],
-                "distance": chunk["distance"],
-                "keyword_match": chunk["keyword_match"],
-                "hybrid_score": chunk["hybrid_score"],
             }
             for chunk in results
         ]

@@ -48,10 +48,13 @@ def search_chunks_by_embedding(
                 """
                 WITH ranked_chunks AS (
                   SELECT id, doc_id, text, embedding <=> %s::vector AS distance, access_roles,
-                  ts_rank(
-                    text_search,
-                    plainto_tsquery('english', %s)
-                    ) AS keyword_match
+                  COALESCE(
+                    ts_rank(
+                      text_search,
+                      plainto_tsquery('english', %s)
+                    ),
+                    0
+                  ) AS keyword_match
                   FROM chunks
                   WHERE access_roles::jsonb ? %s
                 )
