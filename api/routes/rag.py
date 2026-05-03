@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from api.services.audit import log_rag_event
 from api.services.llm import ask_rag, estimate_tokens
+from api.services.quiry_rewrite import rewrite_query
 from api.services.rerank import rerank_chunks
 from api.services.retrieval import search_chunks
 
@@ -25,7 +26,10 @@ class RagChatResponse(BaseModel):
 def rag_chat(request: RagChatRequest):
     try:
         start_time = time.time()
-        results = search_chunks(request.message, request.user_role, limit=3)
+        rewritten_query = rewrite_query(request.message)
+        if not rewritten_query:
+            rewritten_query = request.message
+        results = search_chunks(rewritten_query, request.user_role, limit=3)
         retrieval_time = time.time() - start_time
         if not results:
             return RagChatResponse(
