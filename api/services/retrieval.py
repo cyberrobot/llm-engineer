@@ -1,4 +1,5 @@
 from api.services.embeddings import get_embedding
+from api.services.generate_queries import generate_queries
 from api.services.settings import CHUNKS_MAX_DISTANCE, CHUNKS_SEARCH_RESULTS_LIMIT
 from api.services.storage import search_chunks_by_embedding
 
@@ -16,3 +17,27 @@ def search_chunks(
         return []
 
     return top_results
+
+
+def multi_query_search(query: str, user_role: str):
+    queries = generate_queries(query)
+
+    all_results = []
+
+    for q in queries:
+        results = search_chunks(q, user_role)
+        all_results.extend(results)
+
+    return all_results
+
+
+def deduplicate(chunks):
+    seen = set()
+    unique = []
+
+    for c in chunks:
+        if c["id"] not in seen:
+            unique.append(c)
+            seen.add(c["id"])
+
+    return unique

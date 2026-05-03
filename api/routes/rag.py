@@ -5,9 +5,9 @@ from pydantic import BaseModel
 
 from api.services.audit import log_rag_event
 from api.services.llm import ask_rag, estimate_tokens
-from api.services.quiry_rewrite import rewrite_query
 from api.services.rerank import rerank_chunks
-from api.services.retrieval import search_chunks
+from api.services.retrieval import deduplicate, multi_query_search
+from api.services.settings import CHUNK_TOP_K
 
 router = APIRouter()
 
@@ -26,16 +26,14 @@ class RagChatResponse(BaseModel):
 def rag_chat(request: RagChatRequest):
     try:
         start_time = time.time()
-        rewritten_query = rewrite_query(request.message)
-        if not rewritten_query:
-            rewritten_query = request.message
-        results = search_chunks(rewritten_query, request.user_role, limit=3)
+        results = multi_query_search(request.message, request.user_role)
+        results = deduplicate(results)
         retrieval_time = time.time() - start_time
         if not results:
             return RagChatResponse(
                 reply="I could not find relevant information in the provided documents.", sources=[]
             )
-        reranked = rerank_chunks(request.message, results)
+        reranked = rerank_chunks(request.message, results, top_k=CHUNK_TOP_K)
         llm_start_time = time.time()
         reply = ask_rag(request.message, reranked)
         input_tokens = estimate_tokens(request.message)
