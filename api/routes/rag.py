@@ -70,7 +70,9 @@ def rag_chat(request: RagChatRequest):
             for chunk in results
         ]
 
-        set_cache(request.message, request.user_role, RagChatResponse(reply=reply, sources=sources))
+        cached_response = {"reply": reply, "sources": sources}
+
+        set_cache(request.message, request.user_role, cached_response)
 
         return RagChatResponse(reply=reply, sources=sources)
 

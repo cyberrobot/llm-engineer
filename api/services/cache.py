@@ -1,9 +1,20 @@
+import json
 import logging
-import time
+import os
+from typing import Any, Dict, Union, cast
+
+import redis
+from dotenv import load_dotenv
+
+load_dotenv()
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 logger = logging.getLogger(__name__)
 
-cache = {}
+logger.info("Redis client initialised url: {REDIS_URL}")
 
 
 def normalize_query(query: str) -> str:
@@ -11,32 +22,35 @@ def normalize_query(query: str) -> str:
 
 
 def make_key(query: str, role: str) -> str:
-    return f"{normalize_query(query)}:{role}"
+    return f"rag:{normalize_query(query)}:{role}"
 
 
-def set_cache(query: str, role: str, value):
-    key = make_key(query, role)
-    cache[key] = {"value": value, "time": time.time(), "hits": 0}
-    logger.info(f"Cache set for key: {key}")
-
-
-def get_cache(query: str, role: str, ttl=300):
+def set_cache(query: str, role: str, value: dict[str, Any], ttl: int = 300) -> None:
     key = make_key(query, role)
 
-    item = cache.get(key)
+    try:
+        redis_client.setex(key, ttl, json.dumps(value))
+        logger.info(f"Cache set for key: {key}, ttl: {ttl} seconds")
 
-    if not item:
-        logger.info(f"Cache miss for key: {key}")
+    except redis.RedisError as e:
+        logger.error(f"Redis error while setting cache for key {key}: {e}")
         return None
 
-    age = time.time() - item["time"]
 
-    if age > ttl:
-        del cache[key]
-        logger.info(f"Cache expired for key: {key}")
+def get_cache(query: str, role: str) -> Union[Dict[str, Any], None]:
+    key = make_key(query, role)
+
+    try:
+        raw = redis_client.get(key)
+
+        if raw is None:
+            logger.info(f"Cache miss for key: {key}")
+            return None
+
+        logger.info(f"Cache hit for key: {key}")
+
+        return json.loads(cast(str, raw))
+
+    except redis.RedisError as e:
+        logger.error(f"Redis error for key {key}: {e}")
         return None
-
-    item["hits"] += 1
-    logger.info(f"Cache hit for key: {key}, hits: {item['hits']}")
-
-    return item["value"]
