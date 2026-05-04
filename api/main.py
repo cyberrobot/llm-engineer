@@ -1,3 +1,4 @@
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -13,6 +14,8 @@ load_dotenv()
 
 init_db()
 app = FastAPI()
+
+logging.basicConfig(level=logging.INFO)
 
 app.add_middleware(
     CORSMiddleware,

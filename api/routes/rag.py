@@ -4,9 +4,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from api.services.audit import log_rag_event
+from api.services.cache import get_cache, set_cache
 from api.services.llm import ask_rag, estimate_tokens
 from api.services.rerank import rerank_chunks
-from api.services.retrieval import deduplicate, multi_query_search
+from api.services.retrieval import (
+    deduplicate,
+    multi_query_search,
+)
 from api.services.settings import CHUNK_TOP_K
 
 router = APIRouter()
@@ -26,6 +30,9 @@ class RagChatResponse(BaseModel):
 def rag_chat(request: RagChatRequest):
     try:
         start_time = time.time()
+        cached = get_cache(request.message, request.user_role)
+        if cached:
+            return cached
         results = multi_query_search(request.message, request.user_role)
         results = deduplicate(results)
         retrieval_time = time.time() - start_time
@@ -62,6 +69,8 @@ def rag_chat(request: RagChatRequest):
             }
             for chunk in results
         ]
+
+        set_cache(request.message, request.user_role, RagChatResponse(reply=reply, sources=sources))
 
         return RagChatResponse(reply=reply, sources=sources)
 

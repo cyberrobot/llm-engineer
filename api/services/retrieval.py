@@ -1,5 +1,5 @@
 from api.services.embeddings import get_embedding
-from api.services.generate_queries import generate_queries
+from api.services.generate_queries import generate_queries_cached
 from api.services.settings import CHUNKS_MAX_DISTANCE, CHUNKS_SEARCH_RESULTS_LIMIT
 from api.services.storage import search_chunks_by_embedding
 
@@ -20,7 +20,7 @@ def search_chunks(
 
 
 def multi_query_search(query: str, user_role: str):
-    queries = generate_queries(query)
+    queries = generate_queries_cached(query)
 
     all_results = []
 

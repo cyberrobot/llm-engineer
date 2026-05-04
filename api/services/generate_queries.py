@@ -37,3 +37,22 @@ User query:
         queries = [query]
 
     return queries
+
+
+query_cache = {}
+
+MAX_CACHE_SIZE = 100
+
+
+def generate_queries_cached(query: str) -> list[str]:
+    if query in query_cache:
+        return query_cache[query]
+
+    queries = generate_queries(query)
+
+    if len(query_cache) > MAX_CACHE_SIZE:
+        oldest_query = next(iter(query_cache))
+        del query_cache[oldest_query]
+
+    query_cache[query] = queries
+    return queries
