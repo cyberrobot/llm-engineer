@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+openai
+psycopg
+redis
+python-dotenv
