@@ -1,6 +1,6 @@
 fastapi
 uvicorn
 openai
-psycopg
+psycopg[binary]
 redis
 python-dotenv
