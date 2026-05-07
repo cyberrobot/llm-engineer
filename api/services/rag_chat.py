@@ -26,8 +26,9 @@ def rag_chat(query: str, user_role: str):
         llm_start_time = time.time()
         reranked = rerank_chunks(query, results, top_k=CHUNK_TOP_K)
         reply = ask_rag(query, reranked)
+        formatted_reply = f"{reply['answer']} Sources: {', '.join(reply['source_ids'])}"
         input_tokens = estimate_tokens(query)
-        output_tokens = estimate_tokens(reply)
+        output_tokens = estimate_tokens(formatted_reply)
         llm_time = time.time() - llm_start_time
         total_time = time.time() - start_time
 

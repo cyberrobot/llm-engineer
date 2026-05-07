@@ -2,7 +2,10 @@ import { useState } from 'react';
 
 export default function App() {
   const [query, setQuery] = useState('');
-  const [answer, setAnswer] = useState('');
+  const [answer, setAnswer] = useState<{
+    answer: string;
+    source_ids: string[];
+  } | null>(null);
   const [sources, setSources] = useState<any[]>([]);
   const [debug, setDebug] = useState<any>();
   const [loading, setLoading] = useState(false);
@@ -86,7 +89,8 @@ export default function App() {
       {answer && (
         <div className="section">
           <h2>Answer</h2>
-          <p>{answer}</p>
+          <p>{answer.answer}</p>
+          <p>Sources: {answer.source_ids.join(', ')}</p>
         </div>
       )}
 

@@ -12,7 +12,7 @@ class RagChatRequest(BaseModel):
 
 
 class RagChatResponse(BaseModel):
-    reply: str
+    reply: dict
     sources: list[dict]
 
 

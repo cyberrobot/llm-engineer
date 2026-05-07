@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from api.db.database import get_connection
 
 
-def log_rag_event(user_role: str, question: str, results: list[dict], reply: str, metrics: dict):
+def log_rag_event(user_role: str, question: str, results: list[dict], reply: dict, metrics: dict):
     retrieved_chunks = [
         {
             "id": chunk["id"],
@@ -30,7 +30,7 @@ def log_rag_event(user_role: str, question: str, results: list[dict], reply: str
                     timestamp,
                     user_role,
                     question,
-                    reply,
+                    json.dumps(reply),
                     json.dumps(retrieved_chunks),
                     json.dumps(metrics),
                 ),
