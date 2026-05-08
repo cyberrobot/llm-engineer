@@ -19,7 +19,10 @@ logging.basicConfig(level=logging.INFO)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://caring-appreciation-production-5a11.up.railway.app",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
     allow_credentials=True,

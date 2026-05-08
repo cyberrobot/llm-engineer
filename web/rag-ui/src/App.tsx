@@ -1,4 +1,5 @@
 import { useState } from 'react';
+const API_URL = import.meta.env.VITE_API_URL;
 
 export default function App() {
   const [query, setQuery] = useState('');
@@ -17,7 +18,7 @@ export default function App() {
   const ask = async (str: string = '') => {
     setLoading(true);
 
-    const res = await fetch('http://localhost:8000/rag-chat', {
+    const res = await fetch(`${API_URL}/rag-chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
