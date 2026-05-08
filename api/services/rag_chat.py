@@ -2,7 +2,7 @@ import time
 
 from fastapi import HTTPException
 
-from api.services.audit import log_rag_event
+from api.services.audit import get_audit_logs, log_rag_event
 from api.services.cache import get_cache, set_cache
 from api.services.llm import ask_rag, estimate_tokens
 from api.services.rag_search import rag_search
@@ -54,11 +54,13 @@ def rag_chat(query: str, user_role: str):
             for chunk in results
         ]
 
-        cached_response = {"reply": reply, "sources": sources}
+        logs = get_audit_logs()
+
+        cached_response = {"reply": reply, "sources": sources, "debug": logs}
 
         set_cache(query, user_role, cached_response)
 
-        return {"reply": reply, "sources": sources}
+        return {"reply": reply, "sources": sources, "debug": logs}
 
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

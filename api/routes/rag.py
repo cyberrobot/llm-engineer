@@ -14,6 +14,7 @@ class RagChatRequest(BaseModel):
 class RagChatResponse(BaseModel):
     reply: dict
     sources: list[dict]
+    debug: list[dict]
 
 
 @router.post("/rag-chat", response_model=RagChatResponse)
