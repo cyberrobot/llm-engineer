@@ -6,6 +6,7 @@ export default function App() {
   const [answer, setAnswer] = useState<{
     answer: string;
     source_ids: string[];
+    debug: string[];
   } | null>(null);
   const [sources, setSources] = useState<any[]>([]);
   const [debug, setDebug] = useState<any>();
@@ -33,7 +34,7 @@ export default function App() {
 
     setAnswer(data.reply);
     setSources(data.sources || []);
-    setDebug(data);
+    setDebug(data.debug || []);
 
     setLoading(false);
   };
