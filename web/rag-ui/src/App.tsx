@@ -6,10 +6,9 @@ export default function App() {
   const [answer, setAnswer] = useState<{
     answer: string;
     source_ids: string[];
-    debug: string[];
   } | null>(null);
   const [sources, setSources] = useState<any[]>([]);
-  const [debug, setDebug] = useState<any>();
+  const [debug, setDebug] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const q1 = 'Do medical staff have to disinfect tools before procedures?';
@@ -34,7 +33,7 @@ export default function App() {
 
     setAnswer(data.reply);
     setSources(data.sources || []);
-    setDebug(data.debug || []);
+    setDebug(data.debug);
 
     setLoading(false);
   };
@@ -92,7 +91,9 @@ export default function App() {
         <div className="section">
           <h2>Answer</h2>
           <p>{answer.answer}</p>
-          <p>Sources: {answer.source_ids.join(', ')}</p>
+          {answer.source_ids.length > 0 && (
+            <p>Sources: {answer.source_ids.join(', ')}</p>
+          )}
         </div>
       )}
 

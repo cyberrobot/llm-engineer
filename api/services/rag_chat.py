@@ -2,7 +2,7 @@ import time
 
 from fastapi import HTTPException
 
-from api.services.audit import get_audit_logs, log_rag_event
+from api.services.audit import get_latest_audit_log_for_query, log_rag_event
 from api.services.cache import get_cache, set_cache
 from api.services.llm import ask_rag, estimate_tokens
 from api.services.rag_search import rag_search
@@ -20,8 +20,12 @@ def rag_chat(query: str, user_role: str):
         retrieval_time = time.time() - start_time
         if not results:
             return {
-                "reply": "I could not find relevant information in the provided documents.",
+                "reply": {
+                    "answer": "I could not find relevant information in the provided documents.",
+                    "source_ids": [],
+                },
                 "sources": [],
+                "debug": {},
             }
         llm_start_time = time.time()
         reranked = rerank_chunks(query, results, top_k=CHUNK_TOP_K)
@@ -54,7 +58,7 @@ def rag_chat(query: str, user_role: str):
             for chunk in results
         ]
 
-        logs = get_audit_logs()
+        logs = get_latest_audit_log_for_query(query, user_role)
 
         cached_response = {"reply": reply, "sources": sources, "debug": logs}
 

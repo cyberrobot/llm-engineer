@@ -51,7 +51,7 @@ def get_audit_logs():
             return [
                 {
                     "id": row[0],
-                    "timestamp": row[1],
+                    "timestamp": row[1].isoformat() if hasattr(row[1], "isoformat") else row[1],
                     "user_role": row[2],
                     "question": row[3],
                     "reply": row[4],
@@ -60,3 +60,34 @@ def get_audit_logs():
                 }
                 for row in rows
             ]
+
+
+def get_latest_audit_log_for_query(question: str, user_role: str):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, timestamp, user_role, question, reply, retrieved_chunks, metrics
+                FROM audit_logs
+                WHERE question = %s
+                  AND user_role = %s
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (question, user_role),
+            )
+
+            row = cur.fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "id": row[0],
+        "timestamp": row[1].isoformat() if hasattr(row[1], "isoformat") else row[1],
+        "user_role": row[2],
+        "question": row[3],
+        "reply": row[4],
+        "retrieved_chunks": row[5],
+        "metrics": row[6],
+    }
