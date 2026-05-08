@@ -50,6 +50,7 @@ export default function App() {
 
         <div className="group">
           <input
+            type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="input"

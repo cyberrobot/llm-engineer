@@ -130,4 +130,5 @@ p {
 
 .button:disabled {
   cursor: not-allowed;
+  background: var(--accent-bg);
 }
