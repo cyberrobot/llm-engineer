@@ -1,4 +1,7 @@
+import { ChatBubbleLeftEllipsisIcon } from '@heroicons/react/16/solid';
 import { useState } from 'react';
+import PredefinedQuestion from './PredefinedQuestion';
+import { PlayIcon } from '@heroicons/react/24/outline';
 const API_URL = import.meta.env.VITE_API_URL;
 
 export default function App() {
@@ -46,46 +49,50 @@ export default function App() {
   return (
     <div style={{ padding: 20, fontFamily: 'Arial' }}>
       <div className="section">
-        <h1>RAG Demo</h1>
+        <div className="flex items-center gap-2">
+          <ChatBubbleLeftEllipsisIcon className="w-6 h-6 text-accent-bg" />
+          <h1 className="mb-3">RAG Demo</h1>
+        </div>
+        <h3 className="text-text text-sm font-bold mb-4">
+          Ask a question based on your healthcare knowledge base.
+        </h3>
 
-        <div className="group">
+        <div className="flex items-center gap-2">
           <input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="input"
+            className="w-100 px-3 py-2 text-base border border-border bg-bg rounded box-border text-text"
             placeholder="Ask something..."
           />
-          <button onClick={() => ask()} disabled={loading} className="button">
-            {loading ? 'Loading...' : 'Ask'}
+          <button
+            onClick={() => ask()}
+            disabled={loading}
+            className="py-2 px-4 text-base border border-accent-border bg-accent-bg text-accent rounded cursor-pointer hover:bg-secondary-bg hover:border-accent-border hover:text-secondary disabled:bg-bg disabled:border-border disabled:text-text transition-all duration-600 ease-in-out flex items-center gap-1"
+          >
+            <PlayIcon className="w-5 h-5" /> {loading ? 'Loading...' : ' Ask'}
           </button>
         </div>
       </div>
 
-      <div className="section group">
-        <button
-          onClick={() => inputAndAsk(q1)}
+      <div className="section flex gap-3 flex-col lg:flex-row">
+        <PredefinedQuestion
+          question={q1}
+          onClick={inputAndAsk}
           disabled={loading}
-          className="button"
-        >
-          {q1}
-        </button>
+        />
 
-        <button
-          onClick={() => inputAndAsk(q2)}
+        <PredefinedQuestion
+          question={q2}
+          onClick={inputAndAsk}
           disabled={loading}
-          className="button"
-        >
-          {q2}
-        </button>
+        />
 
-        <button
-          onClick={() => inputAndAsk(q3)}
+        <PredefinedQuestion
+          question={q3}
+          onClick={inputAndAsk}
           disabled={loading}
-          className="button"
-        >
-          {q3}
-        </button>
+        />
       </div>
 
       {answer && (
