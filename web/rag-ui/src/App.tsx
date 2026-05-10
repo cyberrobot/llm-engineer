@@ -49,9 +49,9 @@ export default function App() {
   return (
     <div style={{ padding: 20, fontFamily: 'Arial' }}>
       <div className="section">
-        <div className="flex items-center gap-2">
-          <ChatBubbleLeftEllipsisIcon className="w-6 h-6 text-accent-bg" />
-          <h1 className="mb-3">RAG Demo</h1>
+        <div className="flex items-center gap-2 mb-3">
+          <ChatBubbleLeftEllipsisIcon className="w-6 h-6 text-accent-bg shrink-0" />
+          <h1>RAG Demo</h1>
         </div>
         <h3 className="text-text text-sm font-bold mb-4">
           Ask a question based on your healthcare knowledge base.
