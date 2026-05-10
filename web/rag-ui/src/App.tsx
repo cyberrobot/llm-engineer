@@ -1,7 +1,8 @@
 import { ChatBubbleLeftEllipsisIcon } from '@heroicons/react/16/solid';
 import { useState } from 'react';
-import PredefinedQuestion from './PredefinedQuestion';
+import PredefinedQuestion from './components/PredefinedQuestion';
 import { PlayIcon } from '@heroicons/react/24/outline';
+import DisplayAnswer from './components/DisplayAnswer';
 const API_URL = import.meta.env.VITE_API_URL;
 
 export default function App() {
@@ -96,13 +97,7 @@ export default function App() {
       </div>
 
       {answer && (
-        <div className="section">
-          <h2>Answer</h2>
-          <p>{answer.answer}</p>
-          {answer.source_ids.length > 0 && (
-            <p>Sources: {answer.source_ids.join(', ')}</p>
-          )}
-        </div>
+        <DisplayAnswer answer={answer.answer} source_ids={answer.source_ids} />
       )}
 
       {sources.length > 0 && (
