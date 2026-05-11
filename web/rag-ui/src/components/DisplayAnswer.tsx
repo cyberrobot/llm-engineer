@@ -16,7 +16,7 @@ const DisplayAnswer = ({
         <div className="flex items-center gap-2 mb-2">
           <h2>Answer</h2>
           {answerSuccess && (
-            <ShieldCheckIcon className="w-5 h-5 text-green-500" />
+            <ShieldCheckIcon className="w-5 h-5 text-green-500 stroke-2" />
           )}
         </div>
       }

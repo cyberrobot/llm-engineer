@@ -30,14 +30,11 @@ const PredefinedQuestion = ({
         text-secondary 
         rounded 
         cursor-pointer 
-        hover:bg-bg 
-        hover:border-accent-border 
-        hover:text-secondary 
-        disabled:bg-bg 
-        disabled:border-border 
-        disabled:text-text 
+        hover:-translate-y-1
+        hover:shadow-lg
+        shadow-secondary-bg
         transition-all 
-        duration-600 
+        duration-400 
         ease-in-out` + (rest.className ? ` ${rest.className}` : '')
       }
     >
