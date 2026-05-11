@@ -7,6 +7,7 @@ from api.services.cache import get_cache, set_cache
 from api.services.llm import ask_rag, estimate_tokens
 from api.services.rag_search import rag_search
 from api.services.rerank import rerank_chunks
+from api.services.retrieval import filter_chunks_by_source_ids
 from api.services.settings import CHUNK_TOP_K
 
 
@@ -30,6 +31,7 @@ def rag_chat(query: str, user_role: str):
         llm_start_time = time.time()
         reranked = rerank_chunks(query, results, top_k=CHUNK_TOP_K)
         reply = ask_rag(query, reranked)
+        cited_chunks = filter_chunks_by_source_ids(reranked, reply["source_ids"])
         formatted_reply = f"{reply['answer']} Sources: {', '.join(reply['source_ids'])}"
         input_tokens = estimate_tokens(query)
         output_tokens = estimate_tokens(formatted_reply)
@@ -55,7 +57,7 @@ def rag_chat(query: str, user_role: str):
                 "id": chunk["id"],
                 "text": chunk["text"][:150],
             }
-            for chunk in results
+            for chunk in cited_chunks
         ]
 
         logs = get_latest_audit_log_for_query(query, user_role)

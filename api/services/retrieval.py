@@ -41,3 +41,9 @@ def deduplicate(chunks):
             seen.add(c["id"])
 
     return unique
+
+
+def filter_chunks_by_source_ids(chunks: list[dict], source_ids: list[str]) -> list[dict]:
+    source_id_set = set(source_ids)
+
+    return [chunk for chunk in chunks if chunk["id"] in source_id_set]
