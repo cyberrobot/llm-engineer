@@ -3,6 +3,7 @@ import { useState } from 'react';
 import PredefinedQuestion from './components/PredefinedQuestion';
 import { PlayIcon } from '@heroicons/react/24/outline';
 import DisplayAnswer from './components/DisplayAnswer';
+import DisplaySources from './components/DisplaySources';
 const API_URL = import.meta.env.VITE_API_URL;
 
 export default function App() {
@@ -49,7 +50,7 @@ export default function App() {
 
   return (
     <div style={{ padding: 20, fontFamily: 'Arial' }}>
-      <div className="section">
+      <div className="mb-5">
         <div className="flex items-center gap-2 mb-3">
           <ChatBubbleLeftEllipsisIcon className="w-6 h-6 text-accent-bg shrink-0" />
           <h1>RAG Demo</h1>
@@ -76,7 +77,7 @@ export default function App() {
         </div>
       </div>
 
-      <div className="section flex gap-3 flex-col lg:flex-row">
+      <div className="mb-5 flex gap-3 flex-col lg:flex-row">
         <PredefinedQuestion
           question={q1}
           onClick={inputAndAsk}
@@ -100,14 +101,7 @@ export default function App() {
         <DisplayAnswer answer={answer.answer} source_ids={answer.source_ids} />
       )}
 
-      {sources.length > 0 && (
-        <div className="section">
-          <h2>Sources</h2>
-          {sources.map((s, i) => (
-            <p key={i}>• {s.text}</p>
-          ))}
-        </div>
-      )}
+      {sources.length > 0 && <DisplaySources sources={sources} />}
 
       {debug && (
         <div className="section">
