@@ -15,10 +15,11 @@ def rag_chat(query: str, user_role: str):
     try:
         cached = get_cache(query, user_role)
         if cached:
+            cached["debug"]["metrics"]["cache_hit"] = True
             return cached
-        start_time = time.time()
+        start_time = time.perf_counter()
         results = rag_search(query, user_role)
-        retrieval_time = time.time() - start_time
+        retrieval_time = (time.perf_counter() - start_time) * 1000
         if not results:
             return {
                 "reply": {
@@ -28,20 +29,20 @@ def rag_chat(query: str, user_role: str):
                 "sources": [],
                 "debug": {},
             }
-        llm_start_time = time.time()
+        llm_start_time = time.perf_counter()
         reranked = rerank_chunks(query, results, top_k=CHUNK_TOP_K)
         reply = ask_rag(query, reranked)
         cited_chunks = filter_chunks_by_source_ids(reranked, reply["source_ids"])
         formatted_reply = f"{reply['answer']} Sources: {', '.join(reply['source_ids'])}"
         input_tokens = estimate_tokens(query)
         output_tokens = estimate_tokens(formatted_reply)
-        llm_time = time.time() - llm_start_time
-        total_time = time.time() - start_time
+        llm_time = (time.perf_counter() - llm_start_time) * 1000
+        total_time = (time.perf_counter() - start_time) * 1000
 
         log_rag_event(
             user_role=user_role,
             question=query,
-            results=results,
+            results=reranked,
             reply=reply,
             metrics={
                 "input_tokens": input_tokens,
@@ -49,6 +50,7 @@ def rag_chat(query: str, user_role: str):
                 "retrieval_time": round(retrieval_time, 4),
                 "llm_time": round(llm_time, 4),
                 "total_time": round(total_time, 4),
+                "cache_hit": False,
             },
         )
 

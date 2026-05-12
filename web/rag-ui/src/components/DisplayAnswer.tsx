@@ -13,19 +13,19 @@ const DisplayAnswer = ({
   return (
     <Section
       title={
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-3">
           <h2>Answer</h2>
           {answerSuccess && (
-            <ShieldCheckIcon className="w-5 h-5 text-green-500 stroke-2" />
+            <ShieldCheckIcon className="size-6 text-green-500 stroke-2" />
           )}
         </div>
       }
     >
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-2">
         <p>{answer}</p>
         {source_ids.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="border border-border px-2 py-0.5 rounded-md bg-gray-100 text-sm">
+            <span className="border border-border px-2 py-0.5 rounded-md bg-gray-50 text-sm">
               Sources: {source_ids.length}
             </span>
             {source_ids.map((id) => (

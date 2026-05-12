@@ -26,7 +26,7 @@ const DisplayInput = ({
         type="search"
         value={inputValue}
         onChange={(e) => setInputValue(e.target.value)}
-        className="w-100 px-3 py-2 text-base border border-border bg-bg rounded box-border text-text"
+        className="w-full px-3 py-2 text-base border border-border bg-bg rounded box-border text-text"
         placeholder="Ask something..."
       />
       <button

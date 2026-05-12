@@ -9,12 +9,12 @@ const DisplaySources = ({
   return (
     <Section title="Sources Used">
       <div className="-mb-3">
-        <Section>
-          <div className="-my-3">
+        <div className="mb-5 border border-border rounded">
+          <div className="bg-gray-50 rounded ">
             {sources.map((s, i) => (
               <div
                 key={i}
-                className={`border-b border-border -mx-4 p-3 flex items-center gap-3 flex-col lg:flex-row justify-between ${i === sources.length - 1 ? 'border-b-0' : ''}`}
+                className={`border-b border-border p-3 flex items-center gap-3 flex-col lg:flex-row justify-between ${i === sources.length - 1 ? 'border-b-0' : ''}`}
               >
                 <div className="flex items-start lg:items-center gap-3 justify-start w-full lg:w-auto">
                   {`${s.text}`.length >= 150
@@ -27,7 +27,7 @@ const DisplaySources = ({
               </div>
             ))}
           </div>
-        </Section>
+        </div>
       </div>
     </Section>
   );
