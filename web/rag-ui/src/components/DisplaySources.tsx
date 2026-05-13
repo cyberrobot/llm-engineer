@@ -1,3 +1,4 @@
+import List from './List';
 import Section from './Section';
 import SourceId from './SourceId';
 
@@ -9,25 +10,23 @@ const DisplaySources = ({
   return (
     <Section title="Sources Used">
       <div className="-mb-3">
-        <div className="mb-5 border border-border rounded">
-          <div className="bg-gray-50 rounded ">
-            {sources.map((s, i) => (
-              <div
-                key={i}
-                className={`border-b border-border p-3 flex items-center gap-3 flex-col lg:flex-row justify-between ${i === sources.length - 1 ? 'border-b-0' : ''}`}
-              >
+        <List
+          items={sources}
+          renderItem={(item) => {
+            return (
+              <div className="flex items-center gap-3 flex-col lg:flex-row justify-between">
                 <div className="flex items-start lg:items-center gap-3 justify-start w-full lg:w-auto">
-                  {`${s.text}`.length >= 150
-                    ? `${s.text.slice(0, 150)}...`
-                    : s.text}
+                  {`${item.text}`.length >= 150
+                    ? `${item.text.slice(0, 150)}...`
+                    : item.text}
                 </div>
                 <div className="flex justify-end w-full lg:w-auto">
-                  <SourceId id={s.id} />
+                  <SourceId id={item.id} />
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
+            );
+          }}
+        />
       </div>
     </Section>
   );

@@ -1,8 +1,15 @@
 import { CodeBracketIcon } from '@heroicons/react/24/outline';
 import Section from './Section';
-import DisplayMetrics from './DisplayMetrics';
+import DisplayMetrics, { type Metrics } from './DisplayMetrics';
+import DisplayGeneratedQueries from './DisplayGeneratedQueries';
 
-const DisplayDebug = ({ debug }: { debug: any }) => {
+type DebugProps = {
+  id: string;
+  metrics: Metrics;
+  multi_query: string[];
+};
+
+const DisplayDebug = ({ debug }: { debug: DebugProps }) => {
   return (
     <Section
       title={
@@ -12,7 +19,10 @@ const DisplayDebug = ({ debug }: { debug: any }) => {
         </div>
       }
     >
-      <DisplayMetrics metrics={debug.metrics} id={debug.id} />
+      <div className="flex flex-col gap-5">
+        <DisplayMetrics metrics={debug.metrics} id={debug.id} />
+        <DisplayGeneratedQueries items={debug.multi_query} />
+      </div>
     </Section>
   );
 };

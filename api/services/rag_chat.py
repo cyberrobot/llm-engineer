@@ -18,7 +18,9 @@ def rag_chat(query: str, user_role: str):
             cached["debug"]["metrics"]["cache_hit"] = True
             return cached
         start_time = time.perf_counter()
-        results = rag_search(query, user_role)
+        rag_search_output = rag_search(query, user_role)
+        results = rag_search_output["results"]
+        multi_query = rag_search_output["multi_query"]
         retrieval_time = (time.perf_counter() - start_time) * 1000
         if not results:
             return {
@@ -62,13 +64,15 @@ def rag_chat(query: str, user_role: str):
             for chunk in cited_chunks
         ]
 
-        logs = get_latest_audit_log_for_query(query, user_role)
+        debug = get_latest_audit_log_for_query(query, user_role)
+        if debug:
+            debug["multi_query"] = multi_query
 
-        cached_response = {"reply": reply, "sources": sources, "debug": logs}
+        cached_response = {"reply": reply, "sources": sources, "debug": debug}
 
         set_cache(query, user_role, cached_response)
 
-        return {"reply": reply, "sources": sources, "debug": logs}
+        return {"reply": reply, "sources": sources, "debug": debug}
 
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

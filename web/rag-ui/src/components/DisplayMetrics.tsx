@@ -1,6 +1,6 @@
 import { formatDuration } from '../utils/time';
 
-type Metrics = {
+export type Metrics = {
   retrieval_time: number;
   llm_time: number;
   total_time: number;
@@ -11,7 +11,7 @@ type Metrics = {
 
 const DisplayMetrics = ({ metrics, id }: { metrics: Metrics; id: string }) => {
   return (
-    <div className="grid grid-cols-1 md:grid- lg:grid-cols-4 gap-3">
+    <div className="grid grid-cols-3 lg:grid-cols-4 gap-3">
       {[
         { title: 'Query ID', value: id },
         {

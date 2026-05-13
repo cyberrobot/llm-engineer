@@ -28,7 +28,7 @@ def multi_query_search(query: str, user_role: str):
         results = search_chunks(q, user_role)
         all_results.extend(results)
 
-    return all_results
+    return {"results": all_results, "multi_query": queries}
 
 
 def deduplicate(chunks):
