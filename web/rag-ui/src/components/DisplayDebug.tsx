@@ -1,11 +1,13 @@
 import { CodeBracketIcon } from '@heroicons/react/24/outline';
 import Section from './Section';
-import DisplayMetrics from './DisplayMetrics';
+import DisplayDebugSummary from './DisplayDebugSummary';
 import DisplayGeneratedQueries from './DisplayGeneratedQueries';
 import DisplayRetrievedChunks from './DisplayRetrievedChunks';
 
 type DebugProps = {
   id: string;
+  timestamp: string;
+  user_role: string;
   metrics: Metrics;
   multi_query: string[];
   retrieved_chunks: RetrievedChunk[];
@@ -41,7 +43,14 @@ const DisplayDebug = ({ debug }: { debug: DebugProps }) => {
       }
     >
       <div className="flex flex-col gap-5">
-        <DisplayMetrics metrics={debug.metrics} id={debug.id} />
+        <DisplayDebugSummary
+          id={debug.id}
+          timestamp={debug.timestamp}
+          userRole={debug.user_role}
+          queries={debug.multi_query.length}
+          retrievedChunks={debug.retrieved_chunks.length}
+          metrics={debug.metrics}
+        />
         <DisplayGeneratedQueries items={debug.multi_query} />
         <DisplayRetrievedChunks chunks={debug.retrieved_chunks} />
       </div>
