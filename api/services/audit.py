@@ -7,23 +7,11 @@ from api.db.database import get_connection
 def log_rag_event(
     user_role: str,
     question: str,
-    results: list[dict],
+    retrieved_chunks: list[dict],
     reply: dict,
     metrics: dict,
     queries: list[dict],
 ):
-    retrieved_chunks = [
-        {
-            "id": chunk["id"],
-            "doc_id": chunk["doc_id"],
-            "text_snippet": chunk["text"][:150],
-            "distance": chunk["distance"],
-            "keyword_match": chunk["keyword_match"],
-            "hybrid_score": chunk["hybrid_score"],
-        }
-        for chunk in results
-    ]
-
     timestamp = datetime.now(timezone.utc).isoformat()
 
     with get_connection() as conn:

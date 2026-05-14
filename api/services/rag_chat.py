@@ -13,11 +13,26 @@ from api.services.settings import CHUNK_TOP_K
 
 def rag_chat(query: str, user_role: str):
     try:
+        start_time = time.perf_counter()
         cached = get_cache(query, user_role)
         if cached:
-            cached["debug"]["metrics"]["cache_hit"] = True
+            log_rag_event(
+                user_role=user_role,
+                question=query,
+                retrieved_chunks=cached["debug"]["retrieved_chunks"],
+                queries=cached["debug"]["queries"],
+                reply=cached["debug"]["reply"],
+                metrics={
+                    **cached["debug"]["metrics"],
+                    "cache_hit": True,
+                    "retrieval_time": 0,
+                    "llm_time": 0,
+                    "total_time": round((time.perf_counter() - start_time) * 1000, 4),
+                },
+            )
+            debug = get_latest_audit_log_for_query(query, user_role)
+            cached["debug"] = debug
             return cached
-        start_time = time.perf_counter()
         rag_search_output = rag_search(query, user_role)
         results = rag_search_output["results"]
         multi_query = rag_search_output["multi_query"]
@@ -44,7 +59,17 @@ def rag_chat(query: str, user_role: str):
         log_rag_event(
             user_role=user_role,
             question=query,
-            results=reranked,
+            retrieved_chunks=[
+                {
+                    "id": chunk["id"],
+                    "doc_id": chunk["doc_id"],
+                    "text_snippet": chunk["text"][:150],
+                    "distance": chunk["distance"],
+                    "keyword_match": chunk["keyword_match"],
+                    "hybrid_score": chunk["hybrid_score"],
+                }
+                for chunk in reranked
+            ],
             queries=multi_query,
             reply=reply,
             metrics={
