@@ -1,20 +1,36 @@
-import React from 'react';
+import { useEffect, useState } from 'react';
+import { API_URL } from '../utils/settings';
+import type { Answer } from '../App';
 
-interface DisplayDebugHistoryProps {
-  history: string[];
-}
+const DisplayDebugHistory = ({ answer }: { answer: Answer }) => {
+  const [auditHistory, setAuditHistory] = useState(null);
+  const getDebugHistory = async () => {
+    const res = await fetch(`${API_URL}/audit-logs`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
 
-const DisplayDebugHistory: React.FC<DisplayDebugHistoryProps> = ({
-  history,
-}) => {
+    return await res.json();
+  };
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const data = await getDebugHistory();
+      setAuditHistory(data);
+    };
+    fetchData();
+
+    return () => {
+      setAuditHistory(null);
+    };
+  }, [answer]);
+
   return (
     <div>
-      <h2>Retrieval £ Generation Debug History</h2>
-      <ul>
-        {history.map((entry, index) => (
-          <li key={index}>{entry}</li>
-        ))}
-      </ul>
+      <h2>Retrieval & Generation Debug History</h2>
+      {/* <CollapsibleList items={history} /> */}
     </div>
   );
 };

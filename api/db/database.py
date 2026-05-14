@@ -42,6 +42,7 @@ def init_db():
                     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     user_role TEXT NOT NULL,
                     question TEXT NOT NULL,
+                    queries JSONB NOT NULL DEFAULT '[]'::jsonb,
                     reply JSONB NOT NULL DEFAULT '{}'::jsonb,
                     retrieved_chunks JSONB NOT NULL DEFAULT '[]'::jsonb,
                     metrics JSONB NOT NULL DEFAULT '{}'::jsonb
@@ -70,4 +71,8 @@ def init_db():
                 BEFORE INSERT OR UPDATE ON chunks
                 FOR EACH ROW
                 EXECUTE FUNCTION chunks_text_search_trigger();
+            """)
+            cur.execute("""
+                ALTER TABLE audit_logs
+                ADD COLUMN IF NOT EXISTS queries JSONB NOT NULL DEFAULT '[]'::jsonb
             """)

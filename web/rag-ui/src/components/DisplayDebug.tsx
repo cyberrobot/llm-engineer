@@ -9,7 +9,7 @@ type DebugProps = {
   timestamp: string;
   user_role: string;
   metrics: Metrics;
-  multi_query: string[];
+  queries: string[];
   retrieved_chunks: RetrievedChunk[];
 };
 
@@ -47,11 +47,11 @@ const DisplayDebug = ({ debug }: { debug: DebugProps }) => {
           id={debug.id}
           timestamp={debug.timestamp}
           userRole={debug.user_role}
-          queries={debug.multi_query.length}
+          queries={debug.queries.length}
           retrievedChunks={debug.retrieved_chunks.length}
           metrics={debug.metrics}
         />
-        <DisplayGeneratedQueries items={debug.multi_query} />
+        <DisplayGeneratedQueries items={debug.queries} />
         <DisplayRetrievedChunks chunks={debug.retrieved_chunks} />
       </div>
     </Section>

@@ -4,15 +4,35 @@ import PredefinedQuestion from './components/PredefinedQuestion';
 import DisplayAnswer from './components/DisplayAnswer';
 import DisplaySources from './components/DisplaySources';
 import DisplayInput from './components/DisplayInput';
-import DisplayDebug from './components/DisplayDebug';
-const API_URL = import.meta.env.VITE_API_URL;
+import DisplayDebug, {
+  type Metrics,
+  type RetrievedChunk,
+} from './components/DisplayDebug';
+import { API_URL } from './utils/settings';
+import DisplayDebugHistory from './components/DisplayDebugHistory';
+
+type DebugInstance = {
+  id: string;
+  timestamp: string;
+  user_role: string;
+  question: string;
+  reply: {
+    answer: string;
+    source_ids: string[];
+  };
+  metrics: Metrics;
+  queries: string[];
+  retrieved_chunks: RetrievedChunk[];
+};
+
+export type Answer = {
+  answer: string;
+  source_ids: string[];
+};
 
 export default function App() {
   const [query, setQuery] = useState('');
-  const [answer, setAnswer] = useState<{
-    answer: string;
-    source_ids: string[];
-  } | null>(null);
+  const [answer, setAnswer] = useState<Answer | null>(null);
   const [sources, setSources] = useState<any[]>([]);
   const [debug, setDebug] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -28,6 +48,7 @@ export default function App() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Accept: 'application/json',
       },
       body: JSON.stringify({
         message: str || query,
@@ -95,6 +116,8 @@ export default function App() {
       </div>
 
       {debug && <DisplayDebug debug={debug} />}
+
+      {answer && <DisplayDebugHistory answer={answer} />}
     </div>
   );
 }

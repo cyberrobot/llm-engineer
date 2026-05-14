@@ -45,6 +45,7 @@ def rag_chat(query: str, user_role: str):
             user_role=user_role,
             question=query,
             results=reranked,
+            queries=multi_query,
             reply=reply,
             metrics={
                 "input_tokens": input_tokens,
@@ -63,16 +64,12 @@ def rag_chat(query: str, user_role: str):
             }
             for chunk in cited_chunks
         ]
-
         debug = get_latest_audit_log_for_query(query, user_role)
-        if debug:
-            debug["multi_query"] = multi_query
-
         cached_response = {"reply": reply, "sources": sources, "debug": debug}
 
         set_cache(query, user_role, cached_response)
 
-        return {"reply": reply, "sources": sources, "debug": debug}
+        return cached_response
 
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
