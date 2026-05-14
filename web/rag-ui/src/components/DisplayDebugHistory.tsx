@@ -3,7 +3,7 @@ import { API_URL } from '../utils/settings';
 import type { Answer } from '../App';
 
 const DisplayDebugHistory = ({ answer }: { answer: Answer }) => {
-  const [auditHistory, setAuditHistory] = useState(null);
+  const [, setAuditHistory] = useState(null);
   const getDebugHistory = async () => {
     const res = await fetch(`${API_URL}/audit-logs`, {
       method: 'GET',
