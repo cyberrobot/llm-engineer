@@ -33,6 +33,7 @@ def rag_chat(query: str, user_role: str):
             debug = get_latest_audit_log_for_query(query, user_role)
             cached["debug"] = debug
             return cached
+
         rag_search_output = rag_search(query, user_role)
         results = rag_search_output["results"]
         multi_query = rag_search_output["multi_query"]

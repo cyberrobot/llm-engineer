@@ -115,7 +115,6 @@ export default function App() {
       </div>
 
       {debug && <DisplayDebug debug={debug} />}
-
       {/* {answer && <DisplayDebugHistory answer={answer} />} */}
     </div>
   );
