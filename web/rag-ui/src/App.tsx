@@ -9,7 +9,6 @@ import DisplayDebug, {
   type RetrievedChunk,
 } from './components/DisplayDebug';
 import { API_URL } from './utils/settings';
-import DisplayDebugHistory from './components/DisplayDebugHistory';
 
 type DebugInstance = {
   id: string;
@@ -117,7 +116,7 @@ export default function App() {
 
       {debug && <DisplayDebug debug={debug} />}
 
-      {answer && <DisplayDebugHistory answer={answer} />}
+      {/* {answer && <DisplayDebugHistory answer={answer} />} */}
     </div>
   );
 }
