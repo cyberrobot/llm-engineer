@@ -4,25 +4,22 @@ import PredefinedQuestion from './components/PredefinedQuestion';
 import DisplayAnswer from './components/DisplayAnswer';
 import DisplaySources from './components/DisplaySources';
 import DisplayInput from './components/DisplayInput';
-import DisplayDebug, {
-  type Metrics,
-  type RetrievedChunk,
-} from './components/DisplayDebug';
+import DisplayDebug from './components/DisplayDebug';
 import { API_URL } from './utils/settings';
 
-type DebugInstance = {
-  id: string;
-  timestamp: string;
-  user_role: string;
-  question: string;
-  reply: {
-    answer: string;
-    source_ids: string[];
-  };
-  metrics: Metrics;
-  queries: string[];
-  retrieved_chunks: RetrievedChunk[];
-};
+// type DebugInstance = {
+//   id: string;
+//   timestamp: string;
+//   user_role: string;
+//   question: string;
+//   reply: {
+//     answer: string;
+//     source_ids: string[];
+//   };
+//   metrics: Metrics;
+//   queries: string[];
+//   retrieved_chunks: RetrievedChunk[];
+// };
 
 export type Answer = {
   answer: string;
