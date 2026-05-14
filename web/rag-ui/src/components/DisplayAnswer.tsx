@@ -25,7 +25,7 @@ const DisplayAnswer = ({
         <p>{answer}</p>
         {source_ids.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="border border-border px-2 py-0.5 rounded-md bg-gray-50 text-sm">
+            <span className="border border-border px-2 py-0.5 rounded-md bg-gray-50">
               Sources: {source_ids.length}
             </span>
             {source_ids.map((id) => (

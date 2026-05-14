@@ -29,7 +29,7 @@
   --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
 
-  font: 16px/125% var(--sans);
+  font: 14px/125% var(--sans);
   letter-spacing: 0.18px;
   color-scheme: light dark;
   color: var(--text);

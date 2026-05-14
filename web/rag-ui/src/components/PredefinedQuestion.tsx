@@ -22,7 +22,6 @@ const PredefinedQuestion = ({
         gap-2 
         py-3 
         px-4 
-        text-sm
         text-left
         border 
         border-accent-border 

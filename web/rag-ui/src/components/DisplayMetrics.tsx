@@ -1,13 +1,5 @@
 import { formatDuration } from '../utils/time';
-
-export type Metrics = {
-  retrieval_time: number;
-  llm_time: number;
-  total_time: number;
-  cache_hit: boolean;
-  input_tokens: number;
-  output_tokens: number;
-};
+import type { Metrics } from './DisplayDebug';
 
 const DisplayMetrics = ({ metrics, id }: { metrics: Metrics; id: string }) => {
   return (
@@ -35,8 +27,8 @@ const DisplayMetrics = ({ metrics, id }: { metrics: Metrics; id: string }) => {
           key={index}
           className="flex flex-col gap-0.5 border border-border p-2 rounded bg-gray-50"
         >
-          <span className="text-sm">{item.title}</span>
-          <span className="text-sm font-bold">{item.value}</span>
+          <span className="text-text">{item.title}</span>
+          <span className="font-bold">{item.value}</span>
         </div>
       ))}
     </div>

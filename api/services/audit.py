@@ -82,12 +82,16 @@ def get_latest_audit_log_for_query(question: str, user_role: str):
     if not row:
         return None
 
+    reranked_chunks_with_rank = [
+        {**chunk, "rank": rank} for rank, chunk in enumerate(row[5], start=1)
+    ]
+
     return {
         "id": row[0],
         "timestamp": row[1].isoformat() if hasattr(row[1], "isoformat") else row[1],
         "user_role": row[2],
         "question": row[3],
         "reply": row[4],
-        "retrieved_chunks": row[5],
+        "retrieved_chunks": reranked_chunks_with_rank,
         "metrics": row[6],
     }

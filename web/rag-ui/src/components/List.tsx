@@ -8,7 +8,7 @@ type ListProps<T> = {
 
 const List = <T,>({ items, renderItem, className }: ListProps<T>) => {
   return (
-    <ul className={`mb-5 border border-border bg-gray-50 rounded ${className}`}>
+    <ul className={`border border-border bg-gray-50 rounded ${className}`}>
       {items.map((item, index) => (
         <li
           key={index}
