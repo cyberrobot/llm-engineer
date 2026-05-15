@@ -4,22 +4,26 @@ import PredefinedQuestion from './components/PredefinedQuestion';
 import DisplayAnswer from './components/DisplayAnswer';
 import DisplaySources from './components/DisplaySources';
 import DisplayInput from './components/DisplayInput';
-import DisplayDebug from './components/DisplayDebug';
+import DisplayDebug, {
+  type Metrics,
+  type RetrievedChunk,
+} from './components/DisplayDebug';
 import { API_URL } from './utils/settings';
+import DisplayDebugHistory from './components/DisplayDebugHistory';
 
-// type DebugInstance = {
-//   id: string;
-//   timestamp: string;
-//   user_role: string;
-//   question: string;
-//   reply: {
-//     answer: string;
-//     source_ids: string[];
-//   };
-//   metrics: Metrics;
-//   queries: string[];
-//   retrieved_chunks: RetrievedChunk[];
-// };
+export type DebugInstance = {
+  id: string;
+  timestamp: string;
+  user_role: string;
+  question: string;
+  reply: {
+    answer: string;
+    source_ids: string[];
+  };
+  metrics: Metrics;
+  queries: string[];
+  retrieved_chunks: RetrievedChunk[];
+};
 
 export type Answer = {
   answer: string;
@@ -112,7 +116,9 @@ export default function App() {
       </div>
 
       {debug && <DisplayDebug debug={debug} />}
-      {/* {answer && <DisplayDebugHistory answer={answer} />} */}
+      <div className="lg:max-w-sm shrink-0 max-w-full">
+        {answer && <DisplayDebugHistory answer={answer} />}
+      </div>
     </div>
   );
 }

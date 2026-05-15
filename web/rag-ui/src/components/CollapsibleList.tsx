@@ -1,14 +1,28 @@
 import { useState, type ReactNode } from 'react';
-
-export interface CollapsibleListItem {
-  title: string;
-  content: ReactNode;
-}
+import type { DebugInstance } from '../App';
+import { formatDuration, localStringFromUTC } from '../utils/time';
+import { ChevronDownIcon } from '@heroicons/react/24/outline';
+import { cacheBooleanToString } from '../utils/display';
 
 export interface CollapsibleListProps {
-  items: CollapsibleListItem[];
+  items: DebugInstance[];
   className?: string;
 }
+
+const CollapsibleListContentItem = ({
+  title,
+  value,
+}: {
+  title: string;
+  value: string | number | ReactNode;
+}) => {
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-text font-semibold">{title}</span>
+      <span className="font-bold">{value}</span>
+    </div>
+  );
+};
 
 const CollapsibleList = ({ items, className = '' }: CollapsibleListProps) => {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
@@ -23,29 +37,51 @@ const CollapsibleList = ({ items, className = '' }: CollapsibleListProps) => {
         const isOpen = openIndex === index;
         return (
           <div
-            key={item.title}
-            className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+            key={item.id}
+            className={`overflow-hidden rounded border border-border hover:bg-gray-50 transition-colors duration-300 ease-in-out ${isOpen ? 'bg-gray-50' : 'bg-white'}`}
           >
             <button
               type="button"
               onClick={() => toggleItem(index)}
-              className="flex w-full items-center justify-between px-4 py-4 text-left text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+              className="flex w-full items-center justify-between px-4 py-4 text-left transition cursor-pointer"
             >
-              <span>{item.title}</span>
-              <span
-                className={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-600 transition-transform duration-200 ${
-                  isOpen ? 'rotate-45' : 'rotate-0'
-                }`}
-              >
-                +
+              <span className="font-bold">#{item.id}</span>
+              <span>{localStringFromUTC(item.timestamp)}</span>
+              <span className="font-bold">
+                {formatDuration(item.metrics.total_time)}
               </span>
+              <ChevronDownIcon
+                className={`transition-transform duration-200 size-4 ${isOpen ? 'rotate-180' : 'rotate-0'}`}
+              />
             </button>
             <div
-              className={`overflow-hidden transition-all duration-200 ${
-                isOpen ? 'max-h-80 py-4' : 'max-h-0'
-              } px-4 text-sm text-slate-700`}
+              className={`overflow-hidden transition-all duration-200 space-y-4 ${
+                isOpen ? 'max-h-80 pb-4' : 'max-h-0'
+              } px-4`}
             >
-              {item.content}
+              <CollapsibleListContentItem title="Query" value={item.question} />
+              <div className="grid grid-cols-4 lg:grid-cols-2 gap-3">
+                <CollapsibleListContentItem
+                  title="User Role"
+                  value={item.user_role}
+                />
+                <CollapsibleListContentItem
+                  title="Cache"
+                  value={cacheBooleanToString(item.metrics.cache_hit)}
+                />
+                <CollapsibleListContentItem
+                  title="Queries"
+                  value={item.queries.length}
+                />
+                <CollapsibleListContentItem
+                  title="Retrieved Chunks"
+                  value={item.retrieved_chunks.length}
+                />
+                <CollapsibleListContentItem
+                  title="Total Time"
+                  value={formatDuration(item.metrics.total_time)}
+                />
+              </div>
             </div>
           </div>
         );

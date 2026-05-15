@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { API_URL } from '../utils/settings';
-import type { Answer } from '../App';
+import type { Answer, DebugInstance } from '../App';
+import CollapsibleList from './CollapsibleList';
 
 const DisplayDebugHistory = ({ answer }: { answer: Answer }) => {
-  const [, setAuditHistory] = useState(null);
+  const [debugHistory, setDebugHistory] = useState<DebugInstance[] | null>(
+    null,
+  );
   const getDebugHistory = async () => {
     const res = await fetch(`${API_URL}/audit-logs`, {
       method: 'GET',
@@ -18,19 +21,19 @@ const DisplayDebugHistory = ({ answer }: { answer: Answer }) => {
   useEffect(() => {
     const fetchData = async () => {
       const data = await getDebugHistory();
-      setAuditHistory(data);
+      setDebugHistory(data);
     };
     fetchData();
 
     return () => {
-      setAuditHistory(null);
+      setDebugHistory(null);
     };
   }, [answer]);
 
   return (
     <div>
-      <h2>Retrieval & Generation Debug History</h2>
-      {/* <CollapsibleList items={history} /> */}
+      <h3 className="mb-3">Retrieval & Generation Debug History</h3>
+      {debugHistory && <CollapsibleList items={debugHistory} />}
     </div>
   );
 };

@@ -5,3 +5,8 @@ export function formatDuration(ms: number): string {
 
   return `${(ms / 1000).toFixed(2)}s`;
 }
+
+export function localStringFromUTC(str: string): string {
+  const date = new Date(str);
+  return date.toLocaleString();
+}

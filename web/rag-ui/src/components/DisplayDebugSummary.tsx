@@ -1,4 +1,5 @@
-import { formatDuration } from '../utils/time';
+import { cacheBooleanToString } from '../utils/display';
+import { formatDuration, localStringFromUTC } from '../utils/time';
 import type { Metrics } from './DisplayDebug';
 
 const DisplayDebugSummary = ({
@@ -16,15 +17,14 @@ const DisplayDebugSummary = ({
   retrievedChunks: number;
   metrics: Metrics;
 }) => {
-  const date = new Date(timestamp);
-  const dateFromUtc = `${date.toLocaleString()}`;
+  const localDateFromUtc = localStringFromUTC(timestamp);
   return (
     <div className="grid grid-cols-3 lg:grid-cols-5 gap-3">
       {[
         { title: 'Query ID', value: id },
         {
           title: 'Timestamp',
-          value: dateFromUtc,
+          value: localDateFromUtc,
         },
         {
           title: 'User Role',
@@ -32,11 +32,7 @@ const DisplayDebugSummary = ({
         },
         {
           title: 'Cache',
-          value: metrics.cache_hit ? (
-            <span className="text-green-500">HIT</span>
-          ) : (
-            <span className="text-red-500">MISS</span>
-          ),
+          value: cacheBooleanToString(metrics.cache_hit),
         },
         {
           title: 'Queries',
@@ -59,7 +55,7 @@ const DisplayDebugSummary = ({
           key={index}
           className="flex flex-col gap-0.5 border border-border p-2 rounded bg-gray-50"
         >
-          <span className="text-text">{item.title}</span>
+          <span className="text-text font-semibold">{item.title}</span>
           <span className="font-bold">{item.value}</span>
         </div>
       ))}
