@@ -3,15 +3,8 @@ import Section from './Section';
 import DisplayDebugSummary from './DisplayDebugSummary';
 import DisplayGeneratedQueries from './DisplayGeneratedQueries';
 import DisplayRetrievedChunks from './DisplayRetrievedChunks';
-
-type DebugProps = {
-  id: string;
-  timestamp: string;
-  user_role: string;
-  metrics: Metrics;
-  queries: string[];
-  retrieved_chunks: RetrievedChunk[];
-};
+import DisplayDebugHistory from './DisplayDebugHistory';
+import { useDebugContext } from './DebugContext';
 
 export type Metrics = {
   retrieval_time: number;
@@ -32,7 +25,9 @@ export type RetrievedChunk = {
   keyword_match: number;
 };
 
-const DisplayDebug = ({ debug }: { debug: DebugProps }) => {
+const DisplayDebug = () => {
+  const { latestDebug } = useDebugContext();
+
   return (
     <Section
       title={
@@ -42,17 +37,24 @@ const DisplayDebug = ({ debug }: { debug: DebugProps }) => {
         </div>
       }
     >
-      <div className="flex flex-col gap-5">
-        <DisplayDebugSummary
-          id={debug.id}
-          timestamp={debug.timestamp}
-          userRole={debug.user_role}
-          queries={debug.queries.length}
-          retrievedChunks={debug.retrieved_chunks.length}
-          metrics={debug.metrics}
-        />
-        <DisplayGeneratedQueries items={debug.queries} />
-        <DisplayRetrievedChunks chunks={debug.retrieved_chunks} />
+      <div className="flex gap-5">
+        {latestDebug && (
+          <div className="flex flex-col gap-5 w-3/4">
+            <DisplayDebugSummary
+              id={latestDebug.id}
+              timestamp={latestDebug.timestamp}
+              userRole={latestDebug.user_role}
+              queries={latestDebug.queries.length}
+              retrievedChunks={latestDebug.retrieved_chunks.length}
+              metrics={latestDebug.metrics}
+            />
+            <DisplayGeneratedQueries items={latestDebug.queries} />
+            <DisplayRetrievedChunks chunks={latestDebug.retrieved_chunks} />
+          </div>
+        )}
+        <div className="w-1/4 min-w-[60px]">
+          <DisplayDebugHistory />
+        </div>
       </div>
     </Section>
   );

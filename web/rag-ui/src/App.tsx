@@ -8,8 +8,8 @@ import DisplayDebug, {
   type Metrics,
   type RetrievedChunk,
 } from './components/DisplayDebug';
+import { useDebugContext } from './components/DebugContext';
 import { API_URL } from './utils/settings';
-import DisplayDebugHistory from './components/DisplayDebugHistory';
 
 export type DebugInstance = {
   id: string;
@@ -34,8 +34,8 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [sources, setSources] = useState<any[]>([]);
-  const [debug, setDebug] = useState(null);
   const [loading, setLoading] = useState(false);
+  const { refreshDebugHistory } = useDebugContext();
 
   const q1 = 'Do medical staff have to disinfect tools before procedures?';
   const q2 = 'Who is allowed to view patient records in the system?';
@@ -60,7 +60,7 @@ export default function App() {
 
     setAnswer(data.reply);
     setSources(data.sources || []);
-    setDebug(data.debug);
+    refreshDebugHistory();
 
     setLoading(false);
   };
@@ -72,7 +72,7 @@ export default function App() {
 
   return (
     <div className="p-5 flex gap-5 flex-col lg:flex-row">
-      <div className="lg:max-w-3xl shrink-0 max-w-full">
+      <div className="lg:w-1/3 min-w-2xl w-full">
         <div className="mb-5">
           <div className="flex items-center gap-2 mb-3">
             <ChatBubbleLeftEllipsisIcon className="w-6 h-6 text-accent-bg shrink-0 stroke-2" />
@@ -115,9 +115,8 @@ export default function App() {
         {sources.length > 0 && <DisplaySources sources={sources} />}
       </div>
 
-      {debug && <DisplayDebug debug={debug} />}
-      <div className="lg:max-w-sm shrink-0 max-w-full">
-        {answer && <DisplayDebugHistory answer={answer} />}
+      <div className="w-full lg:w-2/3">
+        <DisplayDebug />
       </div>
     </div>
   );
