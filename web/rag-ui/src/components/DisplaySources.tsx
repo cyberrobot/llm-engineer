@@ -10,6 +10,10 @@ const DisplaySources = ({
   sources: { text: string; id: string }[];
   loading?: boolean;
 }) => {
+  if ((!sources || sources.length === 0) && !loading) {
+    return null;
+  }
+
   return (
     <Section title="Sources Used">
       {loading ? (

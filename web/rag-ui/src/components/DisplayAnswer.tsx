@@ -14,6 +14,10 @@ const DisplayAnswer = ({
   source_ids,
   loading = false,
 }: DisplayAnswerProps) => {
+  if (!answer && !loading) {
+    return null;
+  }
+
   const answerSuccess = answer && source_ids && source_ids.length > 0;
 
   return (
