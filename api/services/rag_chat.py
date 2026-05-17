@@ -1,3 +1,4 @@
+import os
 import time
 
 from fastapi import HTTPException
@@ -10,12 +11,14 @@ from api.services.rerank import rerank_chunks
 from api.services.retrieval import filter_chunks_by_source_ids
 from api.services.settings import CHUNK_TOP_K
 
+DISABLE_CACHE = os.getenv("DISABLE_CACHE", "false").lower() == "true"
+
 
 def rag_chat(query: str, user_role: str):
     try:
         start_time = time.perf_counter()
         cached = get_cache(query, user_role)
-        if cached:
+        if cached and not DISABLE_CACHE:
             log_rag_event(
                 user_role=user_role,
                 question=query,

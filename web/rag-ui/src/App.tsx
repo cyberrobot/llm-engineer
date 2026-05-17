@@ -107,12 +107,15 @@ export default function App() {
 
         {answer && (
           <DisplayAnswer
-            answer={answer.answer}
-            source_ids={answer.source_ids}
+            answer={answer?.answer}
+            source_ids={answer?.source_ids}
+            loading={loading}
           />
         )}
 
-        {sources.length > 0 && <DisplaySources sources={sources} />}
+        {sources.length > 0 && (
+          <DisplaySources loading={loading} sources={sources} />
+        )}
       </div>
 
       <div className="w-full lg:w-2/3">
