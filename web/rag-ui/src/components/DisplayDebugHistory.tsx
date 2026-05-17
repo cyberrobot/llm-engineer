@@ -5,7 +5,8 @@ import CollapsibleList from './CollapsibleList';
 import { useDebugContext } from './DebugContext';
 
 const DisplayDebugHistory = () => {
-  const { refreshCount, setLatestDebug } = useDebugContext();
+  const { refreshCount, setLatestDebug, setDebugHistoryLoading } =
+    useDebugContext();
   const [debugHistory, setDebugHistory] = useState<DebugInstance[] | null>(
     null,
   );
@@ -27,12 +28,15 @@ const DisplayDebugHistory = () => {
       setDebugHistory(data);
       if (data && data.length > 0) {
         setLatestDebug(data[0]);
+        setDebugHistoryLoading(false);
       }
     };
+    setDebugHistoryLoading(true);
     fetchData();
 
     return () => {
       setDebugHistory(null);
+      setDebugHistoryLoading(false);
     };
   }, [refreshCount]);
 

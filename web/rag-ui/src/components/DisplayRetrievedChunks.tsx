@@ -1,12 +1,15 @@
 import React from 'react';
 import type { RetrievedChunk } from './DisplayDebug';
+import SkeletonBlock from './SkeletonBlock';
 
 interface DisplayRetrievedChunksProps {
   chunks: RetrievedChunk[];
+  loading?: boolean;
 }
 
 const DisplayRetrievedChunks: React.FC<DisplayRetrievedChunksProps> = ({
   chunks,
+  loading,
 }) => {
   return (
     <div>
@@ -39,52 +42,84 @@ const DisplayRetrievedChunks: React.FC<DisplayRetrievedChunksProps> = ({
             </tr>
           </thead>
           <tbody>
-            {chunks.map((item, index) => {
-              return (
-                <tr key={item.id}>
-                  <td
-                    className={`text-zinc-900 font-semibold p-2 text-center border-b border-r border-border bg-gray-50 ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
-                  >
-                    {item.rank}
-                  </td>
-                  <td
-                    className={`text-zinc-900 font-semibold p-2 text-center border-b border-r border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
-                  >
-                    {item.hybrid_score.toFixed(3)}
-                  </td>
-                  <td
-                    className={`p-2 text-center border-b border-r border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
-                  >
-                    {item.distance.toFixed(3)}
-                  </td>
-                  <td
-                    className={`p-2 text-center border-b border-r border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
-                  >
-                    {item.keyword_match.toFixed(3)}
-                  </td>
-                  <td
-                    className={`p-2 text-secondary border-b border-r border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
-                  >
-                    {item.id}
-                  </td>
-                  <td
-                    className={`p-2 text-secondary border-b border-r border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
-                  >
-                    {item.doc_id}
-                  </td>
-                  <td
-                    className={`p-2 border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
-                  >
-                    {item.text_snippet}
-                  </td>
-                </tr>
-              );
-            })}
+            {loading ? (
+              <ChunksTableSkeletonBody />
+            ) : (
+              chunks.map((item, index) => {
+                return (
+                  <tr key={item.id}>
+                    <td
+                      className={`text-zinc-900 font-semibold p-2 text-center border-b border-r border-border bg-gray-50 ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
+                    >
+                      {item.rank}
+                    </td>
+                    <td
+                      className={`text-zinc-900 font-semibold p-2 text-center border-b border-r border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
+                    >
+                      {item.hybrid_score.toFixed(3)}
+                    </td>
+                    <td
+                      className={`p-2 text-center border-b border-r border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
+                    >
+                      {item.distance.toFixed(3)}
+                    </td>
+                    <td
+                      className={`p-2 text-center border-b border-r border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
+                    >
+                      {item.keyword_match.toFixed(3)}
+                    </td>
+                    <td
+                      className={`p-2 text-secondary border-b border-r border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
+                    >
+                      {item.id}
+                    </td>
+                    <td
+                      className={`p-2 text-secondary border-b border-r border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
+                    >
+                      {item.doc_id}
+                    </td>
+                    <td
+                      className={`p-2 border-border ${index === chunks.length - 1 ? 'border-b-0' : 'border-b'}`}
+                    >
+                      {item.text_snippet}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>
     </div>
   );
 };
+
+function ChunksTableSkeletonBody() {
+  return [1, 2, 3].map((_, index) => (
+    <tr key={index}>
+      <td className="text-zinc-900 font-semibold p-2 text-center border-b border-r border-border bg-gray-50">
+        <SkeletonBlock height="1.5rem" />
+      </td>
+      <td className="text-zinc-900 font-semibold p-2 text-center border-b border-r border-border">
+        <SkeletonBlock height="1.5rem" />
+      </td>
+      <td className="p-2 text-center border-b border-r border-border">
+        <SkeletonBlock height="1.5rem" />
+      </td>
+      <td className="p-2 text-center border-b border-r border-border">
+        <SkeletonBlock height="1.5rem" />
+      </td>
+      <td className="p-2 text-secondary border-b border-r border-border">
+        <SkeletonBlock height="1.5rem" />
+      </td>
+      <td className="p-2 text-secondary border-b border-r border-border">
+        <SkeletonBlock height="1.5rem" />
+      </td>
+      <td className="p-2 border-border">
+        <SkeletonBlock height="1.5rem" />
+      </td>
+    </tr>
+  ));
+}
 
 export default DisplayRetrievedChunks;

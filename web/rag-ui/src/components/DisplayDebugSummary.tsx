@@ -1,6 +1,7 @@
 import { cacheBooleanToString } from '../utils/display';
 import { formatDuration, localStringFromUTC } from '../utils/time';
 import type { Metrics } from './DisplayDebug';
+import SkeletonBlock from './SkeletonBlock';
 
 const DisplayDebugSummary = ({
   metrics,
@@ -9,6 +10,7 @@ const DisplayDebugSummary = ({
   userRole,
   queries,
   retrievedChunks,
+  loading,
 }: {
   id: string;
   timestamp: string;
@@ -16,6 +18,7 @@ const DisplayDebugSummary = ({
   queries: number;
   retrievedChunks: number;
   metrics: Metrics;
+  loading?: boolean;
 }) => {
   const localDateFromUtc = localStringFromUTC(timestamp);
   return (
@@ -56,7 +59,11 @@ const DisplayDebugSummary = ({
           className="flex flex-col gap-0.5 border border-border p-2 rounded bg-gray-50"
         >
           <span className="text-text font-semibold">{item.title}</span>
-          <span className="font-bold">{item.value}</span>
+          {loading ? (
+            <SkeletonBlock height="1.5rem" />
+          ) : (
+            <span className="font-bold">{item.value}</span>
+          )}
         </div>
       ))}
     </div>

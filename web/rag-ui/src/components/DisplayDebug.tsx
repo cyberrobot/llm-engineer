@@ -26,7 +26,7 @@ export type RetrievedChunk = {
 };
 
 const DisplayDebug = () => {
-  const { latestDebug } = useDebugContext();
+  const { latestDebug, loading } = useDebugContext();
 
   return (
     <Section
@@ -47,9 +47,16 @@ const DisplayDebug = () => {
               queries={latestDebug.queries.length}
               retrievedChunks={latestDebug.retrieved_chunks.length}
               metrics={latestDebug.metrics}
+              loading={loading}
             />
-            <DisplayGeneratedQueries items={latestDebug.queries} />
-            <DisplayRetrievedChunks chunks={latestDebug.retrieved_chunks} />
+            <DisplayGeneratedQueries
+              items={latestDebug.queries}
+              loading={loading}
+            />
+            <DisplayRetrievedChunks
+              chunks={latestDebug.retrieved_chunks}
+              loading={loading}
+            />
           </div>
         )}
         <div className="w-1/4 min-w-[60px]">

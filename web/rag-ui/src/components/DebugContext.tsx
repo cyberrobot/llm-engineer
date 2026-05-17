@@ -7,6 +7,8 @@ type DebugContextType = {
   setLatestDebug: (d: DebugInstance) => void;
   refreshCount: number;
   refreshDebugHistory: () => void;
+  loading: boolean;
+  setDebugHistoryLoading: (b: boolean) => void;
 };
 
 const DebugContext = createContext<DebugContextType | undefined>(undefined);
@@ -22,6 +24,7 @@ export const useDebugContext = () => {
 export const DebugProvider = ({ children }: { children: ReactNode }) => {
   const [refreshCount, setRefreshCount] = useState(0);
   const [latestDebug, setLatestDebug] = useState<DebugInstance | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const refreshDebugHistory = useCallback(() => {
     setRefreshCount((c) => c + 1);
@@ -29,7 +32,14 @@ export const DebugProvider = ({ children }: { children: ReactNode }) => {
 
   return (
     <DebugContext.Provider
-      value={{ refreshCount, refreshDebugHistory, latestDebug, setLatestDebug }}
+      value={{
+        refreshCount,
+        refreshDebugHistory,
+        latestDebug,
+        setLatestDebug,
+        loading,
+        setDebugHistoryLoading: setLoading,
+      }}
     >
       {children}
     </DebugContext.Provider>
