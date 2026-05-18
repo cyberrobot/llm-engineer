@@ -71,8 +71,8 @@ export default function App() {
   };
 
   return (
-    <div className="p-5 flex gap-5 flex-col lg:flex-row">
-      <div className="lg:w-1/3 min-w-2xl w-full">
+    <div className="p-5 flex gap-5 flex-col 2xl:flex-row">
+      <div className="2xl:w-1/3 w-full">
         <div className="mb-5">
           <div className="flex items-center gap-2 mb-3">
             <ChatBubbleLeftEllipsisIcon className="w-6 h-6 text-accent-bg shrink-0 stroke-2" />
@@ -81,8 +81,9 @@ export default function App() {
           <h3 className="text-text text-sm font-bold mb-4">
             Ask a question based on your healthcare knowledge base.
           </h3>
-
-          <DisplayInput query={query} queryFn={ask} loading={loading} />
+          <div className="max-w-180">
+            <DisplayInput query={query} queryFn={ask} loading={loading} />
+          </div>
         </div>
 
         <div className="mb-5 flex gap-3 flex-col lg:flex-row">
@@ -114,7 +115,7 @@ export default function App() {
         <DisplaySources loading={loading} sources={sources} />
       </div>
 
-      <div className="w-full lg:w-2/3">
+      <div className="w-full 2xl:w-2/3">
         <DisplayDebug />
       </div>
     </div>

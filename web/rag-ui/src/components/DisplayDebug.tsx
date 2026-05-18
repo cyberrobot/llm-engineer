@@ -1,8 +1,14 @@
 import { CodeBracketIcon } from '@heroicons/react/24/outline';
 import Section from './Section';
-import DisplayDebugSummary from './DisplayDebugSummary';
-import DisplayGeneratedQueries from './DisplayGeneratedQueries';
-import DisplayRetrievedChunks from './DisplayRetrievedChunks';
+import DisplayDebugSummary, {
+  DisplayDebugSummarySkeleton,
+} from './DisplayDebugSummary';
+import DisplayGeneratedQueries, {
+  DisplayGeneratedQueriesSkeleton,
+} from './DisplayGeneratedQueries';
+import DisplayRetrievedChunks, {
+  DisplayRetrievedChunksSkeleton,
+} from './DisplayRetrievedChunks';
 import DisplayDebugHistory from './DisplayDebugHistory';
 import { useDebugContext } from './DebugContext';
 
@@ -37,29 +43,32 @@ const DisplayDebug = () => {
         </div>
       }
     >
-      <div className="flex gap-5">
-        {latestDebug && (
-          <div className="flex flex-col gap-5 w-3/4">
-            <DisplayDebugSummary
-              id={latestDebug.id}
-              timestamp={latestDebug.timestamp}
-              userRole={latestDebug.user_role}
-              queries={latestDebug.queries.length}
-              retrievedChunks={latestDebug.retrieved_chunks.length}
-              metrics={latestDebug.metrics}
-              loading={loading}
-            />
-            <DisplayGeneratedQueries
-              items={latestDebug.queries}
-              loading={loading}
-            />
-            <DisplayRetrievedChunks
-              chunks={latestDebug.retrieved_chunks}
-              loading={loading}
-            />
-          </div>
-        )}
-        <div className="w-1/4 min-w-[60px]">
+      <div className="flex gap-5 lg:flex-row flex-col justify-between">
+        <div className="flex flex-col gap-5">
+          {loading ? (
+            <>
+              <DisplayDebugSummarySkeleton />
+              <DisplayGeneratedQueriesSkeleton />
+              <DisplayRetrievedChunksSkeleton />
+            </>
+          ) : (
+            latestDebug && (
+              <>
+                <DisplayDebugSummary
+                  id={latestDebug.id}
+                  timestamp={latestDebug.timestamp}
+                  userRole={latestDebug.user_role}
+                  queries={latestDebug.queries.length}
+                  retrievedChunks={latestDebug.retrieved_chunks.length}
+                  metrics={latestDebug.metrics}
+                />
+                <DisplayGeneratedQueries items={latestDebug.queries} />
+                <DisplayRetrievedChunks chunks={latestDebug.retrieved_chunks} />
+              </>
+            )
+          )}
+        </div>
+        <div className="lg:w-70 min-w-[280px] w-full">
           <DisplayDebugHistory />
         </div>
       </div>

@@ -24,7 +24,7 @@ export const useDebugContext = () => {
 export const DebugProvider = ({ children }: { children: ReactNode }) => {
   const [refreshCount, setRefreshCount] = useState(0);
   const [latestDebug, setLatestDebug] = useState<DebugInstance | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const refreshDebugHistory = useCallback(() => {
     setRefreshCount((c) => c + 1);

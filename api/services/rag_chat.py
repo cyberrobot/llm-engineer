@@ -3,7 +3,7 @@ import time
 
 from fastapi import HTTPException
 
-from api.services.audit import get_latest_audit_log_for_query, log_rag_event
+from api.services.audit import log_rag_event
 from api.services.cache import get_cache, set_cache
 from api.services.llm import ask_rag, estimate_tokens
 from api.services.rag_search import rag_search
@@ -12,9 +12,12 @@ from api.services.retrieval import filter_chunks_by_source_ids
 from api.services.settings import CHUNK_TOP_K
 
 DISABLE_CACHE = os.getenv("DISABLE_CACHE", "false").lower() == "true"
+DEBUG_DELAY = os.getenv("DEBUG_DELAY", "false").lower() == "true"
 
 
 def rag_chat(query: str, user_role: str):
+    if DEBUG_DELAY:
+        time.sleep(2)
     try:
         start_time = time.perf_counter()
         cached = get_cache(query, user_role)
@@ -33,8 +36,6 @@ def rag_chat(query: str, user_role: str):
                     "total_time": round((time.perf_counter() - start_time) * 1000, 4),
                 },
             )
-            debug = get_latest_audit_log_for_query(query, user_role)
-            cached["debug"] = debug
             return cached
 
         rag_search_output = rag_search(query, user_role)
@@ -71,8 +72,9 @@ def rag_chat(query: str, user_role: str):
                     "distance": chunk["distance"],
                     "keyword_match": chunk["keyword_match"],
                     "hybrid_score": chunk["hybrid_score"],
+                    "rank": rank,
                 }
-                for chunk in reranked
+                for rank, chunk in enumerate(reranked, start=1)
             ],
             queries=multi_query,
             reply=reply,
@@ -93,8 +95,7 @@ def rag_chat(query: str, user_role: str):
             }
             for chunk in cited_chunks
         ]
-        debug = get_latest_audit_log_for_query(query, user_role)
-        cached_response = {"reply": reply, "sources": sources, "debug": debug}
+        cached_response = {"reply": reply, "sources": sources}
 
         set_cache(query, user_role, cached_response)
 

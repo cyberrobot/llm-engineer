@@ -1,7 +1,11 @@
 import json
+import os
+import time
 from datetime import datetime, timezone
 
 from api.db.database import get_connection
+
+DEBUG_DELAY = os.getenv("DEBUG_DELAY", "false").lower() == "true"
 
 
 def log_rag_event(
@@ -34,6 +38,8 @@ def log_rag_event(
 
 
 def get_audit_logs(limit: int):
+    if DEBUG_DELAY:
+        time.sleep(2)
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -81,17 +87,13 @@ def get_latest_audit_log_for_query(question: str, user_role: str):
     if not row:
         return None
 
-    reranked_chunks_with_rank = [
-        {**chunk, "rank": rank} for rank, chunk in enumerate(row[5], start=1)
-    ]
-
     return {
         "id": row[0],
         "timestamp": row[1].isoformat() if hasattr(row[1], "isoformat") else row[1],
         "user_role": row[2],
         "question": row[3],
         "reply": row[4],
-        "retrieved_chunks": reranked_chunks_with_rank,
+        "retrieved_chunks": row[5],
         "metrics": row[6],
         "queries": row[7],
     }

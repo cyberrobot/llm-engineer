@@ -3,6 +3,8 @@ import { formatDuration, localStringFromUTC } from '../utils/time';
 import type { Metrics } from './DisplayDebug';
 import SkeletonBlock from './SkeletonBlock';
 
+const wrapperClasses = 'grid grid-cols-3 lg:grid-cols-5 xl:grid-cols-7 gap-3';
+
 const DisplayDebugSummary = ({
   metrics,
   id,
@@ -10,7 +12,6 @@ const DisplayDebugSummary = ({
   userRole,
   queries,
   retrievedChunks,
-  loading,
 }: {
   id: string;
   timestamp: string;
@@ -18,11 +19,10 @@ const DisplayDebugSummary = ({
   queries: number;
   retrievedChunks: number;
   metrics: Metrics;
-  loading?: boolean;
 }) => {
   const localDateFromUtc = localStringFromUTC(timestamp);
   return (
-    <div className="grid grid-cols-3 lg:grid-cols-5 gap-3">
+    <div className={wrapperClasses}>
       {[
         { title: 'Query ID', value: id },
         {
@@ -59,11 +59,7 @@ const DisplayDebugSummary = ({
           className="flex flex-col gap-0.5 border border-border p-2 rounded bg-gray-50"
         >
           <span className="text-text font-semibold">{item.title}</span>
-          {loading ? (
-            <SkeletonBlock height="1.5rem" />
-          ) : (
-            <span className="font-bold">{item.value}</span>
-          )}
+          <span className="font-bold">{item.value}</span>
         </div>
       ))}
     </div>
@@ -71,3 +67,23 @@ const DisplayDebugSummary = ({
 };
 
 export default DisplayDebugSummary;
+
+export const DisplayDebugSummarySkeleton = () => {
+  return (
+    <div className={wrapperClasses}>
+      {[...Array(11)].map((_, index) => (
+        <div
+          key={index}
+          className="flex flex-col gap-0.5 border border-border p-2 rounded bg-gray-50"
+        >
+          <span className="text-text font-semibold">
+            <SkeletonBlock height="1.5rem" width="100px" />
+          </span>
+          <span className="font-bold">
+            <SkeletonBlock height="1.5rem" width="100px" />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};

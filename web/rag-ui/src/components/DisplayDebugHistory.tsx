@@ -5,7 +5,7 @@ import CollapsibleList from './CollapsibleList';
 import { useDebugContext } from './DebugContext';
 
 const DisplayDebugHistory = () => {
-  const { refreshCount, setLatestDebug, setDebugHistoryLoading } =
+  const { refreshCount, setLatestDebug, setDebugHistoryLoading, loading } =
     useDebugContext();
   const [debugHistory, setDebugHistory] = useState<DebugInstance[] | null>(
     null,
@@ -25,8 +25,8 @@ const DisplayDebugHistory = () => {
   useEffect(() => {
     const fetchData = async () => {
       const data = await getDebugHistory();
-      setDebugHistory(data);
       if (data && data.length > 0) {
+        setDebugHistory(data);
         setLatestDebug(data[0]);
         setDebugHistoryLoading(false);
       }
@@ -40,7 +40,7 @@ const DisplayDebugHistory = () => {
     };
   }, [refreshCount]);
 
-  return debugHistory && <CollapsibleList items={debugHistory} />;
+  return <CollapsibleList loading={loading} items={debugHistory} />;
 };
 
 export default DisplayDebugHistory;

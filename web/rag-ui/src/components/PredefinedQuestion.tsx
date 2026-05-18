@@ -19,9 +19,10 @@ const PredefinedQuestion = ({
       disabled={disabled}
       className={
         `flex 
-        gap-2 
-        py-3 
-        px-4 
+        gap-2
+        lg:items-center 
+        py-3
+        px-4
         text-left
         border 
         border-accent-border 
