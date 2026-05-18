@@ -5,3 +5,5 @@ psycopg[binary]
 redis
 python-dotenv
 numpy
+slowapi
+limits[redis]
