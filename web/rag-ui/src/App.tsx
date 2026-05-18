@@ -71,7 +71,7 @@ export default function App() {
   };
 
   return (
-    <div className="p-5 ">
+    <div className="p-5">
       <Header />
       <div className="flex gap-5 flex-col 2xl:flex-row">
         <div className="2xl:w-1/3 w-full">

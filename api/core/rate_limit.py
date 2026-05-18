@@ -1,9 +1,9 @@
 import os
 
 from fastapi import Request, Response
+from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
-from slowapi.extension import _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 
 limiter = Limiter(
@@ -14,6 +14,17 @@ limiter = Limiter(
 
 def rate_limit_handler(request: Request, exc: Exception) -> Response:
     if isinstance(exc, RateLimitExceeded):
-        return _rate_limit_exceeded_handler(request, exc)
-
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": {
+                    "code": "RATE_LIMIT_EXCEEDED",
+                    "message": "Too many requests. Please wait a moment before trying again.",
+                    "retry_after_seconds": 60,
+                }
+            },
+            headers={
+                "Retry-After": "60",
+            },
+        )
     raise exc
