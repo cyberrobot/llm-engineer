@@ -3,7 +3,7 @@ import time
 
 from fastapi import HTTPException
 
-from api.services.audit import log_rag_event
+from api.services.audit import get_latest_audit_log_for_query, log_rag_event
 from api.services.cache import get_cache, set_cache
 from api.services.llm import ask_rag, estimate_tokens
 from api.services.rag_search import rag_search
@@ -21,21 +21,23 @@ def rag_chat(query: str, user_role: str):
     try:
         start_time = time.perf_counter()
         cached = get_cache(query, user_role)
+        latestDebugEvent = get_latest_audit_log_for_query(question=query, user_role=user_role)
         if cached and not DISABLE_CACHE:
-            log_rag_event(
-                user_role=user_role,
-                question=query,
-                retrieved_chunks=cached["debug"]["retrieved_chunks"],
-                queries=cached["debug"]["queries"],
-                reply=cached["debug"]["reply"],
-                metrics={
-                    **cached["debug"]["metrics"],
-                    "cache_hit": True,
-                    "retrieval_time": 0,
-                    "llm_time": 0,
-                    "total_time": round((time.perf_counter() - start_time) * 1000, 4),
-                },
-            )
+            if latestDebugEvent:
+                log_rag_event(
+                    user_role=user_role,
+                    question=query,
+                    retrieved_chunks=latestDebugEvent["retrieved_chunks"],
+                    reply=latestDebugEvent["reply"],
+                    queries=latestDebugEvent["queries"],
+                    metrics={
+                        **latestDebugEvent["metrics"],
+                        "cache_hit": True,
+                        "retrieval_time": 0,
+                        "llm_time": 0,
+                        "total_time": round((time.perf_counter() - start_time) * 1000, 4),
+                    },
+                )
             return cached
 
         rag_search_output = rag_search(query, user_role)
@@ -49,7 +51,6 @@ def rag_chat(query: str, user_role: str):
                     "source_ids": [],
                 },
                 "sources": [],
-                "debug": {},
             }
         llm_start_time = time.perf_counter()
         reranked = rerank_chunks(query, results, top_k=CHUNK_TOP_K)

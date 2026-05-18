@@ -2,11 +2,14 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from pydantic import BaseModel
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
+from api.core.rate_limit import limiter, rate_limit_handler
 from api.db.database import init_db
 from api.routes import audit, ingest, rag
 
@@ -14,7 +17,6 @@ load_dotenv()
 
 init_db()
 app = FastAPI()
-
 logging.basicConfig(level=logging.INFO)
 
 app.add_middleware(
@@ -27,6 +29,15 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
+
+app.state.limiter = limiter
+
+app.add_exception_handler(
+    RateLimitExceeded,
+    rate_limit_handler,
+)
+
+app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(ingest.router)
 app.include_router(rag.router)
@@ -50,19 +61,3 @@ class ChatResponse(BaseModel):
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
-
-
-@app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest):
-    try:
-        response = client.responses.create(
-            model="gpt-5.4-nano",
-            input=f"You are a helpful assistant. Reply clearly and briefly.\n\nUser: {request.message}",
-        )
-
-        reply = response.output_text.strip()
-
-        return ChatResponse(reply=reply)
-
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc

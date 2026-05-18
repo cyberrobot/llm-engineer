@@ -1,8 +1,9 @@
 import uuid
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
+from api.core.rate_limit import limiter
 from api.services.embeddings import get_embedding
 from api.services.storage import (
     list_all_chunks,
@@ -24,12 +25,13 @@ def chunk_text(text: str, size: int = 500):
 
 
 @router.post("/ingest")
-def ingest(request: IngestRequest):
+@limiter.limit("5/minute")
+def ingest(request: Request, body: IngestRequest):
     doc_id = str(uuid.uuid4())
 
-    save_document(doc_id, request.doc_type, request.access_roles)
+    save_document(doc_id, body.doc_type, body.access_roles)
 
-    chunks = chunk_text(request.text)
+    chunks = chunk_text(body.text)
 
     for chunk in chunks:
         save_chunk(
@@ -37,7 +39,7 @@ def ingest(request: IngestRequest):
             doc_id=doc_id,
             text=chunk,
             embedding=get_embedding(chunk),
-            access_roles=request.access_roles,
+            access_roles=body.access_roles,
         )
 
     return {"doc_id": doc_id, "chunks_created": len(chunks)}
