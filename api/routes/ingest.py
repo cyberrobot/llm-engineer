@@ -1,6 +1,7 @@
+import os
 import uuid
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from api.core.rate_limit import limiter
@@ -12,6 +13,8 @@ from api.services.storage import (
 )
 
 router = APIRouter()
+
+DISABLE_INGEST = os.getenv("DISABLE_INGEST", "false").lower() == "true"
 
 
 class IngestRequest(BaseModel):
@@ -27,6 +30,10 @@ def chunk_text(text: str, size: int = 500):
 @router.post("/ingest")
 @limiter.limit("5/minute")
 def ingest(request: Request, body: IngestRequest):
+    if DISABLE_INGEST:
+        raise HTTPException(
+            status_code=403, detail="Ingest endpoint is disabled in this environment."
+        )
     doc_id = str(uuid.uuid4())
 
     save_document(doc_id, body.doc_type, body.access_roles)
