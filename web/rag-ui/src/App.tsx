@@ -1,4 +1,3 @@
-import { ChatBubbleLeftEllipsisIcon } from '@heroicons/react/24/outline';
 import { useState } from 'react';
 import PredefinedQuestion from './components/PredefinedQuestion';
 import DisplayAnswer from './components/DisplayAnswer';
@@ -10,6 +9,7 @@ import DisplayDebug, {
 } from './components/DisplayDebug';
 import { useDebugContext } from './components/DebugContext';
 import { API_URL } from './utils/settings';
+import Header from './components/Header';
 
 export type DebugInstance = {
   id: string;
@@ -71,52 +71,48 @@ export default function App() {
   };
 
   return (
-    <div className="p-5 flex gap-5 flex-col 2xl:flex-row">
-      <div className="2xl:w-1/3 w-full">
-        <div className="mb-5">
-          <div className="flex items-center gap-2 mb-3">
-            <ChatBubbleLeftEllipsisIcon className="w-6 h-6 text-accent-bg shrink-0 stroke-2" />
-            <h1>RAG Demo</h1>
+    <div className="p-5 ">
+      <Header />
+      <div className="flex gap-5 flex-col 2xl:flex-row">
+        <div className="2xl:w-1/3 w-full">
+          <div className="mb-5">
+            <div className="max-w-180">
+              <DisplayInput query={query} queryFn={ask} loading={loading} />
+            </div>
           </div>
-          <h3 className="text-text text-sm font-bold mb-4">
-            Ask a question based on your healthcare knowledge base.
-          </h3>
-          <div className="max-w-180">
-            <DisplayInput query={query} queryFn={ask} loading={loading} />
+
+          <div className="mb-5 flex gap-3 flex-col lg:flex-row">
+            <PredefinedQuestion
+              question={q1}
+              onClick={setQueryAndAsk}
+              disabled={loading}
+            />
+
+            <PredefinedQuestion
+              question={q2}
+              onClick={setQueryAndAsk}
+              disabled={loading}
+            />
+
+            <PredefinedQuestion
+              question={q3}
+              onClick={setQueryAndAsk}
+              disabled={loading}
+            />
           </div>
+
+          <DisplayAnswer
+            answer={answer?.answer}
+            source_ids={answer?.source_ids}
+            loading={loading}
+          />
+
+          <DisplaySources loading={loading} sources={sources} />
         </div>
 
-        <div className="mb-5 flex gap-3 flex-col lg:flex-row">
-          <PredefinedQuestion
-            question={q1}
-            onClick={setQueryAndAsk}
-            disabled={loading}
-          />
-
-          <PredefinedQuestion
-            question={q2}
-            onClick={setQueryAndAsk}
-            disabled={loading}
-          />
-
-          <PredefinedQuestion
-            question={q3}
-            onClick={setQueryAndAsk}
-            disabled={loading}
-          />
+        <div className="w-full 2xl:w-2/3">
+          <DisplayDebug />
         </div>
-
-        <DisplayAnswer
-          answer={answer?.answer}
-          source_ids={answer?.source_ids}
-          loading={loading}
-        />
-
-        <DisplaySources loading={loading} sources={sources} />
-      </div>
-
-      <div className="w-full 2xl:w-2/3">
-        <DisplayDebug />
       </div>
     </div>
   );
