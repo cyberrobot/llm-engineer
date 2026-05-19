@@ -10,6 +10,7 @@ import DisplayDebug, {
 import { useDebugContext } from './components/DebugContext';
 import { API_URL } from './utils/settings';
 import Header from './components/Header';
+import { useUser } from './components/UserContext';
 
 export type DebugInstance = {
   id: string;
@@ -36,6 +37,7 @@ export default function App() {
   const [sources, setSources] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const { refreshDebugHistory } = useDebugContext();
+  const { userRole } = useUser();
 
   const q1 = 'Do medical staff have to disinfect tools before procedures?';
   const q2 = 'Who is allowed to view patient records in the system?';
@@ -52,7 +54,7 @@ export default function App() {
       },
       body: JSON.stringify({
         message: str || query,
-        user_role: 'doctor',
+        user_role: userRole,
       }),
     });
 
