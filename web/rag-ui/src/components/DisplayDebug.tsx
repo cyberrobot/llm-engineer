@@ -11,6 +11,9 @@ import DisplayRetrievedChunks, {
 } from './DisplayRetrievedChunks';
 import DisplayDebugHistory from './DisplayDebugHistory';
 import { useDebugContext } from './DebugContext';
+import DisplayDebugQuestion, {
+  DisplayDebugQuestionSkeleton,
+} from './DisplayDebugQuestion';
 
 export type Metrics = {
   retrieval_time: number;
@@ -48,6 +51,7 @@ const DisplayDebug = () => {
           {loading ? (
             <>
               <DisplayDebugSummarySkeleton />
+              <DisplayDebugQuestionSkeleton />
               <DisplayGeneratedQueriesSkeleton />
               <DisplayRetrievedChunksSkeleton />
             </>
@@ -61,6 +65,7 @@ const DisplayDebug = () => {
                 retrievedChunks={latestDebug.retrieved_chunks.length}
                 metrics={latestDebug.metrics}
               />
+              <DisplayDebugQuestion question={latestDebug.question} />
               <DisplayGeneratedQueries items={latestDebug.queries} />
               <DisplayRetrievedChunks chunks={latestDebug.retrieved_chunks} />
             </>
