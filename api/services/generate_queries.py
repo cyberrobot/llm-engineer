@@ -2,29 +2,15 @@ import json
 
 from openai import OpenAI
 
+from api.core.load_prompt import load_prompt
+
 client = OpenAI()
+system_prompt = load_prompt("query_generation.md")
 
 
 def generate_queries(query: str) -> list[str]:
     prompt = f"""
-Generate 3 different search queries for retrieving relevant documents.
-
-Rules:
-- Each query should use different wording
-- Remove question wording
-- Convert intent into positive factual terms
-- Replace negations (optional, not required) with opposites (required, mandatory)
-- Add domain synonyms
-- Include relevant context words
-- Return 6–12 search terms only
-- Return ONLY a JSON array of strings
-
-Example:
-[
-  "sterilise instruments hygiene protocol",
-  "clean medical equipment disinfection staff",
-  "sterilization procedures hospital hygiene"
-]
+{system_prompt}
 
 User query: 
 {query}
