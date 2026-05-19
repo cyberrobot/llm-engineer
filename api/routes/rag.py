@@ -18,6 +18,6 @@ class RagChatResponse(BaseModel):
 
 
 @router.post("/rag-chat", response_model=RagChatResponse)
-@limiter.limit("3/minute")
+@limiter.limit("20/minute")
 def rag_chat_endpoint(request: Request, body: RagChatRequest):
     return rag_chat(query=body.message, user_role=body.user_role)
