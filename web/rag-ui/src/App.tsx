@@ -39,9 +39,11 @@ export default function App() {
   const { refreshDebugHistory } = useDebugContext();
   const { userRole } = useUser();
 
-  const q1 = 'Do medical staff have to disinfect tools before procedures?';
-  const q2 = 'Who is allowed to view patient records in the system?';
-  const q3 = 'What should be done if a patient shows signs of infection?';
+  const q1 = 'What procedures should staff follow before performing surgery?';
+  const q2 =
+    'What checks are required before approving a large international payment?';
+  const q3 =
+    'How should support agents handle customer complaints about delayed deliveries?';
 
   const ask = async (str: string = '') => {
     setLoading(true);

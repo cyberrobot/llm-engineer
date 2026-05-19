@@ -28,8 +28,8 @@ const DisplayDebugHistory = () => {
       if (data && data.length > 0) {
         setDebugHistory(data);
         setLatestDebug(data[0]);
-        setDebugHistoryLoading(false);
       }
+      setDebugHistoryLoading(false);
     };
     setDebugHistoryLoading(true);
     fetchData();

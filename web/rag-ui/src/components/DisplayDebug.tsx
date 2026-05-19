@@ -38,7 +38,7 @@ const DisplayDebug = () => {
     <Section
       title={
         <div className="flex items-center gap-2 mb-3">
-          <CodeBracketIcon className="size-6 text-accent-bg stroke-2" />
+          <CodeBracketIcon className="size-5 text-accent-bg stroke-2" />
           <h2>Retrieval & Generation Debug</h2>
         </div>
       }
@@ -51,21 +51,21 @@ const DisplayDebug = () => {
               <DisplayGeneratedQueriesSkeleton />
               <DisplayRetrievedChunksSkeleton />
             </>
+          ) : latestDebug ? (
+            <>
+              <DisplayDebugSummary
+                id={latestDebug.id}
+                timestamp={latestDebug.timestamp}
+                userRole={latestDebug.user_role}
+                queries={latestDebug.queries.length}
+                retrievedChunks={latestDebug.retrieved_chunks.length}
+                metrics={latestDebug.metrics}
+              />
+              <DisplayGeneratedQueries items={latestDebug.queries} />
+              <DisplayRetrievedChunks chunks={latestDebug.retrieved_chunks} />
+            </>
           ) : (
-            latestDebug && (
-              <>
-                <DisplayDebugSummary
-                  id={latestDebug.id}
-                  timestamp={latestDebug.timestamp}
-                  userRole={latestDebug.user_role}
-                  queries={latestDebug.queries.length}
-                  retrievedChunks={latestDebug.retrieved_chunks.length}
-                  metrics={latestDebug.metrics}
-                />
-                <DisplayGeneratedQueries items={latestDebug.queries} />
-                <DisplayRetrievedChunks chunks={latestDebug.retrieved_chunks} />
-              </>
-            )
+            <p>No debug data available.</p>
           )}
         </div>
         <div className="lg:w-70 min-w-[280px] w-full">
