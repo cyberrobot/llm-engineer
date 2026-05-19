@@ -36,7 +36,7 @@ export default function App() {
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [sources, setSources] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const { refreshDebugHistory } = useDebugContext();
+  const { refreshDebugHistory, setDebugHistoryLoading } = useDebugContext();
   const { userRole } = useUser();
 
   const q1 = 'What procedures should staff follow before performing surgery?';
@@ -47,6 +47,7 @@ export default function App() {
 
   const ask = async (str: string = '') => {
     setLoading(true);
+    setDebugHistoryLoading(true);
 
     const res = await fetch(`${API_URL}/rag-chat`, {
       method: 'POST',
@@ -59,12 +60,12 @@ export default function App() {
         user_role: userRole,
       }),
     });
+    refreshDebugHistory();
 
     const data = await res.json();
 
     setAnswer(data.reply);
     setSources(data.sources || []);
-    refreshDebugHistory();
 
     setLoading(false);
   };
