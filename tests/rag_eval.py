@@ -13,12 +13,44 @@ logger = logging.getLogger(__name__)
 
 TEST_CASES = [
     {
-        "query": "Do doctors need to sterilise equipment?",
-        "expected_keywords": ["sterilisation", "hygiene"],
+        "query": "What procedures should staff follow before performing surgery?",
+        "user_role": "doctor",
+        "expected_keywords": [
+            "disinfect",
+            "sterilise",
+            "protective equipment",
+            "consent",
+            "infection",
+        ],
+        "expected_min_sources": 2,
+        "expected_max_sources": 5,
     },
-    {"query": "Who can prescribe antibiotics?", "expected_keywords": ["physicians", "prescribe"]},
-    {"query": "infection signs", "expected_keywords": ["fever", "inflammation"]},
-    {"query": "Who can access patient data?", "expected_keywords": ["records", "confidential"]},
+    {
+        "query": "What checks are required before approving a large international payment?",
+        "user_role": "manager",
+        "expected_keywords": [
+            "anti-money laundering",
+            "identity verification",
+            "suspicious transactions",
+            "sanctions",
+            "audit",
+        ],
+        "expected_min_sources": 2,
+        "expected_max_sources": 5,
+    },
+    {
+        "query": "How should support agents handle customer complaints about delayed deliveries?",
+        "user_role": "manager",
+        "expected_keywords": [
+            "apologise",
+            "tracking",
+            "compensation",
+            "logistics",
+            "crm",
+        ],
+        "expected_min_sources": 2,
+        "expected_max_sources": 5,
+    },
 ]
 
 
@@ -26,9 +58,9 @@ def evaluate_retrieval():
     hits = 0
 
     for case in TEST_CASES:
-        results = rag_search(case["query"], user_role="doctor")
+        results = rag_search(case["query"], case["user_role"])
 
-        texts = [r["text"].lower() for r in results]
+        texts = [r["text"].lower() for r in results["results"]]
 
         if any(any(keyword in text for keyword in case["expected_keywords"]) for text in texts):
             hits += 1
@@ -41,23 +73,42 @@ def evaluate_retrieval():
 def evaluate_answers():
     hits = 0
     for case in TEST_CASES:
-        response = rag_chat(case["query"], "doctor")
+        response = rag_chat(case["query"], case["user_role"])
 
-        answer = response["reply"].lower()
+        answer = response["reply"]["answer"].lower()
 
-        logger.info(f"Query: {case['query']}")
-        logger.info(f"Answer: {answer}")
+        source_ids = response["reply"].get("source_ids", [])
 
-        if score_answer(answer, case["expected_keywords"]):
+        answer_ok = score_answer(answer, case["expected_keywords"])
+
+        sources_ok = score_sources(
+            source_ids,
+            case["expected_min_sources"],
+            case["expected_max_sources"],
+        )
+
+        if answer_ok and sources_ok:
             hits += 1
         else:
-            logger.info(f"Missed Answer - Query: {case['query']}, Answer: {answer}")
+            logger.info(
+                "Missed Answer - Query: %s, Answer OK: %s, Sources OK: %s, Source Count: %s, Answer: %s",
+                case["query"],
+                answer_ok,
+                sources_ok,
+                len(source_ids),
+                answer,
+            )
 
     return hits
 
 
 def score_answer(answer: str, keywords: list[str]) -> bool:
-    return any(k in answer for k in keywords)
+    answer = answer.lower()
+    return any(keyword.lower() in answer for keyword in keywords)
+
+
+def score_sources(source_ids: list[str], min_sources: int, max_sources: int) -> bool:
+    return min_sources <= len(source_ids) <= max_sources
 
 
 def evaluate():

@@ -13,6 +13,7 @@ from api.services.settings import CHUNK_TOP_K
 
 DISABLE_CACHE = os.getenv("DISABLE_CACHE", "false").lower() == "true"
 DEBUG_DELAY = os.getenv("DEBUG_DELAY", "false").lower() == "true"
+DISABLE_AUDIT_LOGS = os.getenv("DISABLE_AUDIT_LOGS", "false").lower() == "true"
 
 
 def rag_chat(query: str, user_role: str):
@@ -23,7 +24,7 @@ def rag_chat(query: str, user_role: str):
         cached = get_cache(query, user_role)
         latestDebugEvent = get_latest_audit_log_for_query(question=query, user_role=user_role)
         if cached and not DISABLE_CACHE:
-            if latestDebugEvent:
+            if latestDebugEvent and not DISABLE_AUDIT_LOGS:
                 log_rag_event(
                     user_role=user_role,
                     question=query,
@@ -62,32 +63,33 @@ def rag_chat(query: str, user_role: str):
         llm_time = (time.perf_counter() - llm_start_time) * 1000
         total_time = (time.perf_counter() - start_time) * 1000
 
-        log_rag_event(
-            user_role=user_role,
-            question=query,
-            retrieved_chunks=[
-                {
-                    "id": chunk["id"],
-                    "doc_id": chunk["doc_id"],
-                    "text_snippet": chunk["text"][:150],
-                    "distance": chunk["distance"],
-                    "keyword_match": chunk["keyword_match"],
-                    "hybrid_score": chunk["hybrid_score"],
-                    "rank": rank,
-                }
-                for rank, chunk in enumerate(reranked, start=1)
-            ],
-            queries=multi_query,
-            reply=reply,
-            metrics={
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "retrieval_time": round(retrieval_time, 4),
-                "llm_time": round(llm_time, 4),
-                "total_time": round(total_time, 4),
-                "cache_hit": False,
-            },
-        )
+        if not DISABLE_AUDIT_LOGS:
+            log_rag_event(
+                user_role=user_role,
+                question=query,
+                retrieved_chunks=[
+                    {
+                        "id": chunk["id"],
+                        "doc_id": chunk["doc_id"],
+                        "text_snippet": chunk["text"][:150],
+                        "distance": chunk["distance"],
+                        "keyword_match": chunk["keyword_match"],
+                        "hybrid_score": chunk["hybrid_score"],
+                        "rank": rank,
+                    }
+                    for rank, chunk in enumerate(reranked, start=1)
+                ],
+                queries=multi_query,
+                reply=reply,
+                metrics={
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "retrieval_time": round(retrieval_time, 4),
+                    "llm_time": round(llm_time, 4),
+                    "total_time": round(total_time, 4),
+                    "cache_hit": False,
+                },
+            )
 
         sources = [
             {
