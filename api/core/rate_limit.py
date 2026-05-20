@@ -6,9 +6,12 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+DISABLE_RATE_LIMITS = os.getenv("DISABLE_RATE_LIMITS", "false").lower() == "true"
+
 limiter = Limiter(
     key_func=get_remote_address,
-    storage_uri=os.getenv("REDIS_URL"),
+    storage_uri=None if DISABLE_RATE_LIMITS else os.getenv("REDIS_URL"),
+    enabled=not DISABLE_RATE_LIMITS,
 )
 
 

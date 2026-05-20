@@ -1,5 +1,11 @@
 import { API_URL } from '../utils/settings';
 
+const controller = new AbortController();
+
+const timeoutId = window.setTimeout(() => {
+  controller.abort();
+}, 8000);
+
 export const getRagChat = async ({
   query,
   userRole,
@@ -18,12 +24,15 @@ export const getRagChat = async ({
         message: query,
         user_role: userRole,
       }),
+      signal: controller.signal,
     });
 
+    if (!res.ok) {
+      throw new Error(`Request failed: ${res.status}`);
+    }
+
     return await res.json();
-  } catch (error) {
-    return error instanceof Error
-      ? error.message
-      : 'Failed to return a chat response';
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
