@@ -11,7 +11,7 @@ export const getRagChat = async ({
 
   const timeoutId = window.setTimeout(() => {
     controller.abort();
-  }, 8000);
+  }, 30000);
 
   try {
     const res = await fetch(`${API_URL}/rag-chat`, {
