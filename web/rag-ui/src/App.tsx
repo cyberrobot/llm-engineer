@@ -8,9 +8,9 @@ import DisplayDebug, {
   type RetrievedChunk,
 } from './components/DisplayDebug';
 import { useDebugContext } from './components/DebugContext';
-import { API_URL } from './utils/settings';
 import Header from './components/Header';
 import { useUser } from './components/UserContext';
+import { getRagChat } from './services/getRagChat';
 
 export type DebugInstance = {
   id: string;
@@ -49,25 +49,24 @@ export default function App() {
     setLoading(true);
     setDebugHistoryLoading(true);
 
-    const res = await fetch(`${API_URL}/rag-chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        message: str || query,
-        user_role: userRole,
-      }),
-    });
-    refreshDebugHistory();
+    try {
+      const data = await getRagChat({
+        query: str,
+        userRole: userRole,
+      });
 
-    const data = await res.json();
-
-    setAnswer(data.reply);
-    setSources(data.sources || []);
-
-    setLoading(false);
+      setAnswer(data.reply);
+      setSources(data.sources || []);
+      refreshDebugHistory();
+      setLoading(false);
+    } catch (error) {
+      setAnswer({
+        answer: 'Error fetching answer. Please try again.',
+        source_ids: [],
+      });
+      setSources([]);
+      setLoading(false);
+    }
   };
 
   const setQueryAndAsk = (str: string = '') => {
