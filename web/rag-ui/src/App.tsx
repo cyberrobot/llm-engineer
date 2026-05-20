@@ -66,6 +66,7 @@ export default function App() {
       });
       setSources([]);
       setLoading(false);
+      setDebugHistoryLoading(false);
     }
   };
 

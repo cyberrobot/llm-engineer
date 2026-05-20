@@ -1,11 +1,5 @@
 import { API_URL } from '../utils/settings';
 
-const controller = new AbortController();
-
-const timeoutId = window.setTimeout(() => {
-  controller.abort();
-}, 8000);
-
 export const getRagChat = async ({
   query,
   userRole,
@@ -13,6 +7,12 @@ export const getRagChat = async ({
   query: string;
   userRole: string;
 }) => {
+  const controller = new AbortController();
+
+  const timeoutId = window.setTimeout(() => {
+    controller.abort();
+  }, 8000);
+
   try {
     const res = await fetch(`${API_URL}/rag-chat`, {
       method: 'POST',

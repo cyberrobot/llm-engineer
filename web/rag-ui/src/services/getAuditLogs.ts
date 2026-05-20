@@ -1,12 +1,12 @@
 import { API_URL } from '../utils/settings';
 
-const controller = new AbortController();
-
-const timeoutId = window.setTimeout(() => {
-  controller.abort();
-}, 8000);
-
 export const getAuditLogs = async () => {
+  const controller = new AbortController();
+
+  const timeoutId = window.setTimeout(() => {
+    controller.abort();
+  }, 8000);
+
   try {
     const res = await fetch(`${API_URL}/audit-logs`, {
       method: 'GET',
