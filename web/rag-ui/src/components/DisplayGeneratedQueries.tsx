@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import List from './List';
 import SkeletonBlock from './SkeletonBlock';
+import Badge from './Badge';
 
 type DisplayGeneratedQueriesProps<T extends ReactNode> = {
   items: T[];
@@ -12,7 +13,10 @@ const DisplayGeneratedQueries = <T extends ReactNode>({
 }: DisplayGeneratedQueriesProps<T>) => {
   return (
     <div>
-      <h3 className="mb-3">Generated Queries (Multi-Query Expansion)</h3>
+      <div className="flex items-center gap-2 mb-3">
+        <h3>Generated Queries (Multi-Query Expansion)</h3>
+        <Badge value={items.length} />
+      </div>
       <List
         items={items}
         renderItem={(item) => {
