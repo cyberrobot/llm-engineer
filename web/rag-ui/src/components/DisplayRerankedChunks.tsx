@@ -1,35 +1,23 @@
 import React from 'react';
-import type { RetrievedChunk } from './DisplayDebug';
+import type { RerankedChunk } from './DisplayDebug';
 import SkeletonBlock from './SkeletonBlock';
 import Badge from './Badge';
-import { ChevronDownIcon } from '@heroicons/react/24/outline';
 
-interface DisplayRetrievedChunksProps {
-  chunks: RetrievedChunk[];
+interface DisplayRerankedChunksProps {
+  chunks: RerankedChunk[];
 }
 
-const heading = 'Retrieved Chunks (Raw Retrieval Results)';
+const Heading = 'Reranked Chunks (Top 5)';
 
-const Header = ({ chunks }: { chunks: RetrievedChunk[] }) => {
-  return (
-    <summary className="flex items-center gap-2 cursor-pointer">
-      <h3 className="hover:text-secondary! transition-colors duration-250">
-        {heading} <Badge value={chunks.length} className="text-sm" />
-      </h3>
-      <ChevronDownIcon
-        className={`w-5 h-5 text-secondary duration-300 transition-all group-open:rotate-180`}
-      />
-    </summary>
-  );
-};
-
-const DisplayRetrievedChunks: React.FC<DisplayRetrievedChunksProps> = ({
+const DisplayRerankedChunks: React.FC<DisplayRerankedChunksProps> = ({
   chunks,
 }) => {
   return (
-    <details className="group">
-      <Header chunks={chunks} />
-      <div className="mt-3 rounded overflow-hidden border border-border opacity-0 ease-in-out grid grid-rows-[0fr] group-open:grid-rows-[1fr] group-open:opacity-100 transition-all duration-400">
+    <div>
+      <h3 className="mb-3">
+        {Heading} <Badge value={chunks.length} className="text-sm" />
+      </h3>
+      <div className="rounded overflow-x-auto border border-border">
         <table className="w-7xl lg:w-full border-separate border-spacing-0">
           <thead>
             <tr className="bg-gray-50">
@@ -101,14 +89,14 @@ const DisplayRetrievedChunks: React.FC<DisplayRetrievedChunksProps> = ({
           </tbody>
         </table>
       </div>
-    </details>
+    </div>
   );
 };
 
-export const DisplayRetrievedChunksSkeleton = () => {
+export const DisplayRerankedChunksSkeleton = () => {
   return (
     <div>
-      <h3 className="mb-3">{heading}</h3>
+      <h3 className="mb-3">{Heading}</h3>
       <div className="rounded overflow-x-auto border border-border">
         <table className="w-7xl lg:w-full border-separate border-spacing-0">
           <thead>
@@ -169,4 +157,4 @@ export const DisplayRetrievedChunksSkeleton = () => {
   );
 };
 
-export default DisplayRetrievedChunks;
+export default DisplayRerankedChunks;

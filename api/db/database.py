@@ -45,6 +45,7 @@ def init_db():
                     queries JSONB NOT NULL DEFAULT '[]'::jsonb,
                     reply JSONB NOT NULL DEFAULT '{}'::jsonb,
                     retrieved_chunks JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    reranked_chunks JSONB NOT NULL DEFAULT '[]'::jsonb,
                     metrics JSONB NOT NULL DEFAULT '{}'::jsonb
                 )
             """)
@@ -74,5 +75,5 @@ def init_db():
             """)
             cur.execute("""
                 ALTER TABLE audit_logs
-                ADD COLUMN IF NOT EXISTS queries JSONB NOT NULL DEFAULT '[]'::jsonb
+                ADD COLUMN IF NOT EXISTS reranked_chunks JSONB NOT NULL DEFAULT '[]'::jsonb
             """)

@@ -1,6 +1,6 @@
 import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 import Section from './Section';
-import SourceId from './SourceId';
+import Badge from './Badge';
 import DisplayAnswerSkeleton from './DisplayAnswerSkeleton';
 
 interface DisplayAnswerProps {
@@ -42,7 +42,7 @@ const DisplayAnswer = ({
                 Sources: {source_ids.length}
               </span>
               {source_ids.map((id) => (
-                <SourceId key={id} id={id} />
+                <Badge key={id} value={id} />
               ))}
             </div>
           )}

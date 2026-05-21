@@ -5,6 +5,7 @@ import DisplaySources from './components/DisplaySources';
 import DisplayInput from './components/DisplayInput';
 import DisplayDebug, {
   type Metrics,
+  type RerankedChunk,
   type RetrievedChunk,
 } from './components/DisplayDebug';
 import { useDebugContext } from './components/DebugContext';
@@ -24,6 +25,7 @@ export type DebugInstance = {
   metrics: Metrics;
   queries: string[];
   retrieved_chunks: RetrievedChunk[];
+  reranked_chunks: RerankedChunk[];
 };
 
 export type Answer = {

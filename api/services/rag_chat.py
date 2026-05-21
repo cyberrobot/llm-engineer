@@ -29,6 +29,7 @@ def rag_chat(query: str, user_role: str):
                     user_role=user_role,
                     question=query,
                     retrieved_chunks=latestDebugEvent["retrieved_chunks"],
+                    reranked_chunks=latestDebugEvent["reranked_chunks"],
                     reply=latestDebugEvent["reply"],
                     queries=latestDebugEvent["queries"],
                     metrics={
@@ -68,6 +69,18 @@ def rag_chat(query: str, user_role: str):
                 user_role=user_role,
                 question=query,
                 retrieved_chunks=[
+                    {
+                        "id": chunk["id"],
+                        "doc_id": chunk["doc_id"],
+                        "text_snippet": chunk["text"][:150],
+                        "distance": chunk["distance"],
+                        "keyword_match": chunk["keyword_match"],
+                        "hybrid_score": chunk["hybrid_score"],
+                        "rank": rank,
+                    }
+                    for rank, chunk in enumerate(results, start=1)
+                ],
+                reranked_chunks=[
                     {
                         "id": chunk["id"],
                         "doc_id": chunk["doc_id"],

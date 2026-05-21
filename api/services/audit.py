@@ -12,6 +12,7 @@ def log_rag_event(
     user_role: str,
     question: str,
     retrieved_chunks: list[dict],
+    reranked_chunks: list[dict],
     reply: dict,
     metrics: dict,
     queries: list[dict],
@@ -22,8 +23,8 @@ def log_rag_event(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO audit_logs (timestamp, user_role, question, queries, reply, retrieved_chunks, metrics)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO audit_logs (timestamp, user_role, question, queries, reply, retrieved_chunks, reranked_chunks, metrics)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
                 (
                     timestamp,
@@ -32,6 +33,7 @@ def log_rag_event(
                     json.dumps(queries),
                     json.dumps(reply),
                     json.dumps(retrieved_chunks),
+                    json.dumps(reranked_chunks),
                     json.dumps(metrics),
                 ),
             )
@@ -44,7 +46,7 @@ def get_audit_logs(limit: int):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, timestamp, user_role, question, reply, retrieved_chunks, metrics, queries 
+                SELECT id, timestamp, user_role, question, reply, retrieved_chunks, reranked_chunks, metrics, queries 
                 FROM audit_logs 
                 ORDER BY id DESC
                 LIMIT %s
@@ -60,8 +62,9 @@ def get_audit_logs(limit: int):
                     "question": row[3],
                     "reply": row[4],
                     "retrieved_chunks": row[5],
-                    "metrics": row[6],
-                    "queries": row[7],
+                    "reranked_chunks": row[6],
+                    "metrics": row[7],
+                    "queries": row[8],
                 }
                 for row in rows
             ]
@@ -72,7 +75,7 @@ def get_latest_audit_log_for_query(question: str, user_role: str):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, timestamp, user_role, question, reply, retrieved_chunks, metrics, queries
+                SELECT id, timestamp, user_role, question, reply, retrieved_chunks, reranked_chunks, metrics, queries
                 FROM audit_logs
                 WHERE question = %s
                   AND user_role = %s
@@ -94,6 +97,7 @@ def get_latest_audit_log_for_query(question: str, user_role: str):
         "question": row[3],
         "reply": row[4],
         "retrieved_chunks": row[5],
-        "metrics": row[6],
-        "queries": row[7],
+        "reranked_chunks": row[6],
+        "metrics": row[7],
+        "queries": row[8],
     }

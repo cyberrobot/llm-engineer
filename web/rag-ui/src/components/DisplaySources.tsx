@@ -1,7 +1,7 @@
 import DisplaySourcesSkeleton from './DisplaySourcesSkeleton';
 import List from './List';
 import Section from './Section';
-import SourceId from './SourceId';
+import Badge from './Badge';
 
 const DisplaySources = ({
   sources,
@@ -30,7 +30,7 @@ const DisplaySources = ({
                     : item.text}
                 </div>
                 <div className="flex justify-end w-full lg:w-auto">
-                  <SourceId id={item.id} />
+                  <Badge value={item.id} />
                 </div>
               </div>
             );

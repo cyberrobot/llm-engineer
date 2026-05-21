@@ -14,6 +14,7 @@ import { useDebugContext } from './DebugContext';
 import DisplayDebugQuestion, {
   DisplayDebugQuestionSkeleton,
 } from './DisplayDebugQuestion';
+import DisplayRerankedChunks from './DisplayRerankedChunks';
 
 export type Metrics = {
   retrieval_time: number;
@@ -25,6 +26,16 @@ export type Metrics = {
 };
 
 export type RetrievedChunk = {
+  rank: number;
+  id: string;
+  doc_id: string;
+  distance: number;
+  hybrid_score: number;
+  text_snippet: string;
+  keyword_match: number;
+};
+
+export type RerankedChunk = {
   rank: number;
   id: string;
   doc_id: string;
@@ -68,6 +79,7 @@ const DisplayDebug = () => {
               <DisplayDebugQuestion question={latestDebug.question} />
               <DisplayGeneratedQueries items={latestDebug.queries} />
               <DisplayRetrievedChunks chunks={latestDebug.retrieved_chunks} />
+              <DisplayRerankedChunks chunks={latestDebug.reranked_chunks} />
             </>
           ) : (
             <p>No debug data available.</p>
