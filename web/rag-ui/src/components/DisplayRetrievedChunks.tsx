@@ -1,8 +1,8 @@
 import React from 'react';
 import type { RetrievedChunk } from './DisplayDebug';
 import SkeletonBlock from './SkeletonBlock';
-import Badge from './Badge';
 import { ChevronDownIcon } from '@heroicons/react/24/outline';
+import SectionHeaderWithBadge from './SectionHeaderWithBadge';
 
 interface DisplayRetrievedChunksProps {
   chunks: RetrievedChunk[];
@@ -13,9 +13,11 @@ const heading = 'Retrieved Chunks (Raw Retrieval Results)';
 const Header = ({ chunks }: { chunks: RetrievedChunk[] }) => {
   return (
     <summary className="flex items-center gap-2 cursor-pointer">
-      <h3 className="hover:text-secondary! transition-colors duration-250">
-        {heading} <Badge value={chunks.length} className="text-sm" />
-      </h3>
+      <SectionHeaderWithBadge
+        title={heading}
+        badgeValue={chunks.length}
+        headingClassName="hover:text-secondary! transition-colors duration-250"
+      />
       <ChevronDownIcon
         className={`w-5 h-5 text-secondary duration-300 transition-all group-open:rotate-180`}
       />

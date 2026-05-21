@@ -1,7 +1,7 @@
 import React from 'react';
 import type { RerankedChunk } from './DisplayDebug';
 import SkeletonBlock from './SkeletonBlock';
-import Badge from './Badge';
+import SectionHeaderWithBadge from './SectionHeaderWithBadge';
 
 interface DisplayRerankedChunksProps {
   chunks: RerankedChunk[];
@@ -14,9 +14,11 @@ const DisplayRerankedChunks: React.FC<DisplayRerankedChunksProps> = ({
 }) => {
   return (
     <div>
-      <h3 className="mb-3">
-        {Heading} <Badge value={chunks.length} className="text-sm" />
-      </h3>
+      <SectionHeaderWithBadge
+        title={Heading}
+        badgeValue={chunks.length}
+        className="mb-3"
+      />
       <div className="rounded overflow-x-auto border border-border">
         <table className="w-7xl lg:w-full border-separate border-spacing-0">
           <thead>

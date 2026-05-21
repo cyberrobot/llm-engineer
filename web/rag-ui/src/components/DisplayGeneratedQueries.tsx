@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import List from './List';
 import SkeletonBlock from './SkeletonBlock';
-import Badge from './Badge';
+import SectionHeaderWithBadge from './SectionHeaderWithBadge';
 
 type DisplayGeneratedQueriesProps<T extends ReactNode> = {
   items: T[];
@@ -13,10 +13,11 @@ const DisplayGeneratedQueries = <T extends ReactNode>({
 }: DisplayGeneratedQueriesProps<T>) => {
   return (
     <div>
-      <div className="flex items-center gap-2 mb-3">
-        <h3>Generated Queries (Multi-Query Expansion)</h3>
-        <Badge value={items.length} />
-      </div>
+      <SectionHeaderWithBadge
+        title="Generated Queries (Multi-Query Expansion)"
+        badgeValue={items.length}
+        className="mb-3"
+      />
       <List
         items={items}
         renderItem={(item) => {

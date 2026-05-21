@@ -2,6 +2,7 @@ import DisplaySourcesSkeleton from './DisplaySourcesSkeleton';
 import List from './List';
 import Section from './Section';
 import Badge from './Badge';
+import SectionHeaderWithBadge from './SectionHeaderWithBadge';
 
 const DisplaySources = ({
   sources,
@@ -17,10 +18,11 @@ const DisplaySources = ({
   return (
     <Section
       title={
-        <div className="mb-3 flex items-center gap-2">
-          <h2>Sources</h2>
-          <Badge value={sources.length} />
-        </div>
+        <SectionHeaderWithBadge
+          title="Sources"
+          badgeValue={sources.length}
+          className="mb-3"
+        />
       }
     >
       {loading ? (
