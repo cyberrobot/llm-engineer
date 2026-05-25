@@ -1,15 +1,27 @@
+import type { JSX } from 'react/jsx-dev-runtime';
 import Badge from './Badge';
 
 const SectionHeaderWithBadge: React.FC<{
   title: string;
-  badgeValue: number;
+  badgeValue?: number;
   className?: string;
   headingClassName?: string;
-}> = ({ title, badgeValue, className, headingClassName }) => {
+  loading?: boolean;
+  headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
+}> = ({
+  title,
+  badgeValue,
+  className,
+  headingClassName,
+  loading,
+  headingLevel = 2,
+}) => {
+  const Heading = `h${headingLevel}` as keyof JSX.IntrinsicElements;
+
   return (
     <div className={`flex items-center gap-2 ${className || ''}`}>
-      <h2 className={headingClassName || ''}>{title}</h2>
-      <Badge value={badgeValue} />
+      <Heading className={headingClassName || ''}>{title}</Heading>
+      {badgeValue !== undefined && !loading && <Badge value={badgeValue} />}
     </div>
   );
 };

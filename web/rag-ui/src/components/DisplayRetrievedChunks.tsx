@@ -17,6 +17,7 @@ const Header = ({ chunks }: { chunks: RetrievedChunk[] }) => {
         title={heading}
         badgeValue={chunks.length}
         headingClassName="hover:text-secondary! transition-colors duration-250"
+        headingLevel={3}
       />
       <ChevronDownIcon
         className={`w-5 h-5 text-secondary duration-300 transition-all group-open:rotate-180`}
@@ -31,7 +32,7 @@ const DisplayRetrievedChunks: React.FC<DisplayRetrievedChunksProps> = ({
   return (
     <details className="group">
       <Header chunks={chunks} />
-      <div className="mt-3 rounded overflow-hidden border border-border opacity-0 ease-in-out grid grid-rows-[0fr] group-open:grid-rows-[1fr] group-open:opacity-100 transition-all duration-400">
+      <div className="mt-3 rounded overflow-hidden border border-border opacity-0 ease-in-out grid grid-rows-[0fr] group-open:grid-rows-[1fr] group-open:opacity-100 group-open:scale-100 transition-all duration-400 scale-95">
         <table className="w-7xl lg:w-full border-separate border-spacing-0">
           <thead>
             <tr className="bg-gray-50">
@@ -110,7 +111,11 @@ const DisplayRetrievedChunks: React.FC<DisplayRetrievedChunksProps> = ({
 export const DisplayRetrievedChunksSkeleton = () => {
   return (
     <div>
-      <h3 className="mb-3">{heading}</h3>
+      <SectionHeaderWithBadge
+        title={heading}
+        className="mb-3"
+        headingLevel={3}
+      />
       <div className="rounded overflow-x-auto border border-border">
         <table className="w-7xl lg:w-full border-separate border-spacing-0">
           <thead>

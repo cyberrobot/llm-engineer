@@ -18,6 +18,7 @@ const DisplayRerankedChunks: React.FC<DisplayRerankedChunksProps> = ({
         title={Heading}
         badgeValue={chunks.length}
         className="mb-3"
+        headingLevel={3}
       />
       <div className="rounded overflow-x-auto border border-border">
         <table className="w-7xl lg:w-full border-separate border-spacing-0">
@@ -98,7 +99,11 @@ const DisplayRerankedChunks: React.FC<DisplayRerankedChunksProps> = ({
 export const DisplayRerankedChunksSkeleton = () => {
   return (
     <div>
-      <h3 className="mb-3">{Heading}</h3>
+      <SectionHeaderWithBadge
+        title={Heading}
+        className="mb-3"
+        headingLevel={3}
+      />
       <div className="rounded overflow-x-auto border border-border">
         <table className="w-7xl lg:w-full border-separate border-spacing-0">
           <thead>

@@ -63,25 +63,27 @@ const Dropdown = ({
         />
       </button>
 
-      {isOpen && (
-        <div className="absolute right-0 top-full z-10 mt-2 w-56 origin-top-right rounded bg-white shadow-lg border-accent-border border">
-          <div className="py-1 bg-secondary-bg">
-            {options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => {
-                  onChange(option.value);
-                  setIsOpen(false);
-                }}
-                className="w-full text-left px-4 py-2 text-secondary hover:bg-accent-bg hover:text-accent cursor-pointer"
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
+      {/* {isOpen && ( */}
+      <div
+        className={`absolute right-0 top-full z-10 mt-2 w-56 origin-top-right rounded bg-white shadow-lg border-accent-border border transition-all duration-400 ${isOpen ? 'scale-100 opacity-100' : 'scale-95 opacity-0 pointer-events-none'}`}
+      >
+        <div className="py-1 bg-secondary-bg">
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                onChange(option.value);
+                setIsOpen(false);
+              }}
+              className="w-full text-left px-4 py-2 text-secondary hover:bg-accent-bg hover:text-accent cursor-pointer"
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
-      )}
+      </div>
+      {/* )} */}
     </div>
   );
 };

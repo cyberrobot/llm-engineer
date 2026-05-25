@@ -73,3 +73,14 @@ h3 {
 p {
   margin: 0;
 }
+
+@keyframes wiggle {
+  0%,
+  100% {
+    transform: translateX(0) scale(1);
+  }
+
+  50% {
+    transform: translateX(0) scale(1.07);
+  }
+}

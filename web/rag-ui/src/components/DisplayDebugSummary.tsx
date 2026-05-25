@@ -77,10 +77,10 @@ export const DisplayDebugSummarySkeleton = () => {
           className="flex flex-col gap-0.5 border border-border p-2 rounded bg-gray-50"
         >
           <span className="text-text font-semibold">
-            <SkeletonBlock height="1.5rem" width="100px" />
+            <SkeletonBlock height="1.5rem" width="90px" />
           </span>
           <span className="font-bold">
-            <SkeletonBlock height="1.5rem" width="100px" />
+            <SkeletonBlock height="1.5rem" width="90px" />
           </span>
         </div>
       ))}

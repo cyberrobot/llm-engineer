@@ -22,6 +22,7 @@ const DisplaySources = ({
           title="Sources"
           badgeValue={sources.length}
           className="mb-3"
+          loading={loading}
         />
       }
     >

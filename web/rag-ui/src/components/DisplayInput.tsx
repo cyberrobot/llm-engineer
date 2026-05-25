@@ -32,7 +32,7 @@ const DisplayInput = ({
       <button
         onClick={() => queryFn(inputValue)}
         disabled={loading}
-        className="py-2 px-4 text-base border border-accent-border bg-accent-bg text-accent rounded cursor-pointer hover:bg-secondary-bg hover:border-accent-border hover:text-secondary disabled:hover:border-accent-border disabled:hover:bg-accent-bg disabled:hover:text-accent transition-all duration-600 ease-in-out flex items-center gap-1"
+        className="hover:animate-[wiggle_0.8s_ease-in-out_infinite] py-2 px-4 text-base border border-accent-border bg-accent-bg text-accent rounded cursor-pointer disabled:hover:border-accent-border disabled:hover:bg-accent-bg disabled:hover:text-accent transition-transform flex items-center gap-1"
       >
         {loading ? (
           'Loading...'

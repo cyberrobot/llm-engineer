@@ -8,15 +8,18 @@ type DisplayGeneratedQueriesProps<T extends ReactNode> = {
   className?: string;
 };
 
+const HeaderTitle = 'Generated Queries (Multi-Query Expansion)';
+
 const DisplayGeneratedQueries = <T extends ReactNode>({
   items,
 }: DisplayGeneratedQueriesProps<T>) => {
   return (
     <div>
       <SectionHeaderWithBadge
-        title="Generated Queries (Multi-Query Expansion)"
+        title={HeaderTitle}
         badgeValue={items.length}
         className="mb-3"
+        headingLevel={3}
       />
       <List
         items={items}
@@ -34,7 +37,11 @@ export function DisplayGeneratedQueriesSkeleton() {
   const widths = ['90%', '40%', '80%'];
   return (
     <div>
-      <h3 className="mb-3">Generated Queries (Multi-Query Expansion)</h3>
+      <SectionHeaderWithBadge
+        title={HeaderTitle}
+        className="mb-3"
+        headingLevel={3}
+      />
       <List
         items={[1, 2, 3]}
         renderItem={(_, i) => {
