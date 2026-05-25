@@ -1,6 +1,5 @@
 import React from 'react';
 import type { RetrievedChunk } from './DisplayDebug';
-import SkeletonBlock from './SkeletonBlock';
 import { ChevronDownIcon } from '@heroicons/react/24/outline';
 import SectionHeaderWithBadge from './SectionHeaderWithBadge';
 
@@ -116,62 +115,6 @@ export const DisplayRetrievedChunksSkeleton = () => {
         className="mb-3"
         headingLevel={3}
       />
-      <div className="rounded overflow-x-auto border border-border">
-        <table className="w-7xl lg:w-full border-separate border-spacing-0">
-          <thead>
-            <tr className="bg-gray-50">
-              <th className="text-nowrap p-3 text-text border-b border-r border-border rounded-tl">
-                <SkeletonBlock height="1.5rem" />
-              </th>
-              <th className="text-nowrap p-3 text-text border-b border-r border-border">
-                <SkeletonBlock height="1.5rem" />
-              </th>
-              <th className="text-nowrap p-3 text-text border-b border-r border-border">
-                <SkeletonBlock height="1.5rem" />
-              </th>
-              <th className="text-nowrap p-3 text-text border-b border-r border-border">
-                <SkeletonBlock height="1.5rem" />
-              </th>
-              <th className="text-nowrap p-3 text-text border-b border-r border-border">
-                <SkeletonBlock height="1.5rem" />
-              </th>
-              <th className="text-nowrap p-3 text-text border-b border-r border-border">
-                <SkeletonBlock height="1.5rem" />
-              </th>
-              <th className="text-nowrap p-3 text-text border-b border-border rounded-tr">
-                <SkeletonBlock height="1.5rem" />
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {[1, 2, 3].map((_, index) => (
-              <tr key={index}>
-                <td className="text-zinc-900 font-semibold p-2 text-center border-b border-r border-border bg-gray-50">
-                  <SkeletonBlock height="1.5rem" />
-                </td>
-                <td className="text-zinc-900 font-semibold p-2 text-center border-b border-r border-border">
-                  <SkeletonBlock height="1.5rem" />
-                </td>
-                <td className="p-2 text-center border-b border-r border-border">
-                  <SkeletonBlock height="1.5rem" />
-                </td>
-                <td className="p-2 text-center border-b border-r border-border">
-                  <SkeletonBlock height="1.5rem" />
-                </td>
-                <td className="p-2 text-secondary border-b border-r border-border">
-                  <SkeletonBlock height="1.5rem" />
-                </td>
-                <td className="p-2 text-secondary border-b border-r border-border">
-                  <SkeletonBlock height="1.5rem" />
-                </td>
-                <td className="p-2 border-border">
-                  <SkeletonBlock height="1.5rem" />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 };

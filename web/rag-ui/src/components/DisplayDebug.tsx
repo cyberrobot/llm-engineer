@@ -14,7 +14,9 @@ import { useDebugContext } from './DebugContext';
 import DisplayDebugQuestion, {
   DisplayDebugQuestionSkeleton,
 } from './DisplayDebugQuestion';
-import DisplayRerankedChunks from './DisplayRerankedChunks';
+import DisplayRerankedChunks, {
+  DisplayRerankedChunksSkeleton,
+} from './DisplayRerankedChunks';
 
 export type Metrics = {
   retrieval_time: number;
@@ -65,6 +67,7 @@ const DisplayDebug = () => {
               <DisplayDebugQuestionSkeleton />
               <DisplayGeneratedQueriesSkeleton />
               <DisplayRetrievedChunksSkeleton />
+              <DisplayRerankedChunksSkeleton />
             </>
           ) : latestDebug ? (
             <>
