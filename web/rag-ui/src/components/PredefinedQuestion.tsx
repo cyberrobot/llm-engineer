@@ -20,7 +20,7 @@ const PredefinedQuestion = ({
       className={
         `flex 
         gap-2
-        lg:items-center 
+        lg:items-start 
         py-3
         px-4
         text-left
@@ -38,7 +38,7 @@ const PredefinedQuestion = ({
         ease-in-out` + (rest.className ? ` ${rest.className}` : '')
       }
     >
-      <QuestionMarkCircleIcon className="size-6 shrink-0" />
+      <QuestionMarkCircleIcon className="size-5 shrink-0" />
       {question}
     </button>
   );
