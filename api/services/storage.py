@@ -8,7 +8,7 @@ from api.services.settings import (
 )
 
 
-def save_document(doc_id: str, doc_type: str, access_roles: list[str]):
+def save_document_with_chunks(doc_id, doc_type, access_roles, chunks):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -19,18 +19,21 @@ def save_document(doc_id: str, doc_type: str, access_roles: list[str]):
                 (doc_id, doc_type, json.dumps(access_roles)),
             )
 
-
-def save_chunk(
-    chunk_id: str, doc_id: str, text: str, embedding: list[float], access_roles: list[str]
-):
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
+            cur.executemany(
                 """
-                  INSERT INTO chunks (id, doc_id, text, embedding, access_roles)
-                  VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO chunks (id, doc_id, text, embedding, access_roles)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
-                (chunk_id, doc_id, text, embedding, json.dumps(access_roles)),
+                [
+                    (
+                        chunk["id"],
+                        chunk["doc_id"],
+                        chunk["text"],
+                        chunk["embedding"],
+                        json.dumps(chunk["access_roles"]),
+                    )
+                    for chunk in chunks
+                ],
             )
 
 
