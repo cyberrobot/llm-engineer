@@ -49,29 +49,26 @@ def search_chunks_by_embedding(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                WITH ranked_chunks AS (
-                  SELECT id, doc_id, text, embedding <=> %s::vector AS distance, access_roles,
-                  COALESCE(
-                    ts_rank(
-                      text_search,
-                      plainto_tsquery('english', %s)
-                    ),
-                    0
-                  ) AS keyword_match
+                WITH vector_candidates AS (
+                  SELECT id, doc_id, text, embedding <=> %s::vector AS distance, access_roles, text_search
                   FROM chunks
-                  WHERE access_roles::jsonb ? %s
+                  WHERE access_roles ? %s
+                  ORDER BY embedding <=> %s::vector
+                  LIMIT 50
                 )
-                SELECT id, doc_id, text, distance, access_roles, keyword_match,
-                    ((1 - distance) * %s + keyword_match * %s) AS hybrid_score
-                FROM ranked_chunks
+                SELECT id, doc_id, text, distance, access_roles, ts_rank(text_search, plainto_tsquery('english', %s)) AS keyword_match,
+                    ((1 - distance) * %s + ts_rank(text_search, plainto_tsquery('english', %s)) * %s) AS hybrid_score
+                FROM vector_candidates
                 ORDER BY hybrid_score DESC
                 LIMIT %s
             """,
                 (
                     query_embedding,
-                    query,
                     access_role,
+                    query_embedding,
+                    query,
                     weight_embedding_similarity,
+                    query,
                     weight_keyword_match,
                     limit,
                 ),

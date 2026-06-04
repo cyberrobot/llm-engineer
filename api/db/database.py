@@ -54,6 +54,16 @@ def init_db():
                 ON chunks USING GIN(text_search)
             """)
             cur.execute("""
+                CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw_idx
+                ON chunks
+                USING hnsw (embedding vector_cosine_ops);
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS chunks_access_roles_idx
+                ON chunks
+                USING GIN (access_roles);
+            """)
+            cur.execute("""
                 CREATE INDEX IF NOT EXISTS audit_logs_timestamp_idx
                 ON audit_logs(timestamp DESC)
             """)
