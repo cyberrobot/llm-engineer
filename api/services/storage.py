@@ -93,7 +93,7 @@ def list_all_chunks():
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, doc_id, text, embedding, access_roles 
+                SELECT id, doc_id, text, access_roles
                 FROM chunks
             """,
             )
@@ -103,8 +103,7 @@ def list_all_chunks():
                     "id": row[0],
                     "doc_id": row[1],
                     "text": row[2],
-                    "embedding": row[3],
-                    "access_roles": row[4],
+                    "access_roles": row[3],
                 }
                 for row in rows
             ]
