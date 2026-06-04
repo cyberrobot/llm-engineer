@@ -1,5 +1,6 @@
 import os
 import time
+from typing import Optional
 
 from fastapi import HTTPException
 
@@ -16,101 +17,151 @@ DEBUG_DELAY = os.getenv("DEBUG_DELAY", "false").lower() == "true"
 DISABLE_AUDIT_LOGS = os.getenv("DISABLE_AUDIT_LOGS", "false").lower() == "true"
 
 
+def format_chunks_for_audit(chunks: list[dict]) -> list[dict]:
+    return [
+        {
+            "id": chunk["id"],
+            "doc_id": chunk["doc_id"],
+            "text_snippet": chunk["text"][:150],
+            "distance": chunk["distance"],
+            "keyword_match": chunk["keyword_match"],
+            "hybrid_score": chunk["hybrid_score"],
+            "rank": rank,
+        }
+        for rank, chunk in enumerate(chunks, start=1)
+    ]
+
+
+def get_cached_response(query: str, user_role: str, start_time: float) -> Optional[dict]:
+    cached = get_cache(query, user_role)
+    if not cached or DISABLE_CACHE:
+        return None
+
+    latest_debug_event = get_latest_audit_log_for_query(question=query, user_role=user_role)
+    if latest_debug_event and not DISABLE_AUDIT_LOGS:
+        log_rag_event(
+            user_role=user_role,
+            question=query,
+            retrieved_chunks=latest_debug_event["retrieved_chunks"],
+            reranked_chunks=latest_debug_event["reranked_chunks"],
+            reply=latest_debug_event["reply"],
+            queries=latest_debug_event["queries"],
+            metrics={
+                **latest_debug_event["metrics"],
+                "cache_hit": True,
+                "retrieval_time": 0,
+                "llm_time": 0,
+                "total_time": round((time.perf_counter() - start_time) * 1000, 4),
+            },
+        )
+
+    return cached
+
+
+def retrieve_context(query: str, user_role: str, start_time: float) -> tuple[list[dict], list[dict], float]:
+    rag_search_output = rag_search(query, user_role)
+    retrieval_time = (time.perf_counter() - start_time) * 1000
+
+    return (
+        rag_search_output["results"],
+        rag_search_output["multi_query"],
+        retrieval_time,
+    )
+
+
+def generate_answer(query: str, results: list[dict]) -> tuple[dict, list[dict], list[dict], float]:
+    llm_start_time = time.perf_counter()
+    reranked = rerank_chunks(query, results, top_k=CHUNK_TOP_K)
+    reply = ask_rag(query, reranked)
+    cited_chunks = filter_chunks_by_source_ids(reranked, reply["source_ids"])
+    llm_time = (time.perf_counter() - llm_start_time) * 1000
+
+    return reply, reranked, cited_chunks, llm_time
+
+
+def build_audit_event(
+    *,
+    user_role: str,
+    query: str,
+    results: list[dict],
+    reranked: list[dict],
+    multi_query: list[dict],
+    reply: dict,
+    retrieval_time: float,
+    llm_time: float,
+    total_time: float,
+) -> dict:
+    formatted_reply = f"{reply['answer']} Sources: {', '.join(reply['source_ids'])}"
+
+    return {
+        "user_role": user_role,
+        "question": query,
+        "retrieved_chunks": format_chunks_for_audit(results),
+        "reranked_chunks": format_chunks_for_audit(reranked),
+        "queries": multi_query,
+        "reply": reply,
+        "metrics": {
+            "input_tokens": estimate_tokens(query),
+            "output_tokens": estimate_tokens(formatted_reply),
+            "retrieval_time": round(retrieval_time, 4),
+            "llm_time": round(llm_time, 4),
+            "total_time": round(total_time, 4),
+            "cache_hit": False,
+        },
+    }
+
+
+def format_sources(cited_chunks: list[dict]) -> list[dict]:
+    return [
+        {
+            "id": chunk["id"],
+            "text": chunk["text"][:150],
+        }
+        for chunk in cited_chunks
+    ]
+
+
+def empty_response() -> dict:
+    return {
+        "reply": {
+            "answer": "I could not find relevant information in the provided documents.",
+            "source_ids": [],
+        },
+        "sources": [],
+    }
+
+
 def rag_chat(query: str, user_role: str):
     if DEBUG_DELAY:
         time.sleep(2)
     try:
         start_time = time.perf_counter()
-        cached = get_cache(query, user_role)
-        latestDebugEvent = get_latest_audit_log_for_query(question=query, user_role=user_role)
-        if cached and not DISABLE_CACHE:
-            if latestDebugEvent and not DISABLE_AUDIT_LOGS:
-                log_rag_event(
-                    user_role=user_role,
-                    question=query,
-                    retrieved_chunks=latestDebugEvent["retrieved_chunks"],
-                    reranked_chunks=latestDebugEvent["reranked_chunks"],
-                    reply=latestDebugEvent["reply"],
-                    queries=latestDebugEvent["queries"],
-                    metrics={
-                        **latestDebugEvent["metrics"],
-                        "cache_hit": True,
-                        "retrieval_time": 0,
-                        "llm_time": 0,
-                        "total_time": round((time.perf_counter() - start_time) * 1000, 4),
-                    },
-                )
-            return cached
+        cached_response = get_cached_response(query, user_role, start_time)
+        if cached_response:
+            return cached_response
 
-        rag_search_output = rag_search(query, user_role)
-        results = rag_search_output["results"]
-        multi_query = rag_search_output["multi_query"]
-        retrieval_time = (time.perf_counter() - start_time) * 1000
+        results, multi_query, retrieval_time = retrieve_context(query, user_role, start_time)
         if not results:
-            return {
-                "reply": {
-                    "answer": "I could not find relevant information in the provided documents.",
-                    "source_ids": [],
-                },
-                "sources": [],
-            }
-        llm_start_time = time.perf_counter()
-        reranked = rerank_chunks(query, results, top_k=CHUNK_TOP_K)
-        reply = ask_rag(query, reranked)
-        cited_chunks = filter_chunks_by_source_ids(reranked, reply["source_ids"])
-        formatted_reply = f"{reply['answer']} Sources: {', '.join(reply['source_ids'])}"
-        input_tokens = estimate_tokens(query)
-        output_tokens = estimate_tokens(formatted_reply)
-        llm_time = (time.perf_counter() - llm_start_time) * 1000
-        total_time = (time.perf_counter() - start_time) * 1000
+            return empty_response()
+
+        reply, reranked, cited_chunks, llm_time = generate_answer(query, results)
 
         if not DISABLE_AUDIT_LOGS:
-            log_rag_event(
+            total_time = (time.perf_counter() - start_time) * 1000
+            audit_event = build_audit_event(
                 user_role=user_role,
-                question=query,
-                retrieved_chunks=[
-                    {
-                        "id": chunk["id"],
-                        "doc_id": chunk["doc_id"],
-                        "text_snippet": chunk["text"][:150],
-                        "distance": chunk["distance"],
-                        "keyword_match": chunk["keyword_match"],
-                        "hybrid_score": chunk["hybrid_score"],
-                        "rank": rank,
-                    }
-                    for rank, chunk in enumerate(results, start=1)
-                ],
-                reranked_chunks=[
-                    {
-                        "id": chunk["id"],
-                        "doc_id": chunk["doc_id"],
-                        "text_snippet": chunk["text"][:150],
-                        "distance": chunk["distance"],
-                        "keyword_match": chunk["keyword_match"],
-                        "hybrid_score": chunk["hybrid_score"],
-                        "rank": rank,
-                    }
-                    for rank, chunk in enumerate(reranked, start=1)
-                ],
-                queries=multi_query,
+                query=query,
+                results=results,
+                reranked=reranked,
+                multi_query=multi_query,
                 reply=reply,
-                metrics={
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "retrieval_time": round(retrieval_time, 4),
-                    "llm_time": round(llm_time, 4),
-                    "total_time": round(total_time, 4),
-                    "cache_hit": False,
-                },
+                retrieval_time=retrieval_time,
+                llm_time=llm_time,
+                total_time=total_time,
             )
+            log_rag_event(**audit_event)
 
-        sources = [
-            {
-                "id": chunk["id"],
-                "text": chunk["text"][:150],
-            }
-            for chunk in cited_chunks
-        ]
+        sources = format_sources(cited_chunks)
         cached_response = {"reply": reply, "sources": sources}
 
         set_cache(query, user_role, cached_response)
