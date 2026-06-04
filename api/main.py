@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -15,8 +16,14 @@ from api.routes import audit, ingest, rag
 
 load_dotenv()
 
-init_db()
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 logging.basicConfig(level=logging.INFO)
 
 app.add_middleware(

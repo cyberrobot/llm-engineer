@@ -1,15 +1,14 @@
 import json
 
-from openai import OpenAI
-
 from api.core.load_prompt import load_prompt
+from api.services.openai_client import get_openai_client
 from api.services.settings import CHUNK_TOP_K
 
-client = OpenAI()
 system_prompt = load_prompt("rerank_chunks.md")
 
 
 def rerank_chunks(query: str, chunks: list[dict], top_k: int = CHUNK_TOP_K):
+    client = get_openai_client()
     texts = [c["text"] for c in chunks]
 
     chunk_lines = "\n".join(f"[{i}] {text}" for i, text in enumerate(texts))

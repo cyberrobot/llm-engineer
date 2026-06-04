@@ -1,14 +1,13 @@
 import json
 
-from openai import OpenAI
-
 from api.core.load_prompt import load_prompt
+from api.services.openai_client import get_openai_client
 
-client = OpenAI()
 system_prompt = load_prompt("query_generation.md")
 
 
 def generate_queries(query: str) -> list[str]:
+    client = get_openai_client()
     prompt = f"""
 {system_prompt}
 

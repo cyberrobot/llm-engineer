@@ -1,18 +1,17 @@
 import json
-import os
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
 from api.core.load_prompt import load_prompt
+from api.services.openai_client import get_openai_client
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 system_prompt = load_prompt("answer_system.md")
 
 
 def ask_rag(question: str, chunks: list[dict]) -> dict:
+    client = get_openai_client()
     context = "\n\n".join([f"[Source: {chunk['id']}]\n{chunk['text']}" for chunk in chunks])
 
     prompt = f"""

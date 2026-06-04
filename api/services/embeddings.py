@@ -1,21 +1,20 @@
-import os
-
 import numpy as np
 from dotenv import load_dotenv
-from openai import OpenAI
+
+from api.services.openai_client import get_openai_client
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
 
 def get_embedding(text: str):
+    client = get_openai_client()
     response = client.embeddings.create(model="text-embedding-3-small", input=text)
 
     return response.data[0].embedding
 
 
 def get_embeddings(texts: list[str]) -> list[list[float]]:
+    client = get_openai_client()
     response = client.embeddings.create(model="text-embedding-3-small", input=texts)
 
     return [item.embedding for item in response.data]
