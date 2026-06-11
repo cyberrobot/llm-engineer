@@ -1,4 +1,12 @@
+from dataclasses import dataclass
+
 from pydantic import BaseModel
+
+
+@dataclass(frozen=True)
+class Sentence:
+    text: str
+    index: int
 
 
 class CitationVerification(BaseModel):
