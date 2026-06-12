@@ -119,12 +119,29 @@ def test_rag_chat_generates_logs_caches_and_returns_response():
     cited_chunks = [reranked[0]]
     multi_query = [{"query": "question"}]
     reply = {"answer": "answer", "source_ids": ["source-1"]}
+    evaluation = {
+        "sentences": [
+            {
+                "sentence": "answer",
+                "supported": True,
+                "source_ids": ["source-1"],
+            }
+        ],
+        "metrics": {
+            "groundedness_score": 1.0,
+            "verified_sentences": 1,
+            "unsupported_claims": 0,
+            "total_sentences": 1,
+            "citation_count": 1,
+        },
+    }
     audit_event = {
         "user_role": "user",
         "question": "question",
         "retrieved_chunks": [{"id": "chunk-1"}],
         "reranked_chunks": [{"id": "source-1"}],
         "reply": reply,
+        "evaluation": evaluation,
         "metrics": {"cache_hit": False},
         "queries": multi_query,
     }
@@ -141,6 +158,7 @@ def test_rag_chat_generates_logs_caches_and_returns_response():
             "generate_answer",
             return_value=(reply, reranked, cited_chunks, 20.0),
         ),
+        patch.object(rag_chat, "build_evaluation", return_value=evaluation) as build_evaluation,
         patch.object(rag_chat, "build_audit_event", return_value=audit_event) as build_audit_event,
         patch.object(rag_chat, "log_rag_event") as log_rag_event,
         patch.object(rag_chat, "format_sources", return_value=sources),
@@ -149,6 +167,8 @@ def test_rag_chat_generates_logs_caches_and_returns_response():
         response = rag_chat.rag_chat("question", "user")
 
     assert response == expected_response
+    assert "debug" not in response
+    build_evaluation.assert_called_once_with("answer", reranked)
     build_audit_event.assert_called_once()
     build_kwargs = build_audit_event.call_args.kwargs
     assert build_kwargs["user_role"] == "user"
@@ -157,14 +177,65 @@ def test_rag_chat_generates_logs_caches_and_returns_response():
     assert build_kwargs["reranked"] == reranked
     assert build_kwargs["multi_query"] == multi_query
     assert build_kwargs["reply"] == reply
+    assert build_kwargs["evaluation"] == evaluation
     assert build_kwargs["retrieval_time"] == 10.0
     assert build_kwargs["llm_time"] == 20.0
     log_rag_event.assert_called_once_with(**audit_event)
     set_cache.assert_called_once_with("question", "user", expected_response)
 
 
+def test_build_evaluation_uses_answer_text_and_chunks():
+    chunks = [{"id": "chunk-1", "text": "Staff must wear surgical scrubs."}]
+
+    result = rag_chat.build_evaluation("Staff must wear surgical scrubs.", chunks)
+
+    assert result == {
+        "sentences": [
+            {
+                "sentence": "Staff must wear surgical scrubs.",
+                "supported": True,
+                "source_ids": ["chunk-1"],
+            }
+        ],
+        "metrics": {
+            "groundedness_score": 1.0,
+            "verified_sentences": 1,
+            "unsupported_claims": 0,
+            "total_sentences": 1,
+            "citation_count": 1,
+        },
+    }
+
+
+def test_build_evaluation_returns_empty_results_without_answer_text():
+    chunks = [{"id": "chunk-1", "text": "Staff must wear surgical scrubs."}]
+
+    result = rag_chat.build_evaluation(" \n\t ", chunks)
+
+    assert result == {
+        "sentences": [],
+        "metrics": {
+            "groundedness_score": 0,
+            "verified_sentences": 0,
+            "unsupported_claims": 0,
+            "total_sentences": 0,
+            "citation_count": 0,
+        },
+    }
+
+
 def test_build_audit_event_formats_metrics():
     reply = {"answer": "answer", "source_ids": ["source-1"]}
+    evaluation = {
+        "sentences": [],
+        "metrics": {
+            "groundedness_score": 0,
+            "verified_sentences": 0,
+            "unsupported_claims": 0,
+            "total_sentences": 0,
+            "citation_count": 0,
+        },
+    }
 
     with patch.object(rag_chat, "estimate_tokens", side_effect=[2, 5]):
         result = rag_chat.build_audit_event(
@@ -174,6 +245,7 @@ def test_build_audit_event_formats_metrics():
             reranked=[chunk(source_id="source-1")],
             multi_query=[{"query": "question"}],
             reply=reply,
+            evaluation=evaluation,
             retrieval_time=1.23456,
             llm_time=2.34567,
             total_time=3.45678,
@@ -182,6 +254,7 @@ def test_build_audit_event_formats_metrics():
     assert result["user_role"] == "user"
     assert result["question"] == "question"
     assert result["reply"] == reply
+    assert result["evaluation"] == evaluation
     assert result["metrics"]["input_tokens"] == 2
     assert result["metrics"]["output_tokens"] == 5
     assert result["metrics"]["retrieval_time"] == 1.2346

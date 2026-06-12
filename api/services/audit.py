@@ -16,6 +16,7 @@ def log_rag_event(
     reply: dict,
     metrics: dict,
     queries: list[dict],
+    evaluation: dict | None = None,
 ):
     timestamp = datetime.now(timezone.utc).isoformat()
 
