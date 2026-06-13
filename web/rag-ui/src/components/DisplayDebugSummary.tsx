@@ -3,7 +3,8 @@ import { formatDuration, localStringFromUTC } from '../utils/time';
 import type { Metrics } from './DisplayDebug';
 import SkeletonBlock from './SkeletonBlock';
 
-const wrapperClasses = 'grid grid-cols-3 lg:grid-cols-5 xl:grid-cols-7 gap-3';
+const wrapperClasses =
+  'grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4';
 
 const DisplayDebugSummary = ({
   metrics,
@@ -56,10 +57,10 @@ const DisplayDebugSummary = ({
       ].map((item, index) => (
         <div
           key={index}
-          className="flex flex-col gap-0.5 border border-border p-2 rounded bg-gray-50"
+          className="flex min-w-0 flex-col gap-0.5 border border-border p-2 rounded bg-gray-50"
         >
           <span className="text-text font-semibold">{item.title}</span>
-          <span className="font-bold">{item.value}</span>
+          <span className="break-words font-bold">{item.value}</span>
         </div>
       ))}
     </div>
@@ -74,7 +75,7 @@ export const DisplayDebugSummarySkeleton = () => {
       {[...Array(11)].map((_, index) => (
         <div
           key={index}
-          className="flex flex-col gap-0.5 border border-border p-2 rounded bg-gray-50"
+          className="flex min-w-0 flex-col gap-0.5 border border-border p-2 rounded bg-gray-50"
         >
           <span className="text-text font-semibold">
             <SkeletonBlock height="1.5rem" width="90px" />

@@ -14,7 +14,7 @@ const DisplayGeneratedQueries = <T extends ReactNode>({
   items,
 }: DisplayGeneratedQueriesProps<T>) => {
   return (
-    <div>
+    <div className="w-full min-w-0">
       <SectionHeaderWithBadge
         title={HeaderTitle}
         badgeValue={items.length}
@@ -36,7 +36,7 @@ export default DisplayGeneratedQueries;
 export function DisplayGeneratedQueriesSkeleton() {
   const widths = ['90%', '40%', '80%'];
   return (
-    <div>
+    <div className="w-full min-w-0">
       <SectionHeaderWithBadge
         title={HeaderTitle}
         className="mb-3"
