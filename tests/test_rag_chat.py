@@ -149,7 +149,7 @@ def test_rag_chat_generates_logs_caches_and_returns_response():
         "queries": multi_query,
     }
     sources = [{"id": "source-1", "text": "cited text"}]
-    expected_response = {"reply": reply, "sources": sources}
+    expected_response = {"reply": reply, "sources": sources, "evaluation": evaluation}
 
     with (
         patch.object(rag_chat, "DEBUG_DELAY", False),

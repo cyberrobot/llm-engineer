@@ -1,17 +1,26 @@
 import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 import Section from './Section';
-import Badge from './Badge';
 import DisplayAnswerSkeleton from './DisplayAnswerSkeleton';
+import AnswerEvaluationCards from './AnswerEvaluationCards';
+
+export type EvaluationMetrics = {
+  groundedness_score: number;
+  verified_sentences: number;
+  total_sentences: number;
+  citation_count: number;
+};
 
 interface DisplayAnswerProps {
   answer?: string;
   source_ids?: string[];
+  evaluationMetrics?: EvaluationMetrics;
   loading?: boolean;
 }
 
 const DisplayAnswer = ({
   answer,
   source_ids,
+  evaluationMetrics,
   loading = false,
 }: DisplayAnswerProps) => {
   if (!answer && !loading) {
@@ -34,18 +43,21 @@ const DisplayAnswer = ({
       {loading ? (
         <DisplayAnswerSkeleton />
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           <p>{answer}</p>
-          {source_ids && source_ids.length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="border border-border px-2 py-0.5 rounded-md bg-gray-50">
-                Sources: {source_ids.length}
-              </span>
-              {source_ids.map((id) => (
-                <Badge key={id} value={id} />
-              ))}
-            </div>
-          )}
+          <div className="flex flex-col gap-2">
+            {source_ids && source_ids.length > 0 && (
+              <div>Sources: {source_ids.length}</div>
+            )}
+            {evaluationMetrics && (
+              <AnswerEvaluationCards
+                groundednessScore={evaluationMetrics.groundedness_score}
+                verifiedSentences={evaluationMetrics.verified_sentences}
+                totalSentences={evaluationMetrics.total_sentences}
+                sourcesUsed={evaluationMetrics.citation_count}
+              />
+            )}
+          </div>
         </div>
       )}
     </Section>

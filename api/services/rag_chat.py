@@ -142,6 +142,7 @@ def empty_response() -> dict:
             "source_ids": [],
         },
         "sources": [],
+        "evaluation": build_evaluation("", []),
     }
 
 
@@ -178,7 +179,7 @@ def rag_chat(query: str, user_role: str):
             log_rag_event(**audit_event)
 
         sources = format_sources(cited_chunks)
-        cached_response = {"reply": reply, "sources": sources}
+        cached_response = {"reply": reply, "sources": sources, "evaluation": evaluation}
 
         set_cache(query, user_role, cached_response)
 
