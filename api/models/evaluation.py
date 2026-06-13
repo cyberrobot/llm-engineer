@@ -13,6 +13,7 @@ class CitationVerification(BaseModel):
     sentence: str
     supported: bool
     source_ids: list[str]
+    support_score: float
 
 
 class EvaluationMetrics(BaseModel):

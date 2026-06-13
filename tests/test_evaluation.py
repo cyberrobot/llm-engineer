@@ -1,51 +1,60 @@
+from unittest.mock import patch
+
 from api.services.evaluation import calculate_evaluation_metrics, evaluate_answer
 
 
 def test_supported_answer_sentence_returns_supported_true():
-    chunks = [{"id": "chunk-1", "text": "Staff must wear surgical scrubs."}]
+    chunks = [{"id": "chunk-1", "text": "Staff must wear surgical scrubs.", "embedding": [1, 0]}]
 
-    assert evaluate_answer("Staff must wear surgical scrubs.", chunks) == [
-        {
-            "sentence": "Staff must wear surgical scrubs.",
-            "supported": True,
-            "source_ids": ["chunk-1"],
-        }
-    ]
+    with patch("api.services.citation_verifier.get_embedding", return_value=[1, 0]):
+        assert evaluate_answer("Staff must wear surgical scrubs.", chunks) == [
+            {
+                "sentence": "Staff must wear surgical scrubs.",
+                "supported": True,
+                "source_ids": ["chunk-1"],
+                "support_score": 1.0,
+            }
+        ]
 
 
 def test_unsupported_answer_sentence_returns_supported_false():
-    chunks = [{"id": "chunk-1", "text": "Staff must wear surgical scrubs."}]
+    chunks = [{"id": "chunk-1", "text": "Staff must wear surgical scrubs.", "embedding": [0, 1]}]
 
-    assert evaluate_answer("Visitors must wear blue badges.", chunks) == [
-        {
-            "sentence": "Visitors must wear blue badges.",
-            "supported": False,
-            "source_ids": [],
-        }
-    ]
+    with patch("api.services.citation_verifier.get_embedding", return_value=[1, 0]):
+        assert evaluate_answer("Visitors must wear blue badges.", chunks) == [
+            {
+                "sentence": "Visitors must wear blue badges.",
+                "supported": False,
+                "source_ids": [],
+                "support_score": 0.0,
+            }
+        ]
 
 
 def test_multiple_sentences_preserve_order():
     chunks = [
-        {"id": "chunk-1", "text": "Staff must wear surgical scrubs."},
-        {"id": "chunk-2", "text": "Masks are required in operating rooms."},
+        {"id": "chunk-1", "text": "Staff must wear surgical scrubs.", "embedding": [1, 0]},
+        {"id": "chunk-2", "text": "Masks are required in operating rooms.", "embedding": [0, 1]},
     ]
 
-    assert evaluate_answer(
-        "Staff must wear surgical scrubs. Masks are required in operating rooms.",
-        chunks,
-    ) == [
-        {
-            "sentence": "Staff must wear surgical scrubs.",
-            "supported": True,
-            "source_ids": ["chunk-1"],
-        },
-        {
-            "sentence": "Masks are required in operating rooms.",
-            "supported": True,
-            "source_ids": ["chunk-2"],
-        },
-    ]
+    with patch("api.services.citation_verifier.get_embedding", side_effect=[[1, 0], [0, 1]]):
+        assert evaluate_answer(
+            "Staff must wear surgical scrubs. Masks are required in operating rooms.",
+            chunks,
+        ) == [
+            {
+                "sentence": "Staff must wear surgical scrubs.",
+                "supported": True,
+                "source_ids": ["chunk-1"],
+                "support_score": 1.0,
+            },
+            {
+                "sentence": "Masks are required in operating rooms.",
+                "supported": True,
+                "source_ids": ["chunk-2"],
+                "support_score": 1.0,
+            },
+        ]
 
 
 def test_empty_answer_returns_empty_list():
@@ -61,6 +70,7 @@ def test_empty_chunks_returns_unsupported_sentence_results():
             "sentence": "Staff must wear surgical scrubs.",
             "supported": False,
             "source_ids": [],
+            "support_score": 0.0,
         }
     ]
 

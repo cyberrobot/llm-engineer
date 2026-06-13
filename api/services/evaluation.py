@@ -6,14 +6,7 @@ def evaluate_answer(answer: str, chunks: list[dict]) -> list[dict]:
     results: list[dict] = []
 
     for sentence in split_sentences(answer):
-        supported, source_ids = verify_sentence(sentence.text, chunks)
-        results.append(
-            {
-                "sentence": sentence.text,
-                "supported": supported,
-                "source_ids": source_ids,
-            }
-        )
+        results.append(verify_sentence(sentence.text, chunks))
 
     return results
 

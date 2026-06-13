@@ -127,6 +127,7 @@ def test_rag_chat_generates_logs_caches_and_returns_response():
                 "sentence": "answer",
                 "supported": True,
                 "source_ids": ["source-1"],
+                "support_score": 1.0,
             }
         ],
         "metrics": {
@@ -187,9 +188,10 @@ def test_rag_chat_generates_logs_caches_and_returns_response():
 
 
 def test_build_evaluation_uses_answer_text_and_chunks():
-    chunks = [{"id": "chunk-1", "text": "Staff must wear surgical scrubs."}]
+    chunks = [{"id": "chunk-1", "text": "Staff must wear surgical scrubs.", "embedding": [1, 0]}]
 
-    result = rag_chat.build_evaluation("Staff must wear surgical scrubs.", chunks)
+    with patch("api.services.citation_verifier.get_embedding", return_value=[1, 0]):
+        result = rag_chat.build_evaluation("Staff must wear surgical scrubs.", chunks)
 
     assert result == {
         "sentences": [
@@ -197,6 +199,7 @@ def test_build_evaluation_uses_answer_text_and_chunks():
                 "sentence": "Staff must wear surgical scrubs.",
                 "supported": True,
                 "source_ids": ["chunk-1"],
+                "support_score": 1.0,
             }
         ],
         "metrics": {
