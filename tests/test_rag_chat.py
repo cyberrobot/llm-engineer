@@ -45,6 +45,7 @@ def test_get_cached_response_returns_cached_value_and_logs_audit_hit():
         "reranked_chunks": [{"id": "reranked"}],
         "reply": cached_response["reply"],
         "queries": [{"query": "expanded"}],
+        "evaluation": {"sentences": [], "metrics": {"total_sentences": 0}},
         "metrics": {"input_tokens": 3, "cache_hit": False},
     }
 
@@ -71,6 +72,7 @@ def test_get_cached_response_returns_cached_value_and_logs_audit_hit():
         reranked_chunks=latest_debug_event["reranked_chunks"],
         reply=latest_debug_event["reply"],
         queries=latest_debug_event["queries"],
+        evaluation=latest_debug_event["evaluation"],
         metrics={
             "input_tokens": 3,
             "cache_hit": True,

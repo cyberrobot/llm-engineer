@@ -47,6 +47,7 @@ def get_cached_response(query: str, user_role: str, start_time: float) -> Option
             reranked_chunks=latest_debug_event["reranked_chunks"],
             reply=latest_debug_event["reply"],
             queries=latest_debug_event["queries"],
+            evaluation=latest_debug_event.get("evaluation"),
             metrics={
                 **latest_debug_event["metrics"],
                 "cache_hit": True,
