@@ -8,7 +8,7 @@ type DisplayDebugQuestionProps = {
 
 const DisplayDebugQuestion = ({ question }: DisplayDebugQuestionProps) => {
   return (
-    <div>
+    <div className="w-full min-w-0">
       <h3 className="mb-3">Question Asked</h3>
       <List
         items={[question]}
@@ -24,7 +24,7 @@ export default DisplayDebugQuestion;
 
 export function DisplayDebugQuestionSkeleton() {
   return (
-    <div>
+    <div className="w-full min-w-0">
       <h3 className="mb-3">Question Asked</h3>
       <div>
         <List

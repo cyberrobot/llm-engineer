@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from api.services.audit import get_latest_audit_log_for_query, log_rag_event
 from api.services.cache import get_cache, set_cache
+from api.services.evaluation import calculate_evaluation_metrics, evaluate_answer
 from api.services.llm import ask_rag, estimate_tokens
 from api.services.rag_search import rag_search
 from api.services.rerank import rerank_chunks
@@ -46,6 +47,7 @@ def get_cached_response(query: str, user_role: str, start_time: float) -> Option
             reranked_chunks=latest_debug_event["reranked_chunks"],
             reply=latest_debug_event["reply"],
             queries=latest_debug_event["queries"],
+            evaluation=latest_debug_event.get("evaluation"),
             metrics={
                 **latest_debug_event["metrics"],
                 "cache_hit": True,
@@ -79,6 +81,16 @@ def generate_answer(query: str, results: list[dict]) -> tuple[dict, list[dict], 
     return reply, reranked, cited_chunks, llm_time
 
 
+def build_evaluation(answer: str | None, chunks: list[dict]) -> dict:
+    answer_text = answer or ""
+    sentence_results = evaluate_answer(answer_text, chunks) if answer_text.strip() else []
+
+    return {
+        "sentences": sentence_results,
+        "metrics": calculate_evaluation_metrics(sentence_results),
+    }
+
+
 def build_audit_event(
     *,
     user_role: str,
@@ -87,6 +99,7 @@ def build_audit_event(
     reranked: list[dict],
     multi_query: list[dict],
     reply: dict,
+    evaluation: dict,
     retrieval_time: float,
     llm_time: float,
     total_time: float,
@@ -100,6 +113,7 @@ def build_audit_event(
         "reranked_chunks": format_chunks_for_audit(reranked),
         "queries": multi_query,
         "reply": reply,
+        "evaluation": evaluation,
         "metrics": {
             "input_tokens": estimate_tokens(query),
             "output_tokens": estimate_tokens(formatted_reply),
@@ -128,6 +142,7 @@ def empty_response() -> dict:
             "source_ids": [],
         },
         "sources": [],
+        "evaluation": build_evaluation("", []),
     }
 
 
@@ -145,6 +160,7 @@ def rag_chat(query: str, user_role: str):
             return empty_response()
 
         reply, reranked, cited_chunks, llm_time = generate_answer(query, results)
+        evaluation = build_evaluation(reply.get("answer", ""), reranked)
 
         if not DISABLE_AUDIT_LOGS:
             total_time = (time.perf_counter() - start_time) * 1000
@@ -155,6 +171,7 @@ def rag_chat(query: str, user_role: str):
                 reranked=reranked,
                 multi_query=multi_query,
                 reply=reply,
+                evaluation=evaluation,
                 retrieval_time=retrieval_time,
                 llm_time=llm_time,
                 total_time=total_time,
@@ -162,7 +179,7 @@ def rag_chat(query: str, user_role: str):
             log_rag_event(**audit_event)
 
         sources = format_sources(cited_chunks)
-        cached_response = {"reply": reply, "sources": sources}
+        cached_response = {"reply": reply, "sources": sources, "evaluation": evaluation}
 
         set_cache(query, user_role, cached_response)
 

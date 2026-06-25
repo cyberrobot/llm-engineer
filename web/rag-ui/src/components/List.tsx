@@ -1,4 +1,5 @@
 import React from 'react';
+import Card from './Card';
 
 type ListProps<T> = {
   items: T[];
@@ -8,7 +9,7 @@ type ListProps<T> = {
 
 const List = <T,>({ items, renderItem, className }: ListProps<T>) => {
   return (
-    <ul className={`border border-border bg-gray-50 rounded ${className}`}>
+    <Card as="ul" className={className}>
       {items.map((item, index) => (
         <li
           key={index}
@@ -17,7 +18,7 @@ const List = <T,>({ items, renderItem, className }: ListProps<T>) => {
           {renderItem(item, index)}
         </li>
       ))}
-    </ul>
+    </Card>
   );
 };
 

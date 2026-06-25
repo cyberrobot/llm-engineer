@@ -13,15 +13,15 @@ const DisplayRerankedChunks: React.FC<DisplayRerankedChunksProps> = ({
   chunks,
 }) => {
   return (
-    <div>
+    <div className="w-full min-w-0">
       <SectionHeaderWithBadge
         title={Heading}
         badgeValue={chunks.length}
         className="mb-3"
         headingLevel={3}
       />
-      <div className="rounded overflow-x-auto border border-border">
-        <table className="w-7xl lg:w-full border-separate border-spacing-0">
+      <div className="w-full rounded overflow-x-auto border border-border">
+        <table className="w-full min-w-[960px] border-separate border-spacing-0">
           <thead>
             <tr className="bg-gray-50">
               <th className="text-nowrap p-3 text-text border-b border-r border-border rounded-tl">
@@ -98,14 +98,14 @@ const DisplayRerankedChunks: React.FC<DisplayRerankedChunksProps> = ({
 
 export const DisplayRerankedChunksSkeleton = () => {
   return (
-    <div>
+    <div className="w-full min-w-0">
       <SectionHeaderWithBadge
         title={Heading}
         className="mb-3"
         headingLevel={3}
       />
-      <div className="rounded overflow-x-auto border border-border">
-        <table className="w-7xl lg:w-full border-separate border-spacing-0">
+      <div className="w-full rounded overflow-x-auto border border-border">
+        <table className="w-full min-w-[960px] border-separate border-spacing-0">
           <thead>
             <tr className="bg-gray-50">
               <th className="text-nowrap p-3 text-text border-b border-r border-border rounded-tl">

@@ -29,10 +29,10 @@ const DisplayRetrievedChunks: React.FC<DisplayRetrievedChunksProps> = ({
   chunks,
 }) => {
   return (
-    <details className="group">
+    <details className="group w-full min-w-0">
       <Header chunks={chunks} />
-      <div className="mt-3 rounded overflow-hidden border border-border opacity-0 ease-in-out grid grid-rows-[0fr] group-open:grid-rows-[1fr] group-open:opacity-100 group-open:scale-100 transition-all duration-400 scale-95">
-        <table className="w-7xl lg:w-full border-separate border-spacing-0">
+      <div className="mt-3 w-full rounded overflow-x-auto border border-border opacity-0 ease-in-out grid grid-rows-[0fr] group-open:grid-rows-[1fr] group-open:opacity-100 group-open:scale-100 transition-all duration-400 scale-95">
+        <table className="w-full min-w-[960px] border-separate border-spacing-0">
           <thead>
             <tr className="bg-gray-50">
               <th className="text-nowrap p-3 text-text border-b border-r border-border rounded-tl">
@@ -109,7 +109,7 @@ const DisplayRetrievedChunks: React.FC<DisplayRetrievedChunksProps> = ({
 
 export const DisplayRetrievedChunksSkeleton = () => {
   return (
-    <div>
+    <div className="w-full min-w-0">
       <SectionHeaderWithBadge
         title={heading}
         className="mb-3"

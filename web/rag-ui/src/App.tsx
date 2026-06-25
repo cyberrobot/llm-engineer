@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import PredefinedQuestion from './components/PredefinedQuestion';
-import DisplayAnswer from './components/DisplayAnswer';
+import DisplayAnswer, {
+  type EvaluationMetrics,
+} from './components/DisplayAnswer';
 import DisplaySources from './components/DisplaySources';
 import DisplayInput from './components/DisplayInput';
 import DisplayDebug, {
@@ -33,9 +35,14 @@ export type Answer = {
   source_ids: string[];
 };
 
+type Evaluation = {
+  metrics: EvaluationMetrics;
+};
+
 export default function App() {
   const [query, setQuery] = useState('');
   const [answer, setAnswer] = useState<Answer | null>(null);
+  const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [sources, setSources] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const { refreshDebugHistory, setDebugHistoryLoading } = useDebugContext();
@@ -58,6 +65,7 @@ export default function App() {
       });
 
       setAnswer(data.reply);
+      setEvaluation(data.evaluation || null);
       setSources(data.sources || []);
       refreshDebugHistory();
       setLoading(false);
@@ -66,6 +74,7 @@ export default function App() {
         answer: 'Error fetching answer. Please try again.',
         source_ids: [],
       });
+      setEvaluation(null);
       setSources([]);
       setLoading(false);
       setDebugHistoryLoading(false);
@@ -111,6 +120,7 @@ export default function App() {
           <DisplayAnswer
             answer={answer?.answer}
             source_ids={answer?.source_ids}
+            evaluationMetrics={evaluation?.metrics}
             loading={loading}
           />
 

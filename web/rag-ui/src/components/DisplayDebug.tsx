@@ -59,8 +59,8 @@ const DisplayDebug = () => {
         </div>
       }
     >
-      <div className="flex gap-5 lg:flex-row flex-col justify-between">
-        <div className="flex flex-col gap-5">
+      <div className="flex w-full gap-5 lg:flex-row flex-col">
+        <div className="flex min-w-0 w-full flex-1 flex-col gap-5">
           {loading ? (
             <>
               <DisplayDebugSummarySkeleton />
@@ -88,7 +88,7 @@ const DisplayDebug = () => {
             <p>No debug data available.</p>
           )}
         </div>
-        <div className="lg:w-70 min-w-[280px] w-full">
+        <div className="w-full shrink-0 lg:w-70 lg:min-w-[280px]">
           <DisplayDebugHistory />
         </div>
       </div>

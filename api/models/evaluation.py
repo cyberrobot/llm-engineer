@@ -1,10 +1,19 @@
+from dataclasses import dataclass
+
 from pydantic import BaseModel
+
+
+@dataclass(frozen=True)
+class Sentence:
+    text: str
+    index: int
 
 
 class CitationVerification(BaseModel):
     sentence: str
     supported: bool
     source_ids: list[str]
+    support_score: float
 
 
 class EvaluationMetrics(BaseModel):
