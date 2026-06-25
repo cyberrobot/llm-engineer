@@ -66,7 +66,7 @@ const AnswerEvaluationCards = ({
           </div>
           <div className="flex min-w-0 flex-col gap-1">
             <span className="text-xs font-semibold">{card.title}</span>
-            <span className="wrap-break-word text-lg font-bold">
+            <span className="wrap-break-word text-xl font-bold">
               {card.value}
             </span>
             <span className="text-xs">{card.description}</span>
