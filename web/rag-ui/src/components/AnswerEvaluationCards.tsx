@@ -30,7 +30,7 @@ const AnswerEvaluationCards = ({
 }: AnswerEvaluationCardsProps) => {
   const cards: EvaluationCardProps[] = [
     {
-      icon: <ShieldCheckIcon className="size-6 text-green-500 stroke-2" />,
+      icon: <ShieldCheckIcon className="size-7 text-green-500 stroke-2" />,
       iconBackgroundClassName:
         'bg-gradient-to-br from-green-500/20 via-green-500/10 to-green-500/5',
       title: 'Trust Score',
@@ -38,7 +38,7 @@ const AnswerEvaluationCards = ({
       description: 'Grounded in sources',
     },
     {
-      icon: <CheckCircleIcon className="size-6 text-secondary stroke-2" />,
+      icon: <CheckCircleIcon className="size-7 text-secondary stroke-2" />,
       iconBackgroundClassName:
         'bg-gradient-to-br from-secondary/20 via-secondary/10 to-secondary/5',
       title: 'Verified Claims',
@@ -46,7 +46,7 @@ const AnswerEvaluationCards = ({
       description: 'Sentences supported',
     },
     {
-      icon: <DocumentTextIcon className="size-6 text-blue-500 stroke-2" />,
+      icon: <DocumentTextIcon className="size-7 text-blue-500 stroke-2" />,
       iconBackgroundClassName:
         'bg-gradient-to-br from-blue-500/20 via-blue-500/10 to-blue-500/5',
       title: 'Sources Used',
@@ -60,16 +60,16 @@ const AnswerEvaluationCards = ({
       {cards.map((card) => (
         <Card key={card.title} className="flex items-start gap-3 p-3">
           <div
-            className={`flex size-10 shrink-0 items-center justify-center rounded-full ${card.iconBackgroundClassName}`}
+            className={`flex size-11 shrink-0 items-center justify-center rounded-full ${card.iconBackgroundClassName}`}
           >
             {card.icon}
           </div>
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-xs font-semibold text-text">
-              {card.title}
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className="text-xs font-semibold">{card.title}</span>
+            <span className="wrap-break-word text-lg font-bold">
+              {card.value}
             </span>
-            <span className="break-words text-lg font-bold">{card.value}</span>
-            <span className="text-xs text-gray-500">{card.description}</span>
+            <span className="text-xs">{card.description}</span>
           </div>
         </Card>
       ))}
