@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DebugInstance } from '../App';
-import CollapsibleList from './CollapsibleList';
 import { useDebugContext } from './DebugContext';
+import DebugHistoryTimeline from './DebugHistoryTimeline';
 import { getAuditLogs } from '../services/getAuditLogs';
 
 const DisplayDebugHistory = () => {
@@ -12,28 +12,35 @@ const DisplayDebugHistory = () => {
   );
 
   useEffect(() => {
-    try {
-      const fetchData = async () => {
+    let cancelled = false;
+
+    const fetchData = async () => {
+      setDebugHistoryLoading(true);
+
+      try {
         const data = await getAuditLogs();
-        if (data && data.length > 0) {
+
+        if (!cancelled && data && data.length > 0) {
           setDebugHistory(data);
           setLatestDebug(data[0]);
         }
-        setDebugHistoryLoading(false);
-      };
-      setDebugHistoryLoading(true);
-      fetchData();
-    } catch (error) {
-      setDebugHistoryLoading(false);
-    }
+      } finally {
+        if (!cancelled) {
+          setDebugHistoryLoading(false);
+        }
+      }
+    };
+
+    fetchData();
 
     return () => {
+      cancelled = true;
       setDebugHistory(null);
       setDebugHistoryLoading(false);
     };
-  }, [refreshCount]);
+  }, [refreshCount, setDebugHistoryLoading, setLatestDebug]);
 
-  return <CollapsibleList loading={loading} items={debugHistory} />;
+  return <DebugHistoryTimeline loading={loading} items={debugHistory} />;
 };
 
 export default DisplayDebugHistory;
