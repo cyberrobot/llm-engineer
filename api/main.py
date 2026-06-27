@@ -30,7 +30,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
-        "https://caring-appreciation-production-5a11.up.railway.app",
+        "https://app.redmoorconsulting.co.uk",
     ],
     allow_methods=["*"],
     allow_headers=["*"],
