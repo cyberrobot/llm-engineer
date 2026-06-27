@@ -95,6 +95,12 @@ Create .env:
 VITE_API_URL=http://localhost:8000
 ```
 
+Production builds use:
+
+```
+VITE_API_URL=https://api.redmoorconsulting.co.uk
+```
+
 ⸻
 
 ### API Endpoints
