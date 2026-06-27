@@ -10,7 +10,7 @@ on:
 
 jobs:
   pytest:
-    name: Run pytest
+    name: Backend tests
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
@@ -30,3 +30,30 @@ jobs:
 
       - name: Run pytest
         run: pytest
+
+  storybook-tests:
+    name: Storybook tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/rag-ui
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/rag-ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Storybook test browsers
+        run: npm run install-storybook-browsers
+
+      - name: Run Storybook tests
+        run: npm run test-storybook

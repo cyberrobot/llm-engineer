@@ -36,7 +36,7 @@ const DebugHistoryTimeline = ({
               isSelected ? 'bg-gray-50' : 'bg-white'
             }`}
           >
-            <span className="absolute top-0 bottom-0 left-9 w-px bg-border" />
+            <span className="absolute top-0 bottom-0 left-9.25 w-px bg-border" />
             <span
               className={`relative z-10 mt-0.5 size-3 shrink-0 rounded-full ring-4 ring-white ${
                 isSelected ? 'bg-secondary' : 'bg-gray-300'
@@ -44,7 +44,7 @@ const DebugHistoryTimeline = ({
             />
 
             <span className="flex min-w-0 flex-1 flex-col gap-3">
-              <span className="text-base leading-snug font-semibold text-[var(--text-h)]">
+              <span className="text-base leading-snug font-semibold text-(--text-h)">
                 {item.question}
               </span>
               <span className="flex items-center justify-between gap-4 text-sm font-medium text-text">
