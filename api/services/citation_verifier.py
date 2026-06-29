@@ -31,7 +31,7 @@ def verify_sentence(
         return _empty_result(sentence)
 
     sentence_embedding = get_embedding(sentence)
-    best_source_id: str | None = None
+    source_ids: list[str] = []
     best_score = 0.0
 
     for chunk in chunks:
@@ -44,18 +44,17 @@ def verify_sentence(
             continue
 
         score = float(cosine_similarity(sentence_embedding, embedding))
-        if score <= best_score:
-            continue
+        best_score = max(best_score, score)
 
-        best_source_id = chunk_id
-        best_score = score
+        if score >= threshold:
+            source_ids.append(chunk_id)
 
     support_score = round(best_score, 4)
-    if best_source_id and best_score >= threshold:
+    if source_ids:
         return {
             "sentence": sentence,
             "supported": True,
-            "source_ids": [best_source_id],
+            "source_ids": source_ids,
             "support_score": support_score,
         }
 
