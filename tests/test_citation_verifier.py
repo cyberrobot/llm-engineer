@@ -32,7 +32,7 @@ def test_unsupported_sentence_returns_score_without_source_ids():
     }
 
 
-def test_best_matching_chunk_is_selected():
+def test_all_matching_chunks_are_returned():
     chunks = [
         {"id": "chunk-1", "text": "Related policy.", "embedding": [0.8, 0.6]},
         {"id": "chunk-2", "text": "Exact policy.", "embedding": [1, 0]},
@@ -45,7 +45,7 @@ def test_best_matching_chunk_is_selected():
     assert result == {
         "sentence": "Staff must wear surgical scrubs.",
         "supported": True,
-        "source_ids": ["chunk-2"],
+        "source_ids": ["chunk-1", "chunk-2"],
         "support_score": 1.0,
     }
 
