@@ -9,3 +9,4 @@ slowapi
 limits[redis]
 pytest
 pysbd
+python-multipart

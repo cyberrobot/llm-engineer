@@ -37,6 +37,50 @@ def save_document_with_chunks(doc_id, doc_type, access_roles, chunks):
             )
 
 
+def create_uploaded_document(doc_id, doc_type, access_roles, upload_path, original_filename):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO documents (
+                    id,
+                    doc_type,
+                    access_roles,
+                    status,
+                    upload_path,
+                    original_filename
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    doc_id,
+                    doc_type,
+                    json.dumps(access_roles),
+                    "uploaded",
+                    upload_path,
+                    original_filename,
+                ),
+            )
+
+
+def create_ingestion_job(job_id, document_id, stage, status, progress):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO ingestion_jobs (
+                    id,
+                    document_id,
+                    stage,
+                    status,
+                    progress
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (job_id, document_id, stage, status, progress),
+            )
+
+
 def search_chunks_by_embedding(
     query_embedding: list[float],
     query: str,

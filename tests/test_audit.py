@@ -132,3 +132,26 @@ def test_init_db_adds_evaluation_column_if_missing():
         and "ADD COLUMN IF NOT EXISTS evaluation" in query
         for query in queries
     )
+
+
+def test_init_db_adds_upload_schema():
+    cursor = FakeCursor()
+
+    with patch.object(database, "get_connection", return_value=FakeConnection(cursor)):
+        database.init_db()
+
+    queries = [query for query, _params in cursor.execute_calls]
+
+    assert any("CREATE TABLE IF NOT EXISTS ingestion_jobs" in query for query in queries)
+    assert any(
+        "ALTER TABLE documents" in query and "ADD COLUMN IF NOT EXISTS status" in query
+        for query in queries
+    )
+    assert any(
+        "ALTER TABLE documents" in query and "ADD COLUMN IF NOT EXISTS upload_path" in query
+        for query in queries
+    )
+    assert any(
+        "ALTER TABLE documents" in query and "ADD COLUMN IF NOT EXISTS original_filename" in query
+        for query in queries
+    )
