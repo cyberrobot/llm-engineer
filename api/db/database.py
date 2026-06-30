@@ -23,7 +23,24 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS documents (
                     id TEXT PRIMARY KEY,
                     doc_type TEXT NOT NULL,
-                    access_roles JSONB NOT NULL DEFAULT '[]'::jsonb
+                    access_roles JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    status TEXT NOT NULL DEFAULT 'indexed',
+                    upload_path TEXT,
+                    original_filename TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ingestion_jobs (
+                    id TEXT PRIMARY KEY,
+                    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    stage TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    progress INTEGER NOT NULL DEFAULT 0,
+                    error TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
             cur.execute("""
@@ -69,6 +86,10 @@ def init_db():
                 ON audit_logs(timestamp DESC)
             """)
             cur.execute("""
+                CREATE INDEX IF NOT EXISTS ingestion_jobs_document_id_idx
+                ON ingestion_jobs(document_id)
+            """)
+            cur.execute("""
                 CREATE OR REPLACE FUNCTION chunks_text_search_trigger()
                 RETURNS trigger AS $$
                 BEGIN
@@ -91,4 +112,24 @@ def init_db():
             cur.execute("""
                 ALTER TABLE audit_logs
                 ADD COLUMN IF NOT EXISTS evaluation JSONB NOT NULL DEFAULT '{}'::jsonb
+            """)
+            cur.execute("""
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'indexed'
+            """)
+            cur.execute("""
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS upload_path TEXT
+            """)
+            cur.execute("""
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS original_filename TEXT
+            """)
+            cur.execute("""
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            """)
+            cur.execute("""
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             """)
