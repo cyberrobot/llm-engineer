@@ -17,7 +17,7 @@ An AI discovery assistant monorepo containing a Retrieval-Augmented Generation (
 
 ## Install
 
-Install the web workspace from the repository root:
+Install the monorepo workspaces from the repository root:
 
 ```sh
 npm ci
@@ -60,15 +60,14 @@ docker compose up -d
 Run the backend:
 
 ```sh
-cd apps/api
-source venv/bin/activate
-uvicorn api.main:app --reload
+source apps/api/venv/bin/activate
+npm run dev:api
 ```
 
 Run the web app in another terminal:
 
 ```sh
-npm run dev
+npm run dev:web
 ```
 
 The API is available at `http://localhost:8000` and the Vite development server at `http://localhost:5173`.
@@ -78,10 +77,8 @@ The API is available at `http://localhost:8000` and the Vite development server 
 ```sh
 npm run build
 npm run lint
+npm run test:api
 npm run test:storybook
-
-cd apps/api
-pytest
 ```
 
 ## Docker
