@@ -1,13 +1,15 @@
+name: ai-discovery-assistant
+
 services:
   redis:
     image: redis:latest
-    container_name: llm-engineer-redis
+    container_name: ai-discovery-assistant-redis
     restart: unless-stopped
     ports:
       - '6379:6379'
   db:
     image: pgvector/pgvector:pg16
-    container_name: llm-engineer-postgres
+    container_name: ai-discovery-assistant-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres

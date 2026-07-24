@@ -1,70 +1,40 @@
-# Enterprise RAG Demo
+# AI Discovery Assistant
 
-A Retrieval-Augmented Generation (RAG) system demonstrating grounded AI responses, hybrid retrieval, audit logging, caching, and observability tooling.
+An AI discovery assistant monorepo containing a Retrieval-Augmented Generation (RAG) backend and its React web application.
 
-Built with FastAPI, React, PostgreSQL + pgvector, Redis, and OpenAI APIs.
+## Applications
 
-⸻
+| Application | Path | Stack |
+| --- | --- | --- |
+| API | `apps/api` | FastAPI, PostgreSQL + pgvector, Redis, OpenAI |
+| RAG UI | `apps/rag-ui` | React, TypeScript, Tailwind CSS, Vite |
 
-### Features
+## Prerequisites
 
-- Semantic vector retrieval
-- Hybrid vector + keyword search
-- Source-grounded AI responses
-- Retrieval reranking
-- Role-based access control
-- Redis caching
-- Audit log history
-- Retrieval & generation debug panel
-- Redis-backed API rate limiting
-- Railway deployment support
+- Python 3.12
+- Node.js 24 and npm
+- Docker with Docker Compose
 
-⸻
+## Install
 
-### Tech Stack
+Install the web workspace from the repository root:
 
-**Frontend**
-
-- React
-- TypeScript
-- Tailwind CSS
-- Vite
-
-**Backend**
-
-- FastAPI
-- PostgreSQL
-- pgvector
-- Redis
-- SlowAPI
-- OpenAI API
-
-⸻
-
-### Architecture
-
-React UI →
-FastAPI API →
-Retrieval Pipeline →
-PostgreSQL + pgvector →
-OpenAI APIs →
-Redis Cache
-
-⸻
-
-### Running Locally
-
-**Backend**
-
+```sh
+npm ci
 ```
+
+Install the backend:
+
+```sh
+cd apps/api
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Create .env:
+Create `apps/api/.env`:
 
-```
+```dotenv
 OPENAI_API_KEY=your_openai_key
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/llm_engineer
 REDIS_URL=redis://localhost:6379/0
@@ -73,105 +43,59 @@ DEBUG_DELAY=false
 DISABLE_INGEST=false
 ```
 
-Start services:
+Create `apps/rag-ui/.env`:
 
-```
-docker compose up -d
-uvicorn api.main:app --reload
-```
-
-⸻
-
-**Frontend**
-
-```
-npm install
-npm run dev
-```
-
-Create .env:
-
-```
+```dotenv
 VITE_API_URL=http://localhost:8000
 ```
 
-Production builds use:
+## Run locally
 
-```
-VITE_API_URL=https://api.redmoorconsulting.co.uk
-```
+Start PostgreSQL and Redis from the repository root:
 
-⸻
-
-### API Endpoints
-
-**Chat**
-
-```
-POST /rag-chat
+```sh
+docker compose up -d
 ```
 
-**Ingest**
+Run the backend:
 
-```
-POST /ingest
-```
-
-Protected using:
-
-DISABLE_INGEST
-
-**Audit Logs**
-
-```
-GET /audit-logs
+```sh
+cd apps/api
+source venv/bin/activate
+uvicorn api.main:app --reload
 ```
 
-⸻
+Run the web app in another terminal:
 
-### Observability
-
-The debug interface exposes:
-
-- Retrieval rank
-- Hybrid scores
-- Vector distance
-- Source citations
-- Execution timings
-- Cache hit/miss status
-- Audit history
-
-⸻
-
-### Production Recommendations
-
-```
-DISABLE_INGEST=true
-DISABLE_CACHE=false
-DEBUG_DELAY=false
+```sh
+npm run dev
 ```
 
-**Endpoint Limit**
+The API is available at `http://localhost:8000` and the Vite development server at `http://localhost:5173`.
 
+## Common commands
+
+```sh
+npm run build
+npm run lint
+npm run test:storybook
+
+cd apps/api
+pytest
 ```
-/rag-chat	20/minute
-/ingest	5/minute
-/audit-logs	60/minute
+
+## Docker
+
+Build the backend image with the backend directory as its context:
+
+```sh
+docker build -t ai-discovery-assistant-api apps/api
 ```
 
-⸻
+## API endpoints
 
-### Future Improvements
+- `POST /rag-chat`
+- `POST /ingest`
+- `GET /audit-logs`
 
-- Streaming responses
-- Automated evaluation
-- Authentication
-- Admin dashboard
-- Advanced reranking
-- Multi-tenant support
-
-⸻
-
-### License
-
-MIT
+In production, consider setting `DISABLE_INGEST=true`, `DISABLE_CACHE=false`, and `DEBUG_DELAY=false`.
