@@ -12,8 +12,9 @@ jobs:
   pytest:
     name: Backend tests
     runs-on: ubuntu-latest
-    env:
-      PYTHONPATH: ${{ github.workspace }}
+    defaults:
+      run:
+        working-directory: apps/api
 
     steps:
       - name: Check out repository
@@ -24,6 +25,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: apps/api/requirements.txt
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -34,9 +36,6 @@ jobs:
   storybook-tests:
     name: Storybook tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web/rag-ui
 
     steps:
       - name: Check out repository
@@ -47,13 +46,13 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: web/rag-ui/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
       - name: Install Storybook test browsers
-        run: npm run install-storybook-browsers
+        run: npm run install-storybook-browsers --workspace @ai-discovery-assistant/rag-ui
 
       - name: Run Storybook tests
-        run: npm run test-storybook
+        run: npm run test:storybook

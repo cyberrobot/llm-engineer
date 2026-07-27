@@ -1,0 +1,9 @@
+{
+  "name": "@ai-discovery-assistant/api",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "python -m uvicorn api.main:app --reload",
+    "test": "python -m pytest"
+  }
+}

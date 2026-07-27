@@ -1,0 +1,19 @@
+{
+  "name": "ai-discovery-assistant",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @ai-discovery-assistant/rag-ui",
+    "dev:api": "npm run dev --workspace @ai-discovery-assistant/api",
+    "dev:web": "npm run dev --workspace @ai-discovery-assistant/rag-ui",
+    "build": "npm run build --workspace @ai-discovery-assistant/rag-ui",
+    "lint": "npm run lint --workspace @ai-discovery-assistant/rag-ui",
+    "storybook": "npm run storybook --workspace @ai-discovery-assistant/rag-ui",
+    "test": "npm run test --workspaces --if-present",
+    "test:api": "npm run test --workspace @ai-discovery-assistant/api",
+    "test:storybook": "npm run test-storybook --workspace @ai-discovery-assistant/rag-ui"
+  }
+}
