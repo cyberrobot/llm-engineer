@@ -24,7 +24,7 @@ User query:
     return queries
 
 
-query_cache = {}
+query_cache: dict[str, list[str]] = {}
 
 MAX_CACHE_SIZE = 100
 
