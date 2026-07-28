@@ -5,4 +5,4 @@ __pycache__/
 node_modules/
 dist/
 *.py[cod]
-apps/api/uploads/
+apps/backend/uploads/

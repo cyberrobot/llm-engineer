@@ -7,13 +7,13 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @ai-discovery-assistant/rag-ui",
-    "dev:api": "npm run dev --workspace @ai-discovery-assistant/api",
+    "dev:api": "npm run dev --workspace @ai-discovery-assistant/backend",
     "dev:web": "npm run dev --workspace @ai-discovery-assistant/rag-ui",
     "build": "npm run build --workspace @ai-discovery-assistant/rag-ui",
     "lint": "npm run lint --workspace @ai-discovery-assistant/rag-ui",
     "storybook": "npm run storybook --workspace @ai-discovery-assistant/rag-ui",
     "test": "npm run test --workspaces --if-present",
-    "test:api": "npm run test --workspace @ai-discovery-assistant/api",
+    "test:api": "npm run test --workspace @ai-discovery-assistant/backend",
     "test:storybook": "npm run test-storybook --workspace @ai-discovery-assistant/rag-ui"
   }
 }
