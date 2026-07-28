@@ -6,7 +6,7 @@ An AI discovery assistant monorepo containing a Retrieval-Augmented Generation (
 
 | Application | Path | Stack |
 | --- | --- | --- |
-| API | `apps/api` | FastAPI, PostgreSQL + pgvector, Redis, OpenAI |
+| Backend | `apps/backend` | FastAPI, PostgreSQL + pgvector, Redis, OpenAI |
 | RAG UI | `apps/rag-ui` | React, TypeScript, Tailwind CSS, Vite |
 
 ## Prerequisites
@@ -26,13 +26,13 @@ npm ci
 Install the backend:
 
 ```sh
-cd apps/api
+cd apps/backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Create `apps/api/.env`:
+Create `apps/backend/.env`:
 
 ```dotenv
 OPENAI_API_KEY=your_openai_key
@@ -60,7 +60,7 @@ docker compose up -d
 Run the backend:
 
 ```sh
-source apps/api/venv/bin/activate
+source apps/backend/venv/bin/activate
 npm run dev:api
 ```
 
@@ -86,11 +86,13 @@ npm run test:storybook
 Build the backend image with the backend directory as its context:
 
 ```sh
-docker build -t ai-discovery-assistant-api apps/api
+docker build -t ai-discovery-assistant-backend apps/backend
 ```
 
 ## API endpoints
 
+- `GET /health`
+- `GET /assistant/health`
 - `POST /rag-chat`
 - `POST /ingest`
 - `GET /audit-logs`
