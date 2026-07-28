@@ -1,8 +1,9 @@
 # Assistant API
 
-This directory is reserved for generated API artifacts:
+This directory contains the Assistant HTTP integration:
 
-- `client/` will contain a generated HTTP client when generation is introduced.
-- `types/` will contain types generated from the backend OpenAPI document.
+- `assistant.ts` exposes the typed Assistant operations.
+- `client.ts` centralises HTTP behavior and error handling.
+- `types/schema.ts` contains types generated from the backend OpenAPI document.
 
-Do not add handwritten copies of backend request or response models here. The backend OpenAPI document is the source of truth.
+The backend OpenAPI document remains the source of truth for request and response shapes.

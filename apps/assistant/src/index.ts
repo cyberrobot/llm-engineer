@@ -1,1 +1,6 @@
-export {}
+export { createAssistantApi, sendChatMessage } from './api/assistant'
+export type { AssistantApi, ChatRequest, ChatResponse } from './api/assistant'
+export { AssistantApiError, HttpClient } from './api/client'
+export type { ApiErrorCode, ApiLogger, HttpClientOptions } from './api/client'
+export { assistantConfig } from './config/assistantConfig'
+export type { AssistantConfig } from './types/config'

@@ -20,9 +20,14 @@ def test_health_routes_preserve_existing_health_and_expose_assistant_health(monk
 
     openapi = app.openapi()
     registered_paths = set(openapi["paths"])
-    assert {"/ingest", "/ingest/upload", "/chunks", "/rag-chat", "/audit-logs"}.issubset(
-        registered_paths
-    )
+    assert {
+        "/assistant/chat",
+        "/ingest",
+        "/ingest/upload",
+        "/chunks",
+        "/rag-chat",
+        "/audit-logs",
+    }.issubset(registered_paths)
 
     health_response_schema = openapi["paths"]["/assistant/health"]["get"]["responses"]["200"][
         "content"
@@ -45,4 +50,10 @@ def test_openapi_includes_versioned_assistant_contracts(monkeypatch):
         "HealthResponse",
         "SourceReference",
     }.issubset(openapi["components"]["schemas"])
-    assert "/assistant/chat" not in openapi["paths"]
+    chat_operation = openapi["paths"]["/assistant/chat"]["post"]
+    assert chat_operation["requestBody"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ChatRequest"
+    }
+    assert chat_operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/ChatResponse"
+    }
