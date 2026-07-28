@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -19,6 +20,30 @@ DISABLE_INGEST = os.getenv("DISABLE_INGEST", "false").lower() == "true"
 DISABLE_CACHE = os.getenv("DISABLE_CACHE", "false").lower() == "true"
 DISABLE_AUDIT_LOGS = os.getenv("DISABLE_AUDIT_LOGS", "false").lower() == "true"
 DEBUG_DELAY = os.getenv("DEBUG_DELAY", "false").lower() == "true"
+
+
+@dataclass(frozen=True)
+class AISettings:
+    """Environment-backed configuration for the Assistant AI provider."""
+
+    provider: str
+    openai_api_key: str | None
+    openai_model: str
+    request_timeout: float
+
+
+def get_ai_settings() -> AISettings:
+    """Read AI configuration from the environment at the composition boundary."""
+    timeout = float(os.getenv("AI_REQUEST_TIMEOUT", "30"))
+    if timeout <= 0:
+        raise ValueError("AI_REQUEST_TIMEOUT must be greater than zero")
+
+    return AISettings(
+        provider=os.getenv("AI_PROVIDER", "openai").strip().lower(),
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-5.5").strip(),
+        request_timeout=timeout,
+    )
 
 
 def get_openai_api_key() -> str | None:

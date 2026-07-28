@@ -2,12 +2,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from openai import OpenAI
 from slowapi.middleware import SlowAPIMiddleware
 
 from api.openapi import API_CONTRACT_VERSION, create_openapi_schema
 from api.router import api_router
-from core.config import get_openai_api_key
 from core.exceptions import register_exception_handlers
 from core.logging import configure_logging
 from infrastructure.database.connection import init_db
@@ -26,7 +24,7 @@ app = FastAPI(
     description="Versioned API contracts for the AI Discovery Assistant.",
     lifespan=lifespan,
 )
-app.openapi = create_openapi_schema(app)
+app.openapi = create_openapi_schema(app)  # type: ignore[method-assign]
 configure_logging()
 
 app.add_middleware(
@@ -44,9 +42,3 @@ app.state.limiter = limiter
 register_exception_handlers(app)
 app.add_middleware(SlowAPIMiddleware)
 app.include_router(api_router)
-
-api_key = get_openai_api_key()
-if not api_key:
-    raise ValueError("OPENAI_API_KEY is not set in the environment variables.")
-
-client = OpenAI(api_key=api_key)

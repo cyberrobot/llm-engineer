@@ -1,64 +1,74 @@
 from fastapi.testclient import TestClient
 
-from assistant.api.dependencies import get_chat_service
-from assistant.schemas import ChatRequest, ChatResponse
+from assistant.api.dependencies import get_ai_provider
+from infrastructure.ai.exceptions import AITimeoutError
+from infrastructure.ai.providers import AIProvider
 
 
-class RecordingChatService:
+class RecordingAIProvider(AIProvider):
     def __init__(self) -> None:
-        self.request: ChatRequest | None = None
+        self.system_prompt: str | None = None
+        self.user_prompt: str | None = None
+        self.error: Exception | None = None
 
-    def chat(self, request: ChatRequest) -> ChatResponse:
-        self.request = request
-        return ChatResponse(
-            message="Assistant backend connected successfully.",
-            sources=[],
-        )
+    @property
+    def name(self) -> str:
+        return "test"
+
+    @property
+    def model(self) -> str:
+        return "test-model"
+
+    def generate_response(self, *, system_prompt: str, user_prompt: str) -> str:
+        self.system_prompt = system_prompt
+        self.user_prompt = user_prompt
+        if self.error:
+            raise self.error
+        return "A discovery workshop can clarify your priorities."
 
 
-def create_client(monkeypatch) -> tuple[TestClient, RecordingChatService]:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
-
+def create_client() -> tuple[TestClient, RecordingAIProvider]:
     from main import app
 
-    service = RecordingChatService()
-    app.dependency_overrides[get_chat_service] = lambda: service
-    return TestClient(app), service
+    provider = RecordingAIProvider()
+    app.dependency_overrides[get_ai_provider] = lambda: provider
+    return TestClient(app), provider
 
 
-def test_chat_returns_mock_response_and_delegates_validated_request(monkeypatch):
-    client, service = create_client(monkeypatch)
+def test_chat_returns_provider_response_and_delegates_validated_request():
+    client, provider = create_client()
 
     response = client.post("/assistant/chat", json={"message": "  Hello  "})
 
     assert response.status_code == 200
     assert response.json() == {
-        "message": "Assistant backend connected successfully.",
+        "message": "A discovery workshop can clarify your priorities.",
         "sources": [],
     }
-    assert service.request == ChatRequest(message="Hello")
+    assert provider.user_prompt == "Hello"
+    assert provider.system_prompt == "You are a professional business discovery assistant."
 
 
-def test_chat_rejects_request_without_message(monkeypatch):
-    client, service = create_client(monkeypatch)
+def test_chat_rejects_request_without_message():
+    client, provider = create_client()
 
     response = client.post("/assistant/chat", json={})
 
     assert response.status_code == 422
-    assert service.request is None
+    assert provider.user_prompt is None
 
 
-def test_chat_rejects_empty_message(monkeypatch):
-    client, service = create_client(monkeypatch)
+def test_chat_rejects_empty_message():
+    client, provider = create_client()
 
     response = client.post("/assistant/chat", json={"message": ""})
 
     assert response.status_code == 422
-    assert service.request is None
+    assert provider.user_prompt is None
 
 
-def test_chat_rejects_whitespace_and_additional_fields(monkeypatch):
-    client, service = create_client(monkeypatch)
+def test_chat_rejects_whitespace_and_additional_fields():
+    client, provider = create_client()
 
     whitespace_response = client.post("/assistant/chat", json={"message": "  \n"})
     extra_field_response = client.post(
@@ -68,4 +78,14 @@ def test_chat_rejects_whitespace_and_additional_fields(monkeypatch):
 
     assert whitespace_response.status_code == 422
     assert extra_field_response.status_code == 422
-    assert service.request is None
+    assert provider.user_prompt is None
+
+
+def test_chat_maps_provider_timeout_to_gateway_timeout():
+    client, provider = create_client()
+    provider.error = AITimeoutError()
+
+    response = client.post("/assistant/chat", json={"message": "Hello"})
+
+    assert response.status_code == 504
+    assert response.json() == {"detail": "The AI provider timed out."}
