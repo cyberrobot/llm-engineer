@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from slowapi.middleware import SlowAPIMiddleware
 
+from api.openapi import API_CONTRACT_VERSION, create_openapi_schema
 from api.router import api_router
 from core.config import get_openai_api_key
 from core.exceptions import register_exception_handlers
@@ -19,7 +20,13 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    title="AI Discovery Assistant API",
+    version=API_CONTRACT_VERSION,
+    description="Versioned API contracts for the AI Discovery Assistant.",
+    lifespan=lifespan,
+)
+app.openapi = create_openapi_schema(app)
 configure_logging()
 
 app.add_middleware(
