@@ -5,7 +5,9 @@ import pytest
 from pydantic import ValidationError
 
 from assistant.evaluation import (
+    AnswerEvaluationOptions,
     AnswerEvaluationResult,
+    AnswerEvaluationSummary,
     EvaluationCase,
     EvaluationCaseResult,
     EvaluationCaseStatus,
@@ -283,6 +285,67 @@ def test_answer_result_accepts_populated_output_and_zero_citations():
 
     assert result.matched_expected_fragments == ["grounded"]
     assert result.citation_count == 0
+
+
+def test_answer_result_source_diagnostics_are_serializable_and_have_independent_defaults():
+    first = AnswerEvaluationResult(
+        answer="Answer",
+        cited_source_ids=[" doc-a ", "doc-a", "doc-b"],
+        valid_citation_source_ids=["doc-a"],
+        invalid_citation_source_ids=["doc-b"],
+        duplicate_citation_source_ids=["doc-a"],
+        cited_expected_source_ids=["doc-a"],
+        cited_unexpected_source_ids=["doc-b"],
+        uncited_expected_source_ids=["doc-c"],
+    )
+    second = AnswerEvaluationResult(answer="Other")
+    restored = AnswerEvaluationResult.model_validate_json(first.model_dump_json())
+
+    first.cited_source_ids.append("doc-c")
+
+    assert restored.cited_source_ids == ["doc-a", "doc-b"]
+    assert second.cited_source_ids == []
+
+
+def test_answer_evaluation_options_are_immutable_and_forbid_unknown_configuration():
+    options = AnswerEvaluationOptions()
+
+    assert options.case_sensitive is False
+    assert options.normalise_whitespace is True
+    assert options.require_all_expected_fragments is True
+    assert options.require_citations_when_sources_expected is True
+    assert options.validate_citations_against_retrieval is True
+
+    with pytest.raises(ValidationError, match="frozen"):
+        options.case_sensitive = True
+    with pytest.raises(ValidationError, match="extra"):
+        AnswerEvaluationOptions.model_validate({"fuzzy_matching": True})
+
+
+def test_answer_summary_validates_case_count_composition():
+    summary = AnswerEvaluationSummary(
+        evaluated_cases=3,
+        evaluable_cases=2,
+        passed_cases=1,
+        failed_cases=1,
+        unevaluable_cases=1,
+        pass_rate=0.5,
+        average_citation_count=1.0,
+        citation_validity_rate=0.5,
+    )
+
+    assert AnswerEvaluationSummary.model_validate_json(summary.model_dump_json()) == summary
+
+    with pytest.raises(ValidationError, match="counts"):
+        AnswerEvaluationSummary(
+            evaluated_cases=1,
+            evaluable_cases=1,
+            passed_cases=1,
+            failed_cases=1,
+            unevaluable_cases=0,
+            pass_rate=1.0,
+            average_citation_count=0.0,
+        )
 
 
 def test_answer_result_rejects_negative_citation_count():

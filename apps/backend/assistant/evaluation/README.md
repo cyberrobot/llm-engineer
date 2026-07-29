@@ -1,9 +1,9 @@
 # Evaluation domain models
 
 This package defines the stable, serializable records used by the evaluation framework, loads
-repository-managed evaluation datasets from JSON, and calculates deterministic retrieval-quality
-metrics from retrieval results supplied by a caller. It does not execute retrieval, generate or
-evaluate answers, orchestrate evaluation runs, or persist reports.
+repository-managed evaluation datasets from JSON, and calculates deterministic retrieval and
+answer-quality metrics from results supplied by a caller. It does not execute retrieval, generate
+answers, orchestrate evaluation runs, or persist reports.
 
 The models have three boundaries:
 
@@ -138,3 +138,60 @@ so adapted distances remain unset.
 mean recall, hit rate, mean reciprocal rank, and average raw retrieved-item count. Each quality mean
 ignores `None` but includes zero; it is `None` when no case supplies that metric. The retrieved-item
 average includes every supplied result and is `0.0` for an empty sequence.
+
+## Answer evaluation
+
+Answer evaluation is rule-based and independent from answer generation. It never calls an LLM,
+retrieval service, database, embedding model, or external API. Callers supply completed answer text,
+optional structured citations, and optional retrieval context.
+
+By default, required and prohibited fragments are trimmed, consecutive whitespace is collapsed,
+and comparison uses Unicode-aware case-insensitive substring matching. Punctuation and word order
+are preserved; fragments are plain text rather than regular expressions. All required fragments
+must be present, while any prohibited fragment fails the exclusion check. Options can enable
+case-sensitive comparison, retain internal whitespace, or allow any required fragment to satisfy
+the inclusion check.
+
+Structured citations use `Citation.document_id`, matching retrieval evaluation's canonical
+`RetrievedItem.document_id` identity. Raw citation count includes duplicates, while grounding and
+expected-source diagnostics operate on unique document IDs in first-seen order. When a case has
+expected sources, at least one citation is required by default. A citation is structurally valid
+only when its document appeared in the supplied retrieval context; a retrieved but unexpected
+document remains structurally valid. The evaluator does not require every expected document to be
+cited.
+
+Applicable checks are composed with logical AND: required fragments, prohibited fragments, the
+citation requirement, and available citation grounding must all pass. A failed applicable check
+fails the answer. If no checks apply, `passed` is `None` and `no_answer_expectations` is recorded.
+Empty text is an ordinary result with an `empty_answer` diagnostic, not an exception.
+
+`hallucination_detected` is deliberately narrow: it is `True` only when at least one structured
+citation names a document absent from the supplied retrieval context, `False` when validation ran
+and all citations were grounded, and `None` when validation was unavailable. It is not general
+factuality or prose-level hallucination detection.
+
+```python
+from assistant.evaluation import EvaluationCase, evaluate_answer
+
+case = EvaluationCase(
+    id="password-reset",
+    question="How do I reset my password?",
+    expected_answer_contains=["reset link"],
+    expected_answer_excludes=["send us your password"],
+)
+result = evaluate_answer(
+    case=case,
+    answer="Use the reset link sent to your registered email.",
+)
+print(result.passed)
+print(result.missing_expected_fragments)
+```
+
+`evaluate_chat_response` is a small adapter for the production `ChatResponse` contract. Its
+`SourceReference.id` values are already document IDs, so callers do not need to reconstruct domain
+citations. It does not alter the response or its answer formatting.
+
+`summarise_answer_results` reports supplied, evaluable, passed, failed, and unevaluable case counts;
+pass rate across evaluable cases; average raw citation count across all supplied results; and the
+result-level citation validity rate across results where grounding was evaluated. Empty aggregates
+have an average citation count of `0.0`, with pass and citation-validity rates left as `None`.

@@ -1,5 +1,11 @@
-"""Stable public exports for evaluation models, loading, and retrieval metrics."""
+"""Stable public exports for deterministic evaluation models and metrics."""
 
+from assistant.evaluation.answer_adapter import evaluate_chat_response
+from assistant.evaluation.answer_evaluator import (
+    AnswerEvaluationError,
+    evaluate_answer,
+    summarise_answer_results,
+)
 from assistant.evaluation.dataset_loader import (
     EvaluationDatasetError,
     EvaluationDatasetFileNotFoundError,
@@ -11,7 +17,9 @@ from assistant.evaluation.dataset_loader import (
     parse_evaluation_dataset_json,
 )
 from assistant.evaluation.models import (
+    AnswerEvaluationOptions,
     AnswerEvaluationResult,
+    AnswerEvaluationSummary,
     EvaluationCase,
     EvaluationCaseResult,
     EvaluationCaseStatus,
@@ -31,7 +39,10 @@ from assistant.evaluation.retrieval_evaluator import (
 )
 
 __all__ = [
+    "AnswerEvaluationError",
+    "AnswerEvaluationOptions",
     "AnswerEvaluationResult",
+    "AnswerEvaluationSummary",
     "EvaluationCase",
     "EvaluationCaseResult",
     "EvaluationCaseStatus",
@@ -51,7 +62,10 @@ __all__ = [
     "UnsupportedEvaluationDatasetSchemaError",
     "load_evaluation_dataset",
     "parse_evaluation_dataset_json",
+    "evaluate_answer",
+    "evaluate_chat_response",
     "evaluate_retrieval",
     "summarise_retrieval_results",
+    "summarise_answer_results",
     "to_evaluation_retrieved_items",
 ]
