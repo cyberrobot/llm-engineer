@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "name": "knowledge-assistant-baseline",
+  "version": "2026.07",
+  "description": "Representative retrieval and answer expectations for the knowledge assistant.",
+  "cases": [
+    {
+      "id": "website-ingestion-source",
+      "question": "Which guide explains how website content is ingested?",
+      "expected_source_ids": [
+        "website-ingestion-guide"
+      ],
+      "expected_answer_contains": [],
+      "expected_answer_excludes": [],
+      "tags": [
+        "retrieval",
+        "ingestion"
+      ],
+      "metadata": {}
+    },
+    {
+      "id": "password-reset-answer",
+      "question": "How do I reset my account password?",
+      "expected_source_ids": [],
+      "expected_answer_contains": [
+        "reset link",
+        "account email"
+      ],
+      "expected_answer_excludes": [],
+      "tags": [
+        "answer",
+        "accounts"
+      ],
+      "metadata": {
+        "priority": "baseline"
+      }
+    },
+    {
+      "id": "access-control-safety",
+      "question": "How are access roles applied to indexed knowledge?",
+      "expected_source_ids": [
+        "knowledge-access-guide"
+      ],
+      "expected_answer_contains": [
+        "access roles"
+      ],
+      "expected_answer_excludes": [
+        "all users can access every document"
+      ],
+      "tags": [
+        "retrieval",
+        "answer",
+        "security"
+      ],
+      "metadata": {
+        "risk": "authorization"
+      }
+    }
+  ],
+  "tags": [
+    "baseline",
+    "knowledge-assistant"
+  ],
+  "metadata": {
+    "owner": "engineering"
+  }
+}
