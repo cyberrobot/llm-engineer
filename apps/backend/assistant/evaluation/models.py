@@ -75,6 +75,7 @@ class EvaluationCase(_EvaluationModel):
 class EvaluationDataset(_EvaluationModel):
     """A named, versioned collection of evaluation inputs."""
 
+    schema_version: NonEmptyString = "1.0"
     name: NonEmptyString
     version: NonEmptyString
     cases: list[EvaluationCase] = Field(min_length=1)

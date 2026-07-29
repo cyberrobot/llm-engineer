@@ -93,6 +93,27 @@ def test_evaluation_dataset_accepts_valid_cases_and_aware_created_at():
     assert dataset.tags == ["release"]
 
 
+def test_evaluation_dataset_defaults_to_schema_version_1_for_python_callers():
+    dataset = EvaluationDataset(
+        name="discovery",
+        version="2026.07",
+        cases=[EvaluationCase(id="case-1", question="Question")],
+    )
+
+    assert dataset.schema_version == "1.0"
+
+
+def test_evaluation_dataset_accepts_an_explicit_schema_version():
+    dataset = EvaluationDataset(
+        schema_version=" 1.0 ",
+        name="discovery",
+        version="2026.07",
+        cases=[EvaluationCase(id="case-1", question="Question")],
+    )
+
+    assert dataset.schema_version == "1.0"
+
+
 @pytest.mark.parametrize(
     ("overrides", "field"),
     [
