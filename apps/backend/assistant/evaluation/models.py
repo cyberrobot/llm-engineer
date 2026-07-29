@@ -115,11 +115,20 @@ class RetrievalEvaluationResult(_EvaluationModel):
     hit: StrictBool | None = None
     expected_source_ids: list[NonEmptyString] = Field(default_factory=list)
     matched_source_ids: list[NonEmptyString] = Field(default_factory=list)
+    unmatched_expected_source_ids: list[NonEmptyString] = Field(default_factory=list)
+    unexpected_retrieved_source_ids: list[NonEmptyString] = Field(default_factory=list)
+    duplicate_retrieved_source_ids: list[NonEmptyString] = Field(default_factory=list)
+    evaluated_at_k: PositiveInt | None = None
     failure_reasons: list[NonEmptyString] = Field(default_factory=list)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
     _deduplicate_lists = field_validator(
-        "expected_source_ids", "matched_source_ids", "failure_reasons"
+        "expected_source_ids",
+        "matched_source_ids",
+        "unmatched_expected_source_ids",
+        "unexpected_retrieved_source_ids",
+        "duplicate_retrieved_source_ids",
+        "failure_reasons",
     )(_deduplicate)
 
     @model_validator(mode="after")
@@ -129,6 +138,24 @@ class RetrievalEvaluationResult(_EvaluationModel):
             raise ValueError(
                 "Retrieved item ranks must be unique and form an ascending sequence from 1"
             )
+        return self
+
+
+class RetrievalEvaluationSummary(_EvaluationModel):
+    """Aggregate retrieval-quality values across independently evaluated cases."""
+
+    evaluated_cases: NonNegativeInt
+    source_evaluable_cases: NonNegativeInt
+    precision_at_k: UnitRatio | None = None
+    recall_at_k: UnitRatio | None = None
+    hit_rate: UnitRatio | None = None
+    mean_reciprocal_rank: UnitRatio | None = None
+    average_retrieved_items: NonNegativeFloat
+
+    @model_validator(mode="after")
+    def validate_evaluable_count(self) -> Self:
+        if self.source_evaluable_cases > self.evaluated_cases:
+            raise ValueError("Source-evaluable cases must not exceed evaluated cases")
         return self
 
 

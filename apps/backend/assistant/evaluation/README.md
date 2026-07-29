@@ -1,8 +1,9 @@
 # Evaluation domain models
 
-This package defines the stable, serializable records used by the evaluation framework and the
-boundary that loads repository-managed evaluation datasets from JSON. It does not perform retrieval,
-answer generation, metric calculation, evaluation execution, or report persistence.
+This package defines the stable, serializable records used by the evaluation framework, loads
+repository-managed evaluation datasets from JSON, and calculates deterministic retrieval-quality
+metrics from retrieval results supplied by a caller. It does not execute retrieval, generate or
+evaluate answers, orchestrate evaluation runs, or persist reports.
 
 The models have three boundaries:
 
@@ -69,3 +70,71 @@ assert restored == dataset
 Evaluation datasets and reports currently default to schema version `1.0`. Construction and loading
 are deterministic: the models and loader do not generate IDs, timestamps, metrics, cache files, or
 other runtime values.
+
+## Retrieval evaluation
+
+`EvaluationCase.expected_source_ids` identifies knowledge documents. Retrieval evaluation therefore
+uses `RetrievedItem.document_id` as the canonical source identity. Matching is exact and
+case-sensitive; it does not compare content, resolve aliases, inspect labels, or perform database or
+network lookups. A retrieved item without a `document_id` is rejected when a case has source
+expectations.
+
+Production retrieval can return several chunks from one document. Source-level precision and recall
+count each retrieved document only once, in first-retrieved order. Repeated chunks still remain in
+`retrieved_items`, count toward the average retrieved-item total, and occupy raw retrieval positions
+for reciprocal rank. Duplicate document IDs are reported in
+`duplicate_retrieved_source_ids` in first-duplicate order.
+
+The per-case metrics are:
+
+- Precision@K: unique expected documents retrieved divided by unique documents retrieved.
+- Recall@K: unique expected documents retrieved divided by expected documents.
+- Hit: whether at least one expected document was retrieved.
+- Reciprocal rank: `1 / rank` for the first expected document in the raw ranked sequence, or `0.0`
+  for a miss.
+
+Supplying `k` evaluates only the first `k` ranked items; it must be a positive integer. The evaluator
+sorts a copy by authoritative one-based rank, rejects duplicate or gapped ranks, and never mutates
+caller-owned values. It stores the configured depth in `evaluated_at_k`; `None` means every supplied
+item was evaluated. Metrics retain full Python floating-point precision.
+
+Cases without expected source IDs are source-unevaluable: precision, recall, hit, and reciprocal rank
+are `None`, while retrieved items remain available and `no_expected_sources` is recorded as a
+diagnostic rather than a retrieval failure. When expectations exist but retrieval is empty, quality
+metrics are zero and diagnostics include `no_retrieval_results` and
+`no_expected_source_retrieved`.
+
+Evaluate already-normalized items directly:
+
+```python
+from assistant.evaluation import EvaluationCase, RetrievedItem, evaluate_retrieval
+
+case = EvaluationCase(
+    id="reset-password",
+    question="How do I reset my password?",
+    expected_source_ids=["account-guide"],
+)
+result = evaluate_retrieval(
+    case=case,
+    retrieved_items=[
+        RetrievedItem(
+            id="chunk-1",
+            document_id="account-guide",
+            chunk_id="chunk-1",
+            rank=1,
+        )
+    ],
+    k=5,
+)
+print(result.recall_at_k)
+```
+
+`to_evaluation_retrieved_items` adapts the retrieval layer's `KnowledgeChunk` values without
+executing a search. It preserves retrieval order, chunk and document identity, content, similarity
+score, document metadata, and assigns ranks beginning at one. The production type has no distance,
+so adapted distances remain unset.
+
+`summarise_retrieval_results` reports supplied and source-evaluable case counts, mean precision,
+mean recall, hit rate, mean reciprocal rank, and average raw retrieved-item count. Each quality mean
+ignores `None` but includes zero; it is `None` when no case supplies that metric. The retrieved-item
+average includes every supplied result and is `0.0` for an empty sequence.
