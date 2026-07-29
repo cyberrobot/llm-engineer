@@ -1,4 +1,5 @@
-from assistant.application.chat import SYSTEM_PROMPT, ChatService
+from assistant.application.chat import ChatService
+from assistant.application.prompt_builder import SYSTEM_PROMPT
 from assistant.schemas import ChatRequest
 from infrastructure.ai.providers import AIProvider
 
@@ -26,6 +27,10 @@ def test_chat_service_orchestrates_provider_and_maps_response():
 
     response = service.chat(ChatRequest(message="What should we discover?"))
 
-    assert provider.call == (SYSTEM_PROMPT, "What should we discover?")
+    assert provider.call == (
+        SYSTEM_PROMPT,
+        "Retrieved knowledge:\nNo relevant knowledge was found."
+        "\n\nUser question:\nWhat should we discover?",
+    )
     assert response.message == "Generated response"
     assert response.sources == []

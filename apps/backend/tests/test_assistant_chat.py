@@ -45,8 +45,11 @@ def test_chat_returns_provider_response_and_delegates_validated_request():
         "message": "A discovery workshop can clarify your priorities.",
         "sources": [],
     }
-    assert provider.user_prompt == "Hello"
-    assert provider.system_prompt == "You are a professional business discovery assistant."
+    assert provider.user_prompt == (
+        "Retrieved knowledge:\nNo relevant knowledge was found.\n\nUser question:\nHello"
+    )
+    assert provider.system_prompt is not None
+    assert "Do not invent facts" in provider.system_prompt
 
 
 def test_chat_rejects_request_without_message():

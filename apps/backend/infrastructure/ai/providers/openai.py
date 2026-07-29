@@ -25,8 +25,21 @@ class _ResponsesAPI(Protocol):
     def create(self, *, model: str, instructions: str, input: str) -> _Response: ...
 
 
+class _Embedding(Protocol):
+    embedding: list[float]
+
+
+class _EmbeddingResponse(Protocol):
+    data: list[_Embedding]
+
+
+class _EmbeddingsAPI(Protocol):
+    def create(self, *, model: str, input: str) -> _EmbeddingResponse: ...
+
+
 class _OpenAIClient(Protocol):
     responses: _ResponsesAPI
+    embeddings: _EmbeddingsAPI
 
 
 class OpenAIProvider(AIProvider):
@@ -38,9 +51,11 @@ class OpenAIProvider(AIProvider):
         api_key: str,
         model: str,
         timeout: float,
+        embedding_model: str = "text-embedding-3-small",
         client: _OpenAIClient | None = None,
     ) -> None:
         self._model = model
+        self._embedding_model = embedding_model
         self._client = cast(
             _OpenAIClient,
             client or OpenAI(api_key=api_key, timeout=timeout),
@@ -92,6 +107,45 @@ class OpenAIProvider(AIProvider):
 
         self._log_result(started_at, success=True)
         return output
+
+    def generate_embedding(self, *, text: str) -> list[float]:
+        """Generate one embedding and translate SDK failures at the adapter boundary."""
+        started_at = perf_counter()
+        try:
+            response = self._client.embeddings.create(
+                model=self._embedding_model,
+                input=text,
+            )
+            if not response.data or not response.data[0].embedding:
+                raise AIProviderError("The AI provider returned an empty embedding.")
+            embedding = response.data[0].embedding
+        except AIProviderError:
+            self._log_result(started_at, success=False)
+            raise
+        except openai.AuthenticationError as exc:
+            self._log_result(started_at, success=False)
+            raise AIAuthenticationError from exc
+        except openai.PermissionDeniedError as exc:
+            self._log_result(started_at, success=False)
+            raise AIAuthenticationError from exc
+        except openai.RateLimitError as exc:
+            self._log_result(started_at, success=False)
+            raise AIRateLimitError from exc
+        except openai.APITimeoutError as exc:
+            self._log_result(started_at, success=False)
+            raise AITimeoutError from exc
+        except (openai.APIConnectionError, openai.InternalServerError) as exc:
+            self._log_result(started_at, success=False)
+            raise AIUnavailableError from exc
+        except openai.APIError as exc:
+            self._log_result(started_at, success=False)
+            raise AIProviderError from exc
+        except Exception as exc:
+            self._log_result(started_at, success=False)
+            raise AIProviderError from exc
+
+        self._log_result(started_at, success=True)
+        return embedding
 
     def _log_result(self, started_at: float, *, success: bool) -> None:
         log = logger.info if success else logger.warning
