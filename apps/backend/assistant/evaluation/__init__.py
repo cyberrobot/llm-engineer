@@ -1,4 +1,4 @@
-"""Stable public exports for evaluation models and dataset loading."""
+"""Stable public exports for evaluation models, loading, and retrieval metrics."""
 
 from assistant.evaluation.dataset_loader import (
     EvaluationDatasetError,
@@ -20,7 +20,14 @@ from assistant.evaluation.models import (
     EvaluationRunStatus,
     EvaluationSummary,
     RetrievalEvaluationResult,
+    RetrievalEvaluationSummary,
     RetrievedItem,
+)
+from assistant.evaluation.retrieval_adapter import to_evaluation_retrieved_items
+from assistant.evaluation.retrieval_evaluator import (
+    RetrievalEvaluationError,
+    evaluate_retrieval,
+    summarise_retrieval_results,
 )
 
 __all__ = [
@@ -38,8 +45,13 @@ __all__ = [
     "EvaluationRunStatus",
     "EvaluationSummary",
     "RetrievalEvaluationResult",
+    "RetrievalEvaluationError",
+    "RetrievalEvaluationSummary",
     "RetrievedItem",
     "UnsupportedEvaluationDatasetSchemaError",
     "load_evaluation_dataset",
     "parse_evaluation_dataset_json",
+    "evaluate_retrieval",
+    "summarise_retrieval_results",
+    "to_evaluation_retrieved_items",
 ]

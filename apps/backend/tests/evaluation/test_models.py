@@ -14,6 +14,7 @@ from assistant.evaluation import (
     EvaluationRunStatus,
     EvaluationSummary,
     RetrievalEvaluationResult,
+    RetrievalEvaluationSummary,
     RetrievedItem,
 )
 
@@ -188,6 +189,32 @@ def test_retrieval_result_accepts_empty_result_with_unset_metrics():
     assert result.recall_at_k is None
     assert result.reciprocal_rank is None
     assert result.hit is None
+    assert result.unmatched_expected_source_ids == []
+    assert result.unexpected_retrieved_source_ids == []
+    assert result.duplicate_retrieved_source_ids == []
+    assert result.evaluated_at_k is None
+
+
+def test_retrieval_summary_accepts_defined_empty_aggregate():
+    summary = RetrievalEvaluationSummary(
+        evaluated_cases=0,
+        source_evaluable_cases=0,
+        average_retrieved_items=0.0,
+    )
+
+    assert summary.precision_at_k is None
+    assert summary.recall_at_k is None
+    assert summary.hit_rate is None
+    assert summary.mean_reciprocal_rank is None
+
+
+def test_retrieval_summary_rejects_more_evaluable_cases_than_supplied_cases():
+    with pytest.raises(ValidationError, match="Source-evaluable cases"):
+        RetrievalEvaluationSummary(
+            evaluated_cases=1,
+            source_evaluable_cases=2,
+            average_retrieved_items=0.0,
+        )
 
 
 def test_retrieval_result_accepts_populated_result():
