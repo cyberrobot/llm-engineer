@@ -45,6 +45,7 @@ class DocumentIngestionJob:
     started_at: datetime | None
     completed_at: datetime | None
     updated_at: datetime
+    last_completed_step: IngestionStep | None = None
 
     def __post_init__(self) -> None:
         if not self.document_id.strip():
@@ -87,6 +88,7 @@ class DocumentIngestionJob:
             started_at=None,
             completed_at=None,
             updated_at=timestamp,
+            last_completed_step=None,
         )
 
     def mark_running(self, *, at: datetime | None = None) -> None:
@@ -94,6 +96,7 @@ class DocumentIngestionJob:
 
     def mark_completed(self, *, at: datetime | None = None) -> None:
         self._transition(IngestionStatus.completed, at=at)
+        self.current_step = None
         self.failure_code = None
         self.failure_message = None
 
@@ -118,6 +121,17 @@ class DocumentIngestionJob:
     def set_current_step(self, step: IngestionStep, *, at: datetime | None = None) -> None:
         self._require_non_terminal()
         self.current_step = step
+        self._touch(at)
+
+    def mark_step_completed(self, step: IngestionStep, *, at: datetime | None = None) -> None:
+        self._require_non_terminal()
+        if self.status is not IngestionStatus.running:
+            raise InvalidDocumentIngestionJob("Only a running job can complete a step.")
+        if self.current_step is not step:
+            raise InvalidDocumentIngestionJob(
+                "Only the currently attempted ingestion step can be completed."
+            )
+        self.last_completed_step = step
         self._touch(at)
 
     def increment_retry_count(self, *, at: datetime | None = None) -> None:

@@ -5,8 +5,14 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from assistant.api.dependencies import get_document_ingestion_job_service
+from assistant.api.dependencies import (
+    get_document_ingestion_job_service,
+    get_ingestion_pipeline_runner,
+)
 from assistant.application.ingestion_job_service import DocumentIngestionJobService
+from assistant.application.ingestion_pipeline import IngestionPipelineResult
+from assistant.domain.document_ingestion_job import IngestionStep
+from assistant.domain.ingestion_status import IngestionStatus
 from assistant.infrastructure.repositories.document_ingestion_job import (
     InMemoryDocumentIngestionJobRepository,
 )
@@ -37,6 +43,7 @@ def test_create_get_and_list_ingestion_jobs(client_and_documents):
         "document_id",
         "status",
         "current_step",
+        "last_completed_step",
         "retry_count",
         "failure_code",
         "failure_message",
@@ -90,3 +97,36 @@ def test_api_validates_ids_filters_pagination_and_unknown_records(client_and_doc
     filtered = client.get("/ingestion/jobs", params={"status": "queued", "limit": 1}).json()
     assert filtered["items"] == [created]
     assert filtered["total"] == 1
+
+
+def test_run_ingestion_job_returns_structured_synchronous_result():
+    from main import app
+
+    job_id = uuid4()
+
+    class Runner:
+        def run(self, requested_job_id):
+            assert requested_job_id == job_id
+            return IngestionPipelineResult(
+                job_id,
+                IngestionStatus.completed,
+                True,
+                last_completed_step=IngestionStep.persist,
+            )
+
+    app.dependency_overrides[get_ingestion_pipeline_runner] = lambda: Runner()
+    try:
+        response = TestClient(app).post(f"/ingestion/jobs/{job_id}/run")
+    finally:
+        app.dependency_overrides.pop(get_ingestion_pipeline_runner, None)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "job_id": str(job_id),
+        "status": "completed",
+        "succeeded": True,
+        "last_completed_step": "persist",
+        "failed_step": None,
+        "failure_code": None,
+        "failure_message": None,
+    }

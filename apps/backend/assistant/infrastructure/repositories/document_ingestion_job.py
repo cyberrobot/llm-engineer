@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from threading import RLock
@@ -27,9 +27,18 @@ class IngestionJobPage:
     total: int
 
 
+@dataclass(frozen=True)
+class IngestionDocumentSource:
+    source_url: str
+    access_roles: tuple[str, ...]
+
+
 class DocumentIngestionJobRepository(ABC):
     @abstractmethod
     def document_exists(self, document_id: str) -> bool: ...
+
+    @abstractmethod
+    def get_document_source(self, document_id: str) -> IngestionDocumentSource | None: ...
 
     @abstractmethod
     def create(self, job: DocumentIngestionJob) -> DocumentIngestionJob: ...
@@ -55,14 +64,23 @@ class DocumentIngestionJobRepository(ABC):
 
 
 class InMemoryDocumentIngestionJobRepository(DocumentIngestionJobRepository):
-    def __init__(self, *, document_ids: set[str] | None = None) -> None:
-        self._document_ids = set(document_ids or ())
+    def __init__(
+        self,
+        *,
+        document_ids: set[str] | None = None,
+        document_sources: Mapping[str, IngestionDocumentSource] | None = None,
+    ) -> None:
+        self._document_sources = dict(document_sources or {})
+        self._document_ids = set(document_ids or ()) | set(self._document_sources)
         self._jobs: dict[UUID, DocumentIngestionJob] = {}
         self._idempotency: dict[str, UUID] = {}
         self._lock = RLock()
 
     def document_exists(self, document_id: str) -> bool:
         return document_id in self._document_ids
+
+    def get_document_source(self, document_id: str) -> IngestionDocumentSource | None:
+        return self._document_sources.get(document_id)
 
     def create(self, job: DocumentIngestionJob) -> DocumentIngestionJob:
         with self._lock:
@@ -113,7 +131,8 @@ class InMemoryDocumentIngestionJobRepository(DocumentIngestionJobRepository):
 
 
 class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
-    _columns = """id, document_id, status, current_step, retry_count, failure_code,
+    _columns = """id, document_id, status, current_step, last_completed_step,
+                  retry_count, failure_code,
                   failure_message, idempotency_key, created_at, started_at,
                   completed_at, updated_at"""
 
@@ -130,13 +149,26 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
         except psycopg.Error as exc:
             raise IngestionJobRepositoryFailure("Document lookup failed.") from exc
 
+    def get_document_source(self, document_id: str) -> IngestionDocumentSource | None:
+        try:
+            with self._connection_factory() as connection:
+                row = connection.execute(
+                    "SELECT source_url, access_roles FROM documents WHERE id = %s",
+                    (document_id,),
+                ).fetchone()
+            if row is None or row[0] is None:
+                return None
+            return IngestionDocumentSource(str(row[0]), tuple(row[1]))
+        except psycopg.Error as exc:
+            raise IngestionJobRepositoryFailure("Document source lookup failed.") from exc
+
     def create(self, job: DocumentIngestionJob) -> DocumentIngestionJob:
         try:
             with self._connection_factory() as connection:
                 connection.execute(
                     f"""
                     INSERT INTO document_ingestion_jobs ({self._columns})
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     self._parameters(job),
                 )
@@ -161,7 +193,8 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
                 result = connection.execute(
                     """
                     UPDATE document_ingestion_jobs
-                    SET status = %s, current_step = %s, retry_count = %s,
+                    SET status = %s, current_step = %s, last_completed_step = %s,
+                        retry_count = %s,
                         failure_code = %s, failure_message = %s, started_at = %s,
                         completed_at = %s, updated_at = %s
                     WHERE id = %s
@@ -169,6 +202,7 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
                     (
                         job.status.value,
                         job.current_step.value if job.current_step else None,
+                        job.last_completed_step.value if job.last_completed_step else None,
                         job.retry_count,
                         job.failure_code,
                         job.failure_message,
@@ -238,6 +272,7 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
             job.document_id,
             job.status.value,
             job.current_step.value if job.current_step else None,
+            job.last_completed_step.value if job.last_completed_step else None,
             job.retry_count,
             job.failure_code,
             job.failure_message,
@@ -255,12 +290,13 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
             document_id=row[1],
             status=IngestionStatus(row[2]),
             current_step=IngestionStep(row[3]) if row[3] is not None else None,
-            retry_count=row[4],
-            failure_code=row[5],
-            failure_message=row[6],
-            idempotency_key=row[7],
-            created_at=row[8],
-            started_at=row[9],
-            completed_at=row[10],
-            updated_at=row[11],
+            last_completed_step=IngestionStep(row[4]) if row[4] is not None else None,
+            retry_count=row[5],
+            failure_code=row[6],
+            failure_message=row[7],
+            idempotency_key=row[8],
+            created_at=row[9],
+            started_at=row[10],
+            completed_at=row[11],
+            updated_at=row[12],
         )
