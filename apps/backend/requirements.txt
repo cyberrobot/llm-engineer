@@ -12,3 +12,4 @@ pytest
 pysbd
 python-multipart
 mypy
+beautifulsoup4

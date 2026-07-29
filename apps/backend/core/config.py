@@ -42,6 +42,16 @@ class WebsiteLoaderSettings:
     max_response_size: int
 
 
+@dataclass(frozen=True)
+class ContentProcessingSettings:
+    """Character-based limits for deterministic website content processing."""
+
+    chunk_size_characters: int
+    chunk_overlap_characters: int
+    min_chunk_size_characters: int
+    min_document_length_characters: int
+
+
 def get_ai_settings() -> AISettings:
     """Read AI configuration from the environment at the composition boundary."""
     timeout = float(os.getenv("AI_REQUEST_TIMEOUT", "30"))
@@ -75,6 +85,37 @@ def get_website_loader_settings() -> WebsiteLoaderSettings:
         max_pages=max_pages,
         user_agent=user_agent,
         max_response_size=max_response_size,
+    )
+
+
+def get_content_processing_settings() -> ContentProcessingSettings:
+    chunk_size = int(os.getenv("INGESTION_CHUNK_SIZE_CHARACTERS", "1200"))
+    overlap = int(os.getenv("INGESTION_CHUNK_OVERLAP_CHARACTERS", "150"))
+    min_chunk_size = int(os.getenv("INGESTION_MIN_CHUNK_SIZE_CHARACTERS", "100"))
+    min_document_length = int(os.getenv("INGESTION_MIN_DOCUMENT_LENGTH_CHARACTERS", "50"))
+
+    if chunk_size <= 0:
+        raise ValueError("INGESTION_CHUNK_SIZE_CHARACTERS must be greater than zero")
+    if overlap < 0:
+        raise ValueError("INGESTION_CHUNK_OVERLAP_CHARACTERS must not be negative")
+    if overlap >= chunk_size:
+        raise ValueError(
+            "INGESTION_CHUNK_OVERLAP_CHARACTERS must be smaller than "
+            "INGESTION_CHUNK_SIZE_CHARACTERS"
+        )
+    if min_chunk_size <= 0:
+        raise ValueError("INGESTION_MIN_CHUNK_SIZE_CHARACTERS must be greater than zero")
+    if min_chunk_size > chunk_size:
+        raise ValueError(
+            "INGESTION_MIN_CHUNK_SIZE_CHARACTERS must not exceed INGESTION_CHUNK_SIZE_CHARACTERS"
+        )
+    if min_document_length < 0:
+        raise ValueError("INGESTION_MIN_DOCUMENT_LENGTH_CHARACTERS must not be negative")
+    return ContentProcessingSettings(
+        chunk_size_characters=chunk_size,
+        chunk_overlap_characters=overlap,
+        min_chunk_size_characters=min_chunk_size,
+        min_document_length_characters=min_document_length,
     )
 
 
