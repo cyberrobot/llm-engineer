@@ -46,6 +46,7 @@ def test_postgres_row_mapping_preserves_enums_nullable_fields_and_timestamps():
             str(uuid4()),
             "queued",
             None,
+            None,
             0,
             None,
             None,
@@ -60,6 +61,7 @@ def test_postgres_row_mapping_preserves_enums_nullable_fields_and_timestamps():
     assert job.id == job_id
     assert job.status is IngestionStatus.queued
     assert job.current_step is None
+    assert job.last_completed_step is None
     assert job.started_at is None
     assert job.completed_at is None
 

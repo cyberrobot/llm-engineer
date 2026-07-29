@@ -14,6 +14,12 @@ from assistant.infrastructure.repositories.document_ingestion_job import (
 from core.config import DATABASE_URL
 from infrastructure.database.connection import get_connection, init_db
 from infrastructure.database.migrations.ingestion_job_domain import downgrade, upgrade
+from infrastructure.database.migrations.ingestion_pipeline_checkpoint import (
+    downgrade as downgrade_checkpoint,
+)
+from infrastructure.database.migrations.ingestion_pipeline_checkpoint import (
+    upgrade as upgrade_checkpoint,
+)
 
 
 def require_database() -> None:
@@ -46,6 +52,11 @@ def test_postgres_repository_persists_queries_filters_and_enforces_retry_constra
     service = DocumentIngestionJobService(PostgresDocumentIngestionJobRepository())
 
     try:
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE documents SET source_url = %s, access_roles = %s::jsonb WHERE id = %s",
+                ("https://example.com/source", '["manager"]', document_id),
+            )
         created = service.create(document_id, idempotency_key=f"integration-{uuid4()}")
 
         created.mark_running()
@@ -54,6 +65,10 @@ def test_postgres_repository_persists_queries_filters_and_enforces_retry_constra
         repository.update(created)
 
         assert service.get(created.id) == created
+        source = repository.get_document_source(document_id)
+        assert source is not None
+        assert source.source_url == "https://example.com/source"
+        assert source.access_roles == ("manager",)
         listed = service.list(limit=10, offset=0, status=created.status, document_id=document_id)
         assert listed.items == [created]
         assert listed.total == 1
@@ -129,6 +144,7 @@ def test_migration_downgrades_and_reupgrades_an_isolated_schema():
             """)
 
             upgrade(cursor)
+            upgrade_checkpoint(cursor)
             upgraded_columns = {
                 row[0]
                 for row in cursor.execute(
@@ -141,11 +157,13 @@ def test_migration_downgrades_and_reupgrades_an_isolated_schema():
             }
             assert {
                 "current_step",
+                "last_completed_step",
                 "retry_count",
                 "idempotency_key",
                 "completed_at",
             } <= upgraded_columns
 
+            downgrade_checkpoint(cursor)
             downgrade(cursor)
             downgraded_columns = {
                 row[0]
@@ -158,8 +176,10 @@ def test_migration_downgrades_and_reupgrades_an_isolated_schema():
                 ).fetchall()
             }
             assert "current_step" not in downgraded_columns
+            assert "last_completed_step" not in downgraded_columns
 
             upgrade(cursor)
+            upgrade_checkpoint(cursor)
             reupgraded_columns = {
                 row[0]
                 for row in cursor.execute(
@@ -171,5 +191,6 @@ def test_migration_downgrades_and_reupgrades_an_isolated_schema():
                 ).fetchall()
             }
             assert "current_step" in reupgraded_columns
+            assert "last_completed_step" in reupgraded_columns
 
         connection.rollback()

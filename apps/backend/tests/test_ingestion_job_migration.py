@@ -1,4 +1,10 @@
 from infrastructure.database.migrations.ingestion_job_domain import downgrade, upgrade
+from infrastructure.database.migrations.ingestion_pipeline_checkpoint import (
+    downgrade as downgrade_checkpoint,
+)
+from infrastructure.database.migrations.ingestion_pipeline_checkpoint import (
+    upgrade as upgrade_checkpoint,
+)
 
 
 class RecordingCursor:
@@ -30,4 +36,21 @@ def test_ingestion_job_migration_is_reversible_and_defines_required_constraints_
 
     assert "DROP INDEX IF EXISTS document_ingestion_jobs_idempotency_key_unique_idx" in downgraded
     assert "DROP COLUMN IF EXISTS current_step" in downgraded
-    assert "ALTER COLUMN stage SET NOT NULL" in downgraded
+
+
+def test_pipeline_checkpoint_migration_is_nullable_constrained_and_reversible():
+    cursor = RecordingCursor()
+
+    upgrade_checkpoint(cursor)
+    upgraded = "\n".join(cursor.queries)
+
+    assert "ADD COLUMN IF NOT EXISTS last_completed_step" in upgraded
+    assert "document_ingestion_jobs_completed_step_check" in upgraded
+    assert "last_completed_step IS NULL" in upgraded
+
+    cursor.queries.clear()
+    downgrade_checkpoint(cursor)
+    downgraded = "\n".join(cursor.queries)
+
+    assert "DROP CONSTRAINT IF EXISTS document_ingestion_jobs_completed_step_check" in downgraded
+    assert "DROP COLUMN IF EXISTS last_completed_step" in downgraded

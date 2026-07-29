@@ -4,6 +4,9 @@ from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS, get_database_
 from infrastructure.database.migrations.ingestion_job_domain import (
     upgrade as upgrade_ingestion_job_domain,
 )
+from infrastructure.database.migrations.ingestion_pipeline_checkpoint import (
+    upgrade as upgrade_ingestion_pipeline_checkpoint,
+)
 
 
 def get_connection():
@@ -99,6 +102,7 @@ def init_db():
                 )
             """)
             upgrade_ingestion_job_domain(cur)
+            upgrade_ingestion_pipeline_checkpoint(cur)
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS chunks (
                     id TEXT PRIMARY KEY,

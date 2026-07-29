@@ -12,6 +12,8 @@ from assistant.domain.knowledge_persistence import (
     KnowledgePersistenceRepository,
     KnowledgePersistenceResult,
     PersistedKnowledgeChunk,
+    PreparedKnowledge,
+    PreparedKnowledgeDocument,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,23 +62,27 @@ class KnowledgePersistenceService:
         access_roles: Sequence[str] = ("user",),
     ) -> KnowledgePersistenceResult:
         started_at = monotonic()
+        prepared = self.prepare(processing_result, access_roles=access_roles)
+        return self.persist_prepared(prepared, started_at=started_at)
+
+    def prepare(
+        self,
+        processing_result: ContentProcessingResult,
+        *,
+        access_roles: Sequence[str] = ("user",),
+    ) -> PreparedKnowledge:
+        started_at = monotonic()
         grouped_chunks = self._validate_and_group(processing_result)
         roles = self._normalise_roles(access_roles)
         logger.info(
-            "Knowledge persistence started",
+            "Knowledge embedding preparation started",
             extra={
                 "documents_received": len(grouped_chunks),
                 "chunks_received": len(processing_result.chunks),
             },
         )
 
-        documents_created = 0
-        documents_updated = 0
-        documents_unchanged = 0
-        chunks_created = 0
-        chunks_updated = 0
-        chunks_unchanged = 0
-        chunks_removed = 0
+        prepared_documents: list[PreparedKnowledgeDocument] = []
         embeddings_generated = 0
         embedding_duration_ms = 0
         database_duration_ms = 0
@@ -91,26 +97,25 @@ class KnowledgePersistenceService:
                 finally:
                     database_duration_ms += max(0, int((monotonic() - database_started_at) * 1_000))
                 if existing and existing.content_hash == first.document_content_hash:
-                    if existing.title == first.title and existing.access_roles == roles:
-                        documents_unchanged += 1
-                        chunks_unchanged += len(ordered_chunks)
-                        continue
-                    metadata = KnowledgeDocumentRecord(
+                    document = KnowledgeDocumentRecord(
                         id=existing.id,
                         source_url=source_url,
                         title=first.title,
                         content_hash=first.document_content_hash,
                         access_roles=roles,
                     )
-                    database_started_at = monotonic()
-                    try:
-                        metadata_result = self._repository.update_document_metadata(metadata)
-                    finally:
-                        database_duration_ms += max(
-                            0, int((monotonic() - database_started_at) * 1_000)
+                    prepared_documents.append(
+                        PreparedKnowledgeDocument(
+                            document=document,
+                            chunks=(),
+                            disposition=(
+                                "unchanged"
+                                if existing.title == first.title and existing.access_roles == roles
+                                else "metadata"
+                            ),
+                            previous_chunk_count=len(ordered_chunks),
                         )
-                    documents_updated += 1
-                    chunks_updated += metadata_result.previous_chunk_count
+                    )
                     continue
 
                 embedding_started_at = monotonic()
@@ -129,7 +134,7 @@ class KnowledgePersistenceService:
                     content_hash=first.document_content_hash,
                     access_roles=roles,
                 )
-                persisted_chunks = [
+                persisted_chunks = tuple(
                     PersistedKnowledgeChunk(
                         id=str(item.id),
                         document_id=document_id,
@@ -141,23 +146,10 @@ class KnowledgePersistenceService:
                         access_roles=roles,
                     )
                     for item, embedding in zip(ordered_chunks, embeddings, strict=True)
-                ]
-                database_started_at = monotonic()
-                try:
-                    write_result = self._repository.replace_document(document, persisted_chunks)
-                finally:
-                    database_duration_ms += max(0, int((monotonic() - database_started_at) * 1_000))
-                if write_result.action == "created":
-                    documents_created += 1
-                    chunks_created += len(persisted_chunks)
-                elif write_result.action == "updated":
-                    documents_updated += 1
-                    chunks_created += len(persisted_chunks)
-                    chunks_removed += write_result.previous_chunk_count
-                else:
-                    # A concurrent writer may have committed identical content after our first read.
-                    documents_unchanged += 1
-                    chunks_unchanged += len(persisted_chunks)
+                )
+                prepared_documents.append(
+                    PreparedKnowledgeDocument(document, persisted_chunks, "replace", 0)
+                )
         except (EmbeddingGenerationError, InvalidKnowledgeInputError):
             self._log_failure(
                 started_at,
@@ -175,21 +167,83 @@ class KnowledgePersistenceService:
                 embedding_duration_ms,
                 database_duration_ms,
             )
+            raise KnowledgePersistenceError("Knowledge could not be prepared.") from exc
+
+        return PreparedKnowledge(
+            documents=tuple(prepared_documents),
+            chunks_received=len(processing_result.chunks),
+            embeddings_generated=embeddings_generated,
+            embedding_duration_ms=embedding_duration_ms,
+            database_duration_ms=database_duration_ms,
+        )
+
+    def persist_prepared(
+        self,
+        prepared: PreparedKnowledge,
+        *,
+        started_at: float | None = None,
+    ) -> KnowledgePersistenceResult:
+        operation_started_at = started_at if started_at is not None else monotonic()
+        documents_created = 0
+        documents_updated = 0
+        documents_unchanged = 0
+        chunks_created = 0
+        chunks_updated = 0
+        chunks_unchanged = 0
+        chunks_removed = 0
+        database_duration_ms = prepared.database_duration_ms
+        try:
+            for item in prepared.documents:
+                if item.disposition == "unchanged":
+                    documents_unchanged += 1
+                    chunks_unchanged += item.previous_chunk_count
+                    continue
+                database_started_at = monotonic()
+                try:
+                    if item.disposition == "metadata":
+                        write_result = self._repository.update_document_metadata(item.document)
+                    else:
+                        write_result = self._repository.replace_document(
+                            item.document, list(item.chunks)
+                        )
+                finally:
+                    database_duration_ms += max(0, int((monotonic() - database_started_at) * 1_000))
+                if item.disposition == "metadata":
+                    documents_updated += 1
+                    chunks_updated += write_result.previous_chunk_count
+                elif write_result.action == "created":
+                    documents_created += 1
+                    chunks_created += len(item.chunks)
+                elif write_result.action == "updated":
+                    documents_updated += 1
+                    chunks_created += len(item.chunks)
+                    chunks_removed += write_result.previous_chunk_count
+                else:
+                    documents_unchanged += 1
+                    chunks_unchanged += len(item.chunks)
+        except Exception as exc:
+            self._log_failure(
+                operation_started_at,
+                len(prepared.documents),
+                prepared.chunks_received,
+                prepared.embedding_duration_ms,
+                database_duration_ms,
+            )
             raise KnowledgePersistenceError("Knowledge could not be persisted.") from exc
 
         outcome = KnowledgePersistenceResult(
-            documents_received=len(grouped_chunks),
+            documents_received=len(prepared.documents),
             documents_created=documents_created,
             documents_updated=documents_updated,
             documents_unchanged=documents_unchanged,
-            chunks_received=len(processing_result.chunks),
+            chunks_received=prepared.chunks_received,
             chunks_created=chunks_created,
             chunks_updated=chunks_updated,
             chunks_unchanged=chunks_unchanged,
             chunks_removed=chunks_removed,
-            embeddings_generated=embeddings_generated,
-            duration_ms=max(0, int((monotonic() - started_at) * 1_000)),
-            embedding_duration_ms=embedding_duration_ms,
+            embeddings_generated=prepared.embeddings_generated,
+            duration_ms=max(0, int((monotonic() - operation_started_at) * 1_000)),
+            embedding_duration_ms=prepared.embedding_duration_ms,
             database_duration_ms=database_duration_ms,
         )
         logger.info(
@@ -205,7 +259,7 @@ class KnowledgePersistenceService:
                 "chunks_unchanged": outcome.chunks_unchanged,
                 "chunks_removed": outcome.chunks_removed,
                 "embeddings_generated": outcome.embeddings_generated,
-                "embedding_duration_ms": embedding_duration_ms,
+                "embedding_duration_ms": prepared.embedding_duration_ms,
                 "database_duration_ms": database_duration_ms,
                 "duration_ms": outcome.duration_ms,
             },

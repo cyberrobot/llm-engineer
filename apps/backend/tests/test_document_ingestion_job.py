@@ -18,6 +18,7 @@ def test_new_document_ingestion_job_starts_queued_with_future_state_unset():
     assert job.status is IngestionStatus.queued
     assert job.retry_count == 0
     assert job.current_step is None
+    assert job.last_completed_step is None
     assert job.failure_code is None
     assert job.failure_message is None
     assert job.started_at is None
@@ -33,11 +34,13 @@ def test_job_supports_queued_running_completed_lifecycle_and_step_changes():
 
     job.mark_running(at=started)
     job.set_current_step(IngestionStep.parse, at=stepped)
+    job.mark_step_completed(IngestionStep.parse, at=stepped)
     job.mark_completed(at=completed)
 
     assert job.status is IngestionStatus.completed
     assert job.started_at == started
-    assert job.current_step is IngestionStep.parse
+    assert job.current_step is None
+    assert job.last_completed_step is IngestionStep.parse
     assert job.completed_at == job.updated_at == completed
     assert job.failure_code is None
     assert job.failure_message is None
@@ -114,3 +117,16 @@ def test_job_rejects_negative_retry_count_and_naive_timestamps():
         DocumentIngestionJob.create("document-1", retry_count=-1, created_at=NOW)
     with pytest.raises(InvalidDocumentIngestionJob, match="timezone-aware"):
         DocumentIngestionJob.create("document-1", created_at=datetime(2026, 7, 29))
+
+
+def test_job_only_checkpoints_the_step_currently_being_attempted():
+    job = DocumentIngestionJob.create("document-1", created_at=NOW)
+    job.mark_running(at=NOW + timedelta(seconds=1))
+    job.set_current_step(IngestionStep.parse, at=NOW + timedelta(seconds=2))
+
+    with pytest.raises(InvalidDocumentIngestionJob, match="currently attempted"):
+        job.mark_step_completed(IngestionStep.chunk, at=NOW + timedelta(seconds=3))
+
+    job.mark_step_completed(IngestionStep.parse, at=NOW + timedelta(seconds=3))
+    assert job.last_completed_step is IngestionStep.parse
+    assert job.current_step is IngestionStep.parse

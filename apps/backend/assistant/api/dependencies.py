@@ -6,6 +6,17 @@ from fastapi import Depends
 from assistant.application.chat import ChatService
 from assistant.application.content_processing_service import ContentProcessingService
 from assistant.application.ingestion_job_service import DocumentIngestionJobService
+from assistant.application.ingestion_pipeline import (
+    IngestionPipelineDefinition,
+    IngestionPipelineRunner,
+)
+from assistant.application.ingestion_pipeline_context import WebsiteIngestionContextFactory
+from assistant.application.ingestion_pipeline_steps import (
+    ChunkIngestionStep,
+    EmbedIngestionStep,
+    ParseIngestionStep,
+    PersistIngestionStep,
+)
 from assistant.application.ingestion_service import IngestionService
 from assistant.application.knowledge_persistence_service import KnowledgePersistenceService
 from assistant.application.ports.content_extractor import ContentExtractor
@@ -14,6 +25,7 @@ from assistant.application.ports.text_cleaner import TextCleaner
 from assistant.application.ports.website_loader import WebsiteLoader
 from assistant.application.prompt_builder import PromptBuilder
 from assistant.application.retrieval_service import RetrievalService
+from assistant.domain.document_ingestion_job import IngestionStep
 from assistant.infrastructure.ingestion.html_content_extractor import HtmlContentExtractor
 from assistant.infrastructure.ingestion.normalising_text_cleaner import NormalisingTextCleaner
 from assistant.infrastructure.ingestion.semantic_text_chunker import SemanticTextChunker
@@ -174,4 +186,51 @@ def get_ingestion_service(
         website_loader,
         content_processing_service,
         knowledge_persistence_service,
+    )
+
+
+def get_ingestion_pipeline_definition(
+    website_loader: Annotated[WebsiteLoader, Depends(get_website_loader)],
+    content_processing_service: Annotated[
+        ContentProcessingService, Depends(get_content_processing_service)
+    ],
+    knowledge_persistence_service: Annotated[
+        KnowledgePersistenceService, Depends(get_knowledge_persistence_service)
+    ],
+) -> IngestionPipelineDefinition:
+    return IngestionPipelineDefinition(
+        (
+            ParseIngestionStep(website_loader),
+            ChunkIngestionStep(content_processing_service),
+            EmbedIngestionStep(knowledge_persistence_service),
+            PersistIngestionStep(knowledge_persistence_service),
+        ),
+        # Website parse/chunk/embed payloads are transient and the remote source may change.
+        # Only persistence is therefore a reliable cross-process checkpoint today.
+        checkpoint_steps=(IngestionStep.persist,),
+    )
+
+
+def get_ingestion_pipeline_runner(
+    repository: Annotated[
+        DocumentIngestionJobRepository, Depends(get_document_ingestion_job_repository)
+    ],
+    definition: Annotated[IngestionPipelineDefinition, Depends(get_ingestion_pipeline_definition)],
+    website_loader: Annotated[WebsiteLoader, Depends(get_website_loader)],
+    content_processing_service: Annotated[
+        ContentProcessingService, Depends(get_content_processing_service)
+    ],
+    knowledge_persistence_service: Annotated[
+        KnowledgePersistenceService, Depends(get_knowledge_persistence_service)
+    ],
+) -> IngestionPipelineRunner:
+    return IngestionPipelineRunner(
+        repository,
+        definition,
+        context_factory=WebsiteIngestionContextFactory(
+            repository,
+            website_loader,
+            content_processing_service,
+            knowledge_persistence_service,
+        ),
     )
