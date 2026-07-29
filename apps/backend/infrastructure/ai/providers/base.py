@@ -17,3 +17,11 @@ class AIProvider(ABC):
     @abstractmethod
     def generate_response(self, *, system_prompt: str, user_prompt: str) -> str:
         """Generate a text response from provider-neutral prompt strings."""
+
+    def generate_embedding(self, *, text: str) -> list[float]:
+        """Generate an embedding without exposing a provider-specific API.
+
+        The default keeps existing provider adapters source-compatible. Providers used
+        by retrieval should override it.
+        """
+        return []

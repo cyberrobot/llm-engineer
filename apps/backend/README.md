@@ -21,6 +21,10 @@ Assistant chat uses the provider selected entirely through environment variables
 - `OPENAI_MODEL`: model identifier (default: `gpt-5.5`)
 - `AI_REQUEST_TIMEOUT`: request timeout in seconds (default: `30`)
 
+Assistant chat retrieves relevant knowledge before generation. With `DATABASE_URL` configured,
+retrieval uses the existing pgvector `chunks` and `documents` tables. Without a database it uses
+the small manually curated seed fixture in `assistant/infrastructure/seed_knowledge.py`.
+
 The OpenAI client is created lazily, so health endpoints and non-AI workflows can start
 without provider credentials. Missing or invalid AI configuration is returned as a service
 availability error when chat is requested.
@@ -31,4 +35,5 @@ availability error when chat is requested.
 python -m pytest
 ruff check .
 ruff format --check .
+python -m mypy .
 ```

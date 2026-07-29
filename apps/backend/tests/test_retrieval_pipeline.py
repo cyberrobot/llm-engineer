@@ -1,0 +1,123 @@
+from assistant.application.chat import ChatService
+from assistant.application.prompt_builder import SYSTEM_PROMPT, PromptBuilder
+from assistant.application.retrieval_service import RetrievalService
+from assistant.domain import KnowledgeChunk, KnowledgeDocument
+from assistant.infrastructure.repositories import VectorKnowledgeRepository
+from assistant.infrastructure.vector_store import (
+    InMemoryVectorEntry,
+    InMemoryVectorStore,
+    VectorRecord,
+)
+from assistant.schemas import ChatRequest
+from infrastructure.ai.providers import AIProvider
+
+
+class StubProvider(AIProvider):
+    def __init__(self, embedding: list[float] | None = None) -> None:
+        self.embedding = embedding or [1.0, 0.0]
+        self.embedding_calls: list[str] = []
+        self.response_call: tuple[str, str] | None = None
+
+    @property
+    def name(self) -> str:
+        return "stub"
+
+    @property
+    def model(self) -> str:
+        return "stub-model"
+
+    def generate_embedding(self, *, text: str) -> list[float]:
+        self.embedding_calls.append(text)
+        return self.embedding
+
+    def generate_response(self, *, system_prompt: str, user_prompt: str) -> str:
+        self.response_call = (system_prompt, user_prompt)
+        return "Use workshops to align on outcomes. [Source 1]"
+
+
+def entry(
+    chunk_id: str,
+    document_id: str,
+    title: str,
+    embedding: tuple[float, ...],
+) -> InMemoryVectorEntry:
+    return InMemoryVectorEntry(
+        record=VectorRecord(
+            chunk_id=chunk_id,
+            document_id=document_id,
+            document_title=title,
+            content=f"Knowledge from {title}",
+            score=0,
+        ),
+        embedding=embedding,
+    )
+
+
+def test_retrieval_ranks_similar_chunks_and_respects_threshold():
+    store = InMemoryVectorStore(
+        (
+            entry("near", "doc-near", "Near source", (0.9, 0.1)),
+            entry("far", "doc-far", "Far source", (0.0, 1.0)),
+            entry("exact", "doc-exact", "Exact source", (1.0, 0.0)),
+        )
+    )
+    repository = VectorKnowledgeRepository(store)
+    provider = StubProvider([1.0, 0.0])
+
+    chunks = RetrievalService(provider, repository, limit=2, min_score=0.5).retrieve(" query ")
+
+    assert provider.embedding_calls == ["query"]
+    assert [chunk.id for chunk in chunks] == ["exact", "near"]
+    assert chunks[0].score == 1.0
+
+
+def test_retrieval_returns_empty_for_no_matching_knowledge():
+    repository = VectorKnowledgeRepository(
+        InMemoryVectorStore((entry("far", "doc", "Far source", (0.0, 1.0)),))
+    )
+
+    chunks = RetrievalService(StubProvider(), repository, min_score=0.8).retrieve("question")
+
+    assert chunks == []
+
+
+def test_prompt_builder_constructs_deterministic_grounded_prompt():
+    chunk = KnowledgeChunk(
+        id="chunk-1",
+        document=KnowledgeDocument(id="doc-1", title="Discovery guide"),
+        content="Workshops align stakeholders.",
+        score=0.91,
+    )
+
+    prompt = PromptBuilder().build("  How do workshops help?  ", [chunk])
+
+    assert prompt.system_prompt == SYSTEM_PROMPT
+    assert prompt.user_prompt == (
+        "Retrieved knowledge:\n[Source 1: Discovery guide]\n"
+        "Workshops align stakeholders.\n\nUser question:\nHow do workshops help?"
+    )
+
+
+def test_chat_service_retrieves_builds_prompt_and_maps_unique_citations():
+    store = InMemoryVectorStore(
+        (
+            entry("chunk-1", "doc-1", "Discovery guide", (1.0, 0.0)),
+            entry("chunk-2", "doc-1", "Discovery guide", (0.9, 0.1)),
+        )
+    )
+    provider = StubProvider()
+    retrieval = RetrievalService(
+        provider,
+        VectorKnowledgeRepository(store),
+        min_score=0.5,
+    )
+
+    response = ChatService(provider, retrieval).chat(ChatRequest(message="How do workshops help?"))
+
+    assert provider.embedding_calls == ["How do workshops help?"]
+    assert provider.response_call is not None
+    assert "Knowledge from Discovery guide" in provider.response_call[1]
+    assert response.message == "Use workshops to align on outcomes. [Source 1]"
+    assert [source.model_dump() for source in response.sources] == [
+        {"id": "doc-1", "title": "Discovery guide"}
+    ]

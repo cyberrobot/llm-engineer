@@ -101,6 +101,29 @@ def test_openai_provider_rejects_empty_output():
         provider.generate_response(system_prompt="system", user_prompt="user")
 
 
+def test_openai_provider_generates_embedding_through_provider_boundary():
+    provider, client = make_provider("answer")
+    client.embeddings.create.return_value = SimpleNamespace(
+        data=[SimpleNamespace(embedding=[0.1, 0.2, 0.3])]
+    )
+
+    result = provider.generate_embedding(text="Knowledge query")
+
+    assert result == [0.1, 0.2, 0.3]
+    client.embeddings.create.assert_called_once_with(
+        model="text-embedding-3-small",
+        input="Knowledge query",
+    )
+
+
+def test_openai_provider_rejects_empty_embedding():
+    provider, client = make_provider("answer")
+    client.embeddings.create.return_value = SimpleNamespace(data=[])
+
+    with pytest.raises(AIProviderError, match="empty embedding"):
+        provider.generate_embedding(text="Knowledge query")
+
+
 def test_provider_factory_selects_openai_from_settings():
     settings = AISettings(
         provider="openai",
