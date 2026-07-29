@@ -10,7 +10,11 @@ from assistant.application.content_processing_service import ContentProcessingSe
 from assistant.infrastructure.ingestion.html_content_extractor import HtmlContentExtractor
 from assistant.infrastructure.ingestion.normalising_text_cleaner import NormalisingTextCleaner
 from assistant.infrastructure.ingestion.semantic_text_chunker import SemanticTextChunker
-from core.config import ContentProcessingSettings, get_content_processing_settings
+from core.config import (
+    ContentProcessingSettings,
+    get_content_processing_settings,
+    get_knowledge_persistence_settings,
+)
 
 
 def test_content_processing_settings_are_character_based_and_environment_driven(monkeypatch):
@@ -65,3 +69,20 @@ def test_dependency_injection_registers_ports_and_processing_service():
     assert isinstance(cleaner, NormalisingTextCleaner)
     assert isinstance(chunker, SemanticTextChunker)
     assert isinstance(service, ContentProcessingService)
+
+
+def test_knowledge_persistence_batch_size_is_environment_driven(monkeypatch):
+    monkeypatch.setenv("EMBEDDING_BATCH_SIZE", "24")
+
+    settings = get_knowledge_persistence_settings()
+
+    assert settings.embedding_batch_size == 24
+    assert settings.embedding_dimensions == 1536
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_knowledge_persistence_rejects_non_positive_batch_size(monkeypatch, value):
+    monkeypatch.setenv("EMBEDDING_BATCH_SIZE", value)
+
+    with pytest.raises(ValueError, match="EMBEDDING_BATCH_SIZE must be greater than zero"):
+        get_knowledge_persistence_settings()

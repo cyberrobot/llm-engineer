@@ -1,6 +1,6 @@
 import psycopg
 
-from core.config import DATABASE_URL
+from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS
 
 
 def get_connection():
@@ -39,6 +39,9 @@ def init_db():
                     status TEXT NOT NULL DEFAULT 'indexed',
                     upload_path TEXT,
                     original_filename TEXT,
+                    source_url TEXT,
+                    title TEXT,
+                    content_hash TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
@@ -86,14 +89,19 @@ def init_db():
                     )
                 )
             """)
-            cur.execute("""
+            cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS chunks (
                     id TEXT PRIMARY KEY,
                     doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
                     text TEXT NOT NULL,
-                    embedding VECTOR(1536) NOT NULL,
+                    embedding VECTOR({EMBEDDING_VECTOR_DIMENSIONS}) NOT NULL,
                     access_roles JSONB NOT NULL DEFAULT '[]'::jsonb,
-                    text_search TSVECTOR
+                    text_search TSVECTOR,
+                    sequence INTEGER,
+                    content_hash TEXT,
+                    heading_path JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
             cur.execute("""
@@ -179,4 +187,43 @@ def init_db():
             cur.execute("""
                 ALTER TABLE documents
                 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            """)
+            cur.execute("""
+                ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_url TEXT
+            """)
+            cur.execute("""
+                ALTER TABLE documents ADD COLUMN IF NOT EXISTS title TEXT
+            """)
+            cur.execute("""
+                ALTER TABLE documents ADD COLUMN IF NOT EXISTS content_hash TEXT
+            """)
+            cur.execute("""
+                ALTER TABLE chunks ADD COLUMN IF NOT EXISTS sequence INTEGER
+            """)
+            cur.execute("""
+                ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_hash TEXT
+            """)
+            cur.execute("""
+                ALTER TABLE chunks
+                ADD COLUMN IF NOT EXISTS heading_path JSONB NOT NULL DEFAULT '[]'::jsonb
+            """)
+            cur.execute("""
+                ALTER TABLE chunks
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            """)
+            cur.execute("""
+                ALTER TABLE chunks
+                ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            """)
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS documents_source_url_unique_idx
+                ON documents(source_url) WHERE source_url IS NOT NULL
+            """)
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS chunks_document_sequence_unique_idx
+                ON chunks(doc_id, sequence) WHERE sequence IS NOT NULL
+            """)
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS chunks_document_content_hash_unique_idx
+                ON chunks(doc_id, content_hash) WHERE content_hash IS NOT NULL
             """)

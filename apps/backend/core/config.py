@@ -12,6 +12,7 @@ CHUNKS_MAX_DISTANCE = 0.8
 WEIGHT_KEYWORD_MATCH = 0.2
 WEIGHT_EMBEDDING_SIMILARITY = 0.8
 AUDIT_LOG_LIMIT = 10
+EMBEDDING_VECTOR_DIMENSIONS = 1536
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -30,6 +31,15 @@ class AISettings:
     openai_api_key: str | None
     openai_model: str
     request_timeout: float
+    embedding_model: str = "text-embedding-3-small"
+
+
+@dataclass(frozen=True)
+class KnowledgePersistenceSettings:
+    """Canonical vector schema and provider batching limits."""
+
+    embedding_dimensions: int
+    embedding_batch_size: int
 
 
 @dataclass(frozen=True)
@@ -63,6 +73,17 @@ def get_ai_settings() -> AISettings:
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-5.5").strip(),
         request_timeout=timeout,
+        embedding_model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small").strip(),
+    )
+
+
+def get_knowledge_persistence_settings() -> KnowledgePersistenceSettings:
+    batch_size = int(os.getenv("EMBEDDING_BATCH_SIZE", "100"))
+    if batch_size <= 0:
+        raise ValueError("EMBEDDING_BATCH_SIZE must be greater than zero")
+    return KnowledgePersistenceSettings(
+        embedding_dimensions=EMBEDDING_VECTOR_DIMENSIONS,
+        embedding_batch_size=batch_size,
     )
 
 
