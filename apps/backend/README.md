@@ -69,8 +69,47 @@ failure are skipped with a structured warning while other pages continue. If no 
 chunk, the service raises `NoProcessableContentError` carrying the aggregate result and warnings.
 
 Current extraction is intentionally conservative and does not render JavaScript or learn
-cross-page boilerplate. Embedding generation and chunk/document persistence are intentionally
-deferred to Chunk 7D; this layer makes no OpenAI, database, vector-store, or retrieval calls.
+cross-page boilerplate. The processing layer itself makes no OpenAI, database, vector-store, or
+retrieval calls.
+
+## Knowledge persistence
+
+`KnowledgePersistenceService` accepts a `ContentProcessingResult` and stores its website documents
+and chunks in the existing `documents` and `chunks` tables queried by pgvector retrieval:
+
+```text
+ContentProcessingResult -> duplicate check -> batch embeddings
+                        -> atomic document/chunk write -> existing retrieval
+```
+
+Website documents are identified by their normalized source URL and retain the deterministic
+document and chunk hashes produced by content processing. A unique partial index on document source
+URL prevents duplicate website records without affecting existing uploaded documents. Unique
+document/sequence and document/chunk-hash indexes reinforce chunk idempotency. Source URL, title,
+heading path, access roles, and the fixed 1536-dimensional vector are stored alongside the existing
+retrieval fields.
+
+An identical document hash is a no-op: no chunks are rewritten and no embeddings are requested.
+Changed documents use a document-level replacement strategy. All replacement embeddings are
+generated in configurable batches before the database write; the document metadata update, old
+chunk deletion, and new chunk insertion then occur in one transaction. This deliberately favors a
+small, reliable transaction boundary over chunk-level vector reuse. PostgreSQL advisory transaction
+locks serialize writes for the same source URL, while database uniqueness constraints prevent
+concurrent duplicate documents or chunks. Provider and database failures are mapped to application
+errors, and failed writes roll back without partial knowledge.
+
+Configuration:
+
+- `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`)
+- `EMBEDDING_BATCH_SIZE` (default `100`)
+
+The vector dimension remains a single canonical backend value matching the existing pgvector
+schema. Persistence logs counts and timing but never chunk text, vectors, provider responses, or
+credentials.
+
+Chunk 7D does not run website ingestion end to end. Chunk 7E will orchestrate website loading,
+content processing, this persistence service, and ingestion-job lifecycle updates. Background work,
+job status transitions, and website ingestion API changes remain intentionally deferred.
 
 ## Validate
 

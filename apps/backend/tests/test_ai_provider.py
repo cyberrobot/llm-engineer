@@ -116,6 +116,32 @@ def test_openai_provider_generates_embedding_through_provider_boundary():
     )
 
 
+def test_openai_provider_generates_batch_embeddings_in_provider_order():
+    provider, client = make_provider("answer")
+    client.embeddings.create.return_value = SimpleNamespace(
+        data=[
+            SimpleNamespace(embedding=[1.0, 0.0]),
+            SimpleNamespace(embedding=[0.0, 1.0]),
+        ]
+    )
+
+    result = provider.generate_embeddings(texts=["First", "Second"])
+
+    assert result == [[1.0, 0.0], [0.0, 1.0]]
+    client.embeddings.create.assert_called_once_with(
+        model="text-embedding-3-small",
+        input=["First", "Second"],
+    )
+
+
+def test_openai_provider_rejects_empty_batch_without_calling_sdk():
+    provider, client = make_provider("answer")
+
+    assert provider.generate_embeddings(texts=[]) == []
+
+    client.embeddings.create.assert_not_called()
+
+
 def test_openai_provider_rejects_empty_embedding():
     provider, client = make_provider("answer")
     client.embeddings.create.return_value = SimpleNamespace(data=[])
@@ -140,6 +166,7 @@ def test_provider_factory_selects_openai_from_settings():
         api_key="test-key",
         model="configured-model",
         timeout=12,
+        embedding_model="text-embedding-3-small",
     )
 
 

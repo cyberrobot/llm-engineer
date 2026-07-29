@@ -27,10 +27,10 @@ class PgVectorStore(VectorStore):
                     SELECT
                         chunks.id,
                         documents.id,
-                        COALESCE(documents.original_filename, documents.doc_type),
+                        COALESCE(documents.title, documents.original_filename, documents.doc_type),
                         chunks.text,
                         1 - (chunks.embedding <=> %s::vector) AS score,
-                        documents.upload_path
+                        COALESCE(documents.source_url, documents.upload_path)
                     FROM chunks
                     JOIN documents ON documents.id = chunks.doc_id
                     WHERE 1 - (chunks.embedding <=> %s::vector) >= %s

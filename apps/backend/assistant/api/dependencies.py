@@ -6,6 +6,7 @@ from fastapi import Depends
 from assistant.application.chat import ChatService
 from assistant.application.content_processing_service import ContentProcessingService
 from assistant.application.ingestion_service import IngestionService
+from assistant.application.knowledge_persistence_service import KnowledgePersistenceService
 from assistant.application.ports.content_extractor import ContentExtractor
 from assistant.application.ports.text_chunker import TextChunker
 from assistant.application.ports.text_cleaner import TextCleaner
@@ -21,6 +22,7 @@ from assistant.infrastructure.repositories import (
     InMemoryIngestionJobRepository,
     KnowledgeRepository,
     PostgresIngestionJobRepository,
+    PostgresKnowledgePersistenceRepository,
     VectorKnowledgeRepository,
 )
 from assistant.infrastructure.seed_knowledge import SEED_VECTOR_ENTRIES
@@ -28,6 +30,7 @@ from assistant.infrastructure.vector_store import InMemoryVectorStore, PgVectorS
 from core.config import (
     DATABASE_URL,
     get_content_processing_settings,
+    get_knowledge_persistence_settings,
     get_website_loader_settings,
 )
 from infrastructure.ai import AIProvider, create_ai_provider
@@ -119,3 +122,24 @@ def get_content_processing_service(
     chunker: Annotated[TextChunker, Depends(get_text_chunker)],
 ) -> ContentProcessingService:
     return ContentProcessingService(extractor, cleaner, chunker)
+
+
+@lru_cache
+def get_knowledge_persistence_repository() -> PostgresKnowledgePersistenceRepository:
+    return PostgresKnowledgePersistenceRepository()
+
+
+def get_knowledge_persistence_service(
+    embedding_provider: Annotated[AIProvider, Depends(get_ai_provider)],
+    repository: Annotated[
+        PostgresKnowledgePersistenceRepository,
+        Depends(get_knowledge_persistence_repository),
+    ],
+) -> KnowledgePersistenceService:
+    settings = get_knowledge_persistence_settings()
+    return KnowledgePersistenceService(
+        embedding_provider,
+        repository,
+        embedding_dimensions=settings.embedding_dimensions,
+        embedding_batch_size=settings.embedding_batch_size,
+    )

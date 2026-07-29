@@ -25,3 +25,7 @@ class AIProvider(ABC):
         by retrieval should override it.
         """
         return []
+
+    def generate_embeddings(self, *, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings in input order while preserving adapter compatibility."""
+        return [self.generate_embedding(text=text) for text in texts]

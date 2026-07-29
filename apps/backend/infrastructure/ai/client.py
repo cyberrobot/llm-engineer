@@ -18,9 +18,12 @@ def create_ai_provider(settings: AISettings | None = None) -> AIProvider:
         raise AIConfigurationError("OPENAI_API_KEY is not configured.")
     if not resolved_settings.openai_model:
         raise AIConfigurationError("OPENAI_MODEL must not be empty.")
+    if not resolved_settings.embedding_model:
+        raise AIConfigurationError("OPENAI_EMBEDDING_MODEL must not be empty.")
 
     return OpenAIProvider(
         api_key=resolved_settings.openai_api_key,
         model=resolved_settings.openai_model,
         timeout=resolved_settings.request_timeout,
+        embedding_model=resolved_settings.embedding_model,
     )

@@ -34,7 +34,7 @@ class _EmbeddingResponse(Protocol):
 
 
 class _EmbeddingsAPI(Protocol):
-    def create(self, *, model: str, input: str) -> _EmbeddingResponse: ...
+    def create(self, *, model: str, input: str | list[str]) -> _EmbeddingResponse: ...
 
 
 class _OpenAIClient(Protocol):
@@ -110,15 +110,25 @@ class OpenAIProvider(AIProvider):
 
     def generate_embedding(self, *, text: str) -> list[float]:
         """Generate one embedding and translate SDK failures at the adapter boundary."""
+        embeddings = self._generate_embeddings(text)
+        return embeddings[0]
+
+    def generate_embeddings(self, *, texts: list[str]) -> list[list[float]]:
+        """Generate one ordered provider vector per supplied text in a single request."""
+        if not texts:
+            return []
+        return self._generate_embeddings(texts)
+
+    def _generate_embeddings(self, inputs: str | list[str]) -> list[list[float]]:
         started_at = perf_counter()
         try:
             response = self._client.embeddings.create(
                 model=self._embedding_model,
-                input=text,
+                input=inputs,
             )
-            if not response.data or not response.data[0].embedding:
+            if not response.data or any(not item.embedding for item in response.data):
                 raise AIProviderError("The AI provider returned an empty embedding.")
-            embedding = response.data[0].embedding
+            embeddings = [item.embedding for item in response.data]
         except AIProviderError:
             self._log_result(started_at, success=False)
             raise
@@ -145,7 +155,7 @@ class OpenAIProvider(AIProvider):
             raise AIProviderError from exc
 
         self._log_result(started_at, success=True)
-        return embedding
+        return embeddings
 
     def _log_result(self, started_at: float, *, success: bool) -> None:
         log = logger.info if success else logger.warning
