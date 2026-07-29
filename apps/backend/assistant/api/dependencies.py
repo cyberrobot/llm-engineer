@@ -5,8 +5,10 @@ from fastapi import Depends
 
 from assistant.application.chat import ChatService
 from assistant.application.ingestion_service import IngestionService
+from assistant.application.ports.website_loader import WebsiteLoader
 from assistant.application.prompt_builder import PromptBuilder
 from assistant.application.retrieval_service import RetrievalService
+from assistant.infrastructure.ingestion.website_loader import HttpWebsiteLoader
 from assistant.infrastructure.repositories import (
     IngestionJobRepository,
     InMemoryIngestionJobRepository,
@@ -16,7 +18,7 @@ from assistant.infrastructure.repositories import (
 )
 from assistant.infrastructure.seed_knowledge import SEED_VECTOR_ENTRIES
 from assistant.infrastructure.vector_store import InMemoryVectorStore, PgVectorStore, VectorStore
-from core.config import DATABASE_URL
+from core.config import DATABASE_URL, get_website_loader_settings
 from infrastructure.ai import AIProvider, create_ai_provider
 
 
@@ -66,3 +68,14 @@ def get_ingestion_service(
     repository: Annotated[IngestionJobRepository, Depends(get_ingestion_job_repository)],
 ) -> IngestionService:
     return IngestionService(repository)
+
+
+@lru_cache
+def get_website_loader() -> WebsiteLoader:
+    settings = get_website_loader_settings()
+    return HttpWebsiteLoader(
+        timeout_seconds=settings.timeout_seconds,
+        user_agent=settings.user_agent,
+        max_pages=settings.max_pages,
+        max_response_size=settings.max_response_size,
+    )

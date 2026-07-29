@@ -32,6 +32,16 @@ class AISettings:
     request_timeout: float
 
 
+@dataclass(frozen=True)
+class WebsiteLoaderSettings:
+    """Environment-backed limits for raw website retrieval."""
+
+    timeout_seconds: float
+    max_pages: int
+    user_agent: str
+    max_response_size: int
+
+
 def get_ai_settings() -> AISettings:
     """Read AI configuration from the environment at the composition boundary."""
     timeout = float(os.getenv("AI_REQUEST_TIMEOUT", "30"))
@@ -43,6 +53,28 @@ def get_ai_settings() -> AISettings:
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-5.5").strip(),
         request_timeout=timeout,
+    )
+
+
+def get_website_loader_settings() -> WebsiteLoaderSettings:
+    timeout_seconds = float(os.getenv("INGESTION_TIMEOUT_SECONDS", "10"))
+    max_pages = int(os.getenv("INGESTION_MAX_PAGES", "25"))
+    user_agent = os.getenv("INGESTION_USER_AGENT", "AI-Discovery-Assistant/1.0").strip()
+    max_response_size = int(os.getenv("INGESTION_MAX_RESPONSE_SIZE", str(5 * 1024 * 1024)))
+
+    if timeout_seconds <= 0:
+        raise ValueError("INGESTION_TIMEOUT_SECONDS must be greater than zero")
+    if max_pages <= 0:
+        raise ValueError("INGESTION_MAX_PAGES must be greater than zero")
+    if not user_agent:
+        raise ValueError("INGESTION_USER_AGENT must not be empty")
+    if max_response_size <= 0:
+        raise ValueError("INGESTION_MAX_RESPONSE_SIZE must be greater than zero")
+    return WebsiteLoaderSettings(
+        timeout_seconds=timeout_seconds,
+        max_pages=max_pages,
+        user_agent=user_agent,
+        max_response_size=max_response_size,
     )
 
 
