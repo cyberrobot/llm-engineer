@@ -634,3 +634,60 @@ Consistency across the codebase is more valuable than using the newest or most p
 Spend engineering effort solving business problems, not rebuilding infrastructure that already exists.
 
 Every custom implementation increases long-term maintenance cost. Prefer proven libraries and existing project abstractions whenever they meet the project's needs.
+
+# Change Strategy and Compatibility
+
+## Preserve Backwards Compatibility
+
+Treat existing public behaviour as a contract. Unless a breaking change is explicitly required and approved, changes must preserve compatibility for:
+
+- public APIs and exported interfaces
+- persisted data and database schemas
+- configuration keys and environment variables
+- command-line arguments and exit behaviour
+- events, message formats, and integration boundaries
+- user-visible workflows that existing callers may depend on
+
+Prefer additive changes, compatible defaults, optional fields, adapters, and deprecation periods over removing or changing existing behaviour in place.
+
+Before changing a contract:
+
+1. Identify current callers, consumers, stored data, and documented behaviour.
+2. Add regression or contract tests for the behaviour that must remain supported.
+3. Design a migration path for consumers and persisted data.
+4. Make the transition observable through clear errors, logging, or deprecation notices where appropriate.
+5. Remove legacy behaviour only after the agreed compatibility window and migration criteria have been satisfied.
+
+If compatibility cannot be preserved, document the reason, affected consumers, migration steps, rollout plan, and rollback strategy before implementation. Do not introduce an accidental breaking change as a side effect of refactoring.
+
+## Favour Composition Over New Abstractions
+
+Build new behaviour by composing existing, stable components before introducing another framework, base class, service layer, or generic abstraction.
+
+Prefer:
+
+- configuring or combining existing services
+- small focused functions and collaborators
+- adapters around established interfaces
+- dependency injection through existing project mechanisms
+- extending an existing abstraction when it already owns the responsibility
+
+Avoid speculative abstractions designed for hypothetical future use. Create a new abstraction only when there are multiple concrete use cases, the shared contract is clear, and composition through existing code would otherwise create meaningful duplication or coupling.
+
+New abstractions must have a single clear responsibility, fit existing architectural boundaries, and reduce total complexity. They must not merely relocate complexity or duplicate an existing project concept under a new name.
+
+## Make Incremental Changes
+
+Prefer the smallest coherent change that delivers the required behaviour. Extend and improve working code in reviewable steps instead of rewriting it wholesale.
+
+For substantial changes:
+
+1. Establish current behaviour with tests and observable baselines.
+2. Separate mechanical refactoring from behaviour changes where practical.
+3. Introduce new behaviour behind compatible interfaces or controlled rollout mechanisms when risk warrants it.
+4. Migrate callers and data in bounded, reversible steps.
+5. Remove obsolete code only after the replacement is proven and all consumers have moved.
+
+Keep each step deployable, testable, and easy to review. Preserve a rollback path and avoid combining unrelated cleanup with a feature or bug fix.
+
+A rewrite is justified only when incremental change is demonstrably more risky or costly, the existing design cannot meet confirmed requirements, and the rewrite has explicit scope, parity criteria, migration tests, rollout safeguards, and approval. Working code is evidence: do not discard it without first understanding the behaviour and edge cases it already handles.
