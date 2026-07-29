@@ -26,6 +26,18 @@ class _EvaluationModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
+class AnswerEvaluationOptions(_EvaluationModel):
+    """Deterministic matching and citation rules for answer evaluation."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, frozen=True)
+
+    case_sensitive: StrictBool = False
+    normalise_whitespace: StrictBool = True
+    require_all_expected_fragments: StrictBool = True
+    require_citations_when_sources_expected: StrictBool = True
+    validate_citations_against_retrieval: StrictBool = True
+
+
 def _deduplicate(values: list[str]) -> list[str]:
     """Return values in first-seen order after field-level string normalization."""
 
@@ -170,6 +182,13 @@ class AnswerEvaluationResult(_EvaluationModel):
     citation_count: NonNegativeInt | None = None
     citations_valid: StrictBool | None = None
     hallucination_detected: StrictBool | None = None
+    cited_source_ids: list[NonEmptyString] = Field(default_factory=list)
+    valid_citation_source_ids: list[NonEmptyString] = Field(default_factory=list)
+    invalid_citation_source_ids: list[NonEmptyString] = Field(default_factory=list)
+    duplicate_citation_source_ids: list[NonEmptyString] = Field(default_factory=list)
+    cited_expected_source_ids: list[NonEmptyString] = Field(default_factory=list)
+    cited_unexpected_source_ids: list[NonEmptyString] = Field(default_factory=list)
+    uncited_expected_source_ids: list[NonEmptyString] = Field(default_factory=list)
     failure_reasons: list[NonEmptyString] = Field(default_factory=list)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
@@ -177,8 +196,36 @@ class AnswerEvaluationResult(_EvaluationModel):
         "matched_expected_fragments",
         "missing_expected_fragments",
         "matched_excluded_fragments",
+        "cited_source_ids",
+        "valid_citation_source_ids",
+        "invalid_citation_source_ids",
+        "duplicate_citation_source_ids",
+        "cited_expected_source_ids",
+        "cited_unexpected_source_ids",
+        "uncited_expected_source_ids",
         "failure_reasons",
     )(_deduplicate)
+
+
+class AnswerEvaluationSummary(_EvaluationModel):
+    """Aggregate deterministic answer-quality values across supplied cases."""
+
+    evaluated_cases: NonNegativeInt
+    evaluable_cases: NonNegativeInt
+    passed_cases: NonNegativeInt
+    failed_cases: NonNegativeInt
+    unevaluable_cases: NonNegativeInt
+    pass_rate: UnitRatio | None = None
+    average_citation_count: NonNegativeFloat
+    citation_validity_rate: UnitRatio | None = None
+
+    @model_validator(mode="after")
+    def validate_case_counts(self) -> Self:
+        if self.passed_cases + self.failed_cases != self.evaluable_cases:
+            raise ValueError("Passed and failed case counts must equal evaluable cases")
+        if self.evaluable_cases + self.unevaluable_cases != self.evaluated_cases:
+            raise ValueError("Evaluable and unevaluable case counts must equal evaluated cases")
+        return self
 
 
 class EvaluationCaseResult(_EvaluationModel):
