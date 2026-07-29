@@ -20,6 +20,7 @@ Assistant chat uses the provider selected entirely through environment variables
 - `OPENAI_API_KEY`: required when Assistant chat is called
 - `OPENAI_MODEL`: model identifier (default: `gpt-5.5`)
 - `AI_REQUEST_TIMEOUT`: request timeout in seconds (default: `30`)
+- `AI_MAX_RETRIES`: OpenAI SDK retry limit for transient failures (default: `2`)
 
 Assistant chat retrieves relevant knowledge before generation. With `DATABASE_URL` configured,
 retrieval uses the existing pgvector `chunks` and `documents` tables. Without a database it uses
@@ -102,6 +103,8 @@ Configuration:
 
 - `OPENAI_EMBEDDING_MODEL` (default `text-embedding-3-small`)
 - `EMBEDDING_BATCH_SIZE` (default `100`)
+- `DATABASE_CONNECT_TIMEOUT_SECONDS` (default `5`)
+- `DATABASE_OPERATION_TIMEOUT_SECONDS` (default `30`)
 
 The vector dimension remains a single canonical backend value matching the existing pgvector
 schema. Persistence logs counts and timing but never chunk text, vectors, provider responses, or
@@ -122,8 +125,80 @@ failures transition the running job to failed and return a generic application e
 exposing upstream, provider, or database exceptions. Pipeline logs include stage and total timings,
 counts, and job identifiers, but never raw HTML, cleaned text, chunk contents, or embeddings.
 
-The endpoint intentionally remains synchronous. Background workers, scheduling, and retries are
-outside this workflow.
+The endpoint intentionally remains synchronous. Background workers, scheduling, and whole-job
+retries are outside this workflow.
+
+## Production operations
+
+Set `APP_ENV=production` in deployed environments. Startup validates every ingestion limit,
+including HTTP and AI timeouts, crawl and response limits, chunk/overlap relationships, embedding
+batch size, retry limits, upload size, and database timeouts. Production startup additionally
+requires `DATABASE_URL` and `OPENAI_API_KEY`; invalid configuration prevents the application from
+accepting traffic. Recommended starting values are the defaults in `.env.example`, adjusted only
+after observing real crawl sizes and provider latency.
+
+External operations are bounded:
+
+- website requests use `INGESTION_TIMEOUT_SECONDS` and retry connection failures at most
+  `INGESTION_HTTP_RETRIES` times (default `2`); validation failures, HTTP responses, malformed HTML,
+  and unsupported content are not retried
+- OpenAI requests use `AI_REQUEST_TIMEOUT` and the SDK's maintained transient-failure policy capped
+  by `AI_MAX_RETRIES`; application validation and configuration failures are never retried
+- PostgreSQL connections use `DATABASE_CONNECT_TIMEOUT_SECONDS`, while statements use
+  `DATABASE_OPERATION_TIMEOUT_SECONDS`
+
+The provider and website HTTP clients are process singletons and are closed during graceful FastAPI
+shutdown. Database repositories use context-managed connections and cursors, and persistence keeps
+document replacement in one transaction.
+
+### Health checks
+
+`GET /health` and `GET /assistant/health` keep their existing successful response contracts. With
+`APP_ENV=production`, both act as readiness checks and return `503` with a generic message when a
+required dependency is unavailable. They validate configuration, upload-storage writability,
+database connectivity, and availability of PostgreSQL's `vector` extension. Embedding readiness is
+validated without making a billable provider request: the configured provider, API credential,
+model, timeout, and retry settings are checked at startup and health-check time.
+
+Use a process-level liveness probe when a deployment needs to distinguish liveness from readiness;
+these existing endpoints intentionally report dependency readiness in production.
+
+### Logging
+
+Application logs are newline-delimited JSON written to standard error. Ingestion lifecycle records
+include the ingestion job ID, stage, page/document/chunk counts, embedding count, and website,
+processing, persistence, embedding, and total durations. Logs use an explicit field allow-list and
+never serialize HTML, cleaned document or chunk text, vectors, provider payloads, credentials, or
+exception messages. Exception type and stage remain available for diagnosis without exposing
+internal details to API clients.
+
+### Metrics
+
+The application registers these low-cardinality instruments in the standard `prometheus_client`
+default registry for collection by the deployment's existing Python/ASGI Prometheus exporter:
+
+- histograms: `ingestion_duration_seconds`,
+  `ingestion_website_loading_duration_seconds`, `ingestion_processing_duration_seconds`,
+  `ingestion_persistence_duration_seconds`, and `ingestion_embedding_duration_seconds`
+- counters: `ingestion_success_total`, `ingestion_failure_total`,
+  `ingestion_pages_processed_total`, `ingestion_pages_skipped_total`,
+  `ingestion_documents_persisted_total`, `ingestion_chunks_persisted_total`, and
+  `ingestion_embeddings_generated_total`
+
+No metrics route is added here because API endpoint expansion is outside this hardening change.
+Deployments should expose the default registry through their existing metrics sidecar or ASGI
+instrumentation. Metric labels deliberately exclude URLs, job IDs, content, and other unbounded or
+sensitive values.
+
+### Troubleshooting and limitations
+
+- A startup error names the invalid environment variable; correct it before restarting.
+- A production health `503` intentionally hides connection details. Check the structured server log,
+  database reachability, the `vector` extension, upload-directory permissions, and provider values.
+- A failed ingestion remains safe to retry. Unchanged content does not regenerate embeddings or
+  duplicate documents, chunks, or vectors. A concurrent writer is serialized per source URL.
+- Website crawling is synchronous, same-origin, non-JavaScript, and bounded by the configured page
+  and response limits. Queues, scheduling, distributed workers, and dashboards remain out of scope.
 
 ## Validate
 

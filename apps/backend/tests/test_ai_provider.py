@@ -166,6 +166,7 @@ def test_provider_factory_selects_openai_from_settings():
         api_key="test-key",
         model="configured-model",
         timeout=12,
+        max_retries=2,
         embedding_model="text-embedding-3-small",
     )
 

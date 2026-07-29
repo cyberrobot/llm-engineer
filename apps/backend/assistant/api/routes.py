@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from assistant.api.audit import router as audit_router
 from assistant.api.chat import router as chat_router
@@ -6,6 +6,7 @@ from assistant.api.ingest import router as ingest_router
 from assistant.api.knowledge import router as knowledge_router
 from assistant.api.rag import router as rag_router
 from assistant.schemas import HealthResponse
+from core.health import DependencyHealthError, validate_dependency_health
 
 router = APIRouter()
 router.include_router(chat_router)
@@ -22,4 +23,8 @@ router.include_router(audit_router)
     tags=["assistant"],
 )
 def health_check() -> HealthResponse:
+    try:
+        validate_dependency_health()
+    except DependencyHealthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return HealthResponse(status="ok")

@@ -63,3 +63,5 @@ class KnowledgePersistenceResult:
     chunks_removed: int
     embeddings_generated: int
     duration_ms: int
+    embedding_duration_ms: int = 0
+    database_duration_ms: int = 0

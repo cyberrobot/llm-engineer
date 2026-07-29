@@ -86,6 +86,7 @@ def get_website_loader() -> WebsiteLoader:
         user_agent=settings.user_agent,
         max_pages=settings.max_pages,
         max_response_size=settings.max_response_size,
+        max_retries=settings.max_retries,
     )
 
 
