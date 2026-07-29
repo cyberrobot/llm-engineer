@@ -68,7 +68,7 @@ def create_ingestion_job(job_id, document_id, stage, status, progress):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO ingestion_jobs (
+                INSERT INTO document_ingestion_jobs (
                     id,
                     document_id,
                     stage,

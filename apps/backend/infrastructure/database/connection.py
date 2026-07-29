@@ -15,6 +15,23 @@ def init_db():
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
             cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
             cur.execute("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'ingestion_jobs'
+                          AND column_name = 'document_id'
+                    ) AND to_regclass('document_ingestion_jobs') IS NULL THEN
+                        ALTER TABLE ingestion_jobs RENAME TO document_ingestion_jobs;
+                        ALTER INDEX IF EXISTS ingestion_jobs_document_id_idx
+                            RENAME TO document_ingestion_jobs_document_id_idx;
+                    END IF;
+                END
+                $$
+            """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS documents (
                     id TEXT PRIMARY KEY,
                     doc_type TEXT NOT NULL,
@@ -27,7 +44,7 @@ def init_db():
                 )
             """)
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS ingestion_jobs (
+                CREATE TABLE IF NOT EXISTS document_ingestion_jobs (
                     id TEXT PRIMARY KEY,
                     document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
                     stage TEXT NOT NULL,
@@ -36,6 +53,37 @@ def init_db():
                     error TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ingestion_jobs (
+                    id TEXT PRIMARY KEY,
+                    source_url TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (
+                        status IN ('pending', 'running', 'completed', 'failed')
+                    ),
+                    documents_discovered INTEGER NOT NULL DEFAULT 0 CHECK (
+                        documents_discovered >= 0
+                    ),
+                    documents_processed INTEGER NOT NULL DEFAULT 0 CHECK (
+                        documents_processed >= 0
+                        AND documents_processed <= documents_discovered
+                    ),
+                    chunks_created INTEGER NOT NULL DEFAULT 0 CHECK (chunks_created >= 0),
+                    error_message TEXT,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    started_at TIMESTAMPTZ,
+                    completed_at TIMESTAMPTZ,
+                    CHECK (
+                        (status = 'pending' AND started_at IS NULL
+                            AND completed_at IS NULL AND error_message IS NULL)
+                        OR (status = 'running' AND started_at IS NOT NULL
+                            AND completed_at IS NULL AND error_message IS NULL)
+                        OR (status = 'completed' AND started_at IS NOT NULL
+                            AND completed_at IS NOT NULL AND error_message IS NULL)
+                        OR (status = 'failed' AND completed_at IS NOT NULL
+                            AND length(trim(error_message)) > 0)
+                    )
                 )
             """)
             cur.execute("""
@@ -81,8 +129,12 @@ def init_db():
                 ON audit_logs(timestamp DESC)
             """)
             cur.execute("""
-                CREATE INDEX IF NOT EXISTS ingestion_jobs_document_id_idx
-                ON ingestion_jobs(document_id)
+                CREATE INDEX IF NOT EXISTS document_ingestion_jobs_document_id_idx
+                ON document_ingestion_jobs(document_id)
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS ingestion_jobs_created_at_idx
+                ON ingestion_jobs(created_at DESC)
             """)
             cur.execute("""
                 CREATE OR REPLACE FUNCTION chunks_text_search_trigger()

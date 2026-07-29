@@ -22,6 +22,9 @@ def test_health_routes_preserve_existing_health_and_expose_assistant_health(monk
     registered_paths = set(openapi["paths"])
     assert {
         "/assistant/chat",
+        "/assistant/knowledge/ingestions",
+        "/assistant/knowledge/ingestions/{jobId}",
+        "/assistant/knowledge/status",
         "/ingest",
         "/ingest/upload",
         "/chunks",
@@ -48,7 +51,10 @@ def test_openapi_includes_versioned_assistant_contracts(monkeypatch):
         "ChatResponse",
         "ErrorResponse",
         "HealthResponse",
+        "IngestionJobResponse",
+        "KnowledgeStatusResponse",
         "SourceReference",
+        "StartIngestionRequest",
     }.issubset(openapi["components"]["schemas"])
     chat_operation = openapi["paths"]["/assistant/chat"]["post"]
     assert chat_operation["requestBody"]["content"]["application/json"]["schema"] == {

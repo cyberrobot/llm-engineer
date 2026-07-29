@@ -4,9 +4,16 @@ from typing import Annotated
 from fastapi import Depends
 
 from assistant.application.chat import ChatService
+from assistant.application.ingestion_service import IngestionService
 from assistant.application.prompt_builder import PromptBuilder
 from assistant.application.retrieval_service import RetrievalService
-from assistant.infrastructure.repositories import KnowledgeRepository, VectorKnowledgeRepository
+from assistant.infrastructure.repositories import (
+    IngestionJobRepository,
+    InMemoryIngestionJobRepository,
+    KnowledgeRepository,
+    PostgresIngestionJobRepository,
+    VectorKnowledgeRepository,
+)
 from assistant.infrastructure.seed_knowledge import SEED_VECTOR_ENTRIES
 from assistant.infrastructure.vector_store import InMemoryVectorStore, PgVectorStore, VectorStore
 from core.config import DATABASE_URL
@@ -46,3 +53,16 @@ def get_chat_service(
 ) -> ChatService:
     """Provide the application service used by Assistant chat routes."""
     return ChatService(ai_provider, retrieval_service, PromptBuilder())
+
+
+@lru_cache
+def get_ingestion_job_repository() -> IngestionJobRepository:
+    if DATABASE_URL:
+        return PostgresIngestionJobRepository()
+    return InMemoryIngestionJobRepository()
+
+
+def get_ingestion_service(
+    repository: Annotated[IngestionJobRepository, Depends(get_ingestion_job_repository)],
+) -> IngestionService:
+    return IngestionService(repository)
