@@ -73,19 +73,31 @@ class HttpWebsiteLoader(WebsiteLoader):
         user_agent: str,
         max_pages: int,
         max_response_size: int,
+        max_retries: int = 2,
         client: httpx.Client | None = None,
         resolver: AddressResolver = resolve_public_addresses,
     ) -> None:
         if timeout_seconds <= 0 or max_pages <= 0 or max_response_size <= 0:
             raise ValueError("Website loader limits must be greater than zero.")
+        if max_retries < 0:
+            raise ValueError("Website loader retries must not be negative.")
         if not user_agent.strip():
             raise ValueError("Website loader user agent must not be empty.")
         self._timeout_seconds = timeout_seconds
         self._user_agent = user_agent
         self._max_pages = max_pages
         self._max_response_size = max_response_size
-        self._client = client or httpx.Client(follow_redirects=False)
+        self._owns_client = client is None
+        self._client = client or httpx.Client(
+            follow_redirects=False,
+            transport=httpx.HTTPTransport(retries=max_retries),
+        )
         self._resolver = resolver
+
+    def close(self) -> None:
+        """Release the internally owned connection pool; injected clients remain caller-owned."""
+        if self._owns_client:
+            self._client.close()
 
     def load(self, url: str) -> list[WebsiteDocument]:
         root_url = validate_public_url(url, self._resolver)

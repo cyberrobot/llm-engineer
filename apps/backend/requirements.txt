@@ -13,3 +13,4 @@ pysbd
 python-multipart
 mypy
 beautifulsoup4
+prometheus-client

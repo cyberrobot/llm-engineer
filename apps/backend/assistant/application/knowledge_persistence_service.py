@@ -189,6 +189,8 @@ class KnowledgePersistenceService:
             chunks_removed=chunks_removed,
             embeddings_generated=embeddings_generated,
             duration_ms=max(0, int((monotonic() - started_at) * 1_000)),
+            embedding_duration_ms=embedding_duration_ms,
+            database_duration_ms=database_duration_ms,
         )
         logger.info(
             "Knowledge persistence completed",

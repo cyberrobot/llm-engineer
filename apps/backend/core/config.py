@@ -23,6 +23,20 @@ DISABLE_AUDIT_LOGS = os.getenv("DISABLE_AUDIT_LOGS", "false").lower() == "true"
 DEBUG_DELAY = os.getenv("DEBUG_DELAY", "false").lower() == "true"
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number") from exc
+
+
 @dataclass(frozen=True)
 class AISettings:
     """Environment-backed configuration for the Assistant AI provider."""
@@ -32,6 +46,7 @@ class AISettings:
     openai_model: str
     request_timeout: float
     embedding_model: str = "text-embedding-3-small"
+    max_retries: int = 2
 
 
 @dataclass(frozen=True)
@@ -50,6 +65,15 @@ class WebsiteLoaderSettings:
     max_pages: int
     user_agent: str
     max_response_size: int
+    max_retries: int = 2
+
+
+@dataclass(frozen=True)
+class DatabaseSettings:
+    """Bounded database connection and statement execution settings."""
+
+    connect_timeout_seconds: int
+    operation_timeout_seconds: float
 
 
 @dataclass(frozen=True)
@@ -64,9 +88,12 @@ class ContentProcessingSettings:
 
 def get_ai_settings() -> AISettings:
     """Read AI configuration from the environment at the composition boundary."""
-    timeout = float(os.getenv("AI_REQUEST_TIMEOUT", "30"))
+    timeout = _env_float("AI_REQUEST_TIMEOUT", 30)
+    max_retries = _env_int("AI_MAX_RETRIES", 2)
     if timeout <= 0:
         raise ValueError("AI_REQUEST_TIMEOUT must be greater than zero")
+    if max_retries < 0:
+        raise ValueError("AI_MAX_RETRIES must not be negative")
 
     return AISettings(
         provider=os.getenv("AI_PROVIDER", "openai").strip().lower(),
@@ -74,11 +101,12 @@ def get_ai_settings() -> AISettings:
         openai_model=os.getenv("OPENAI_MODEL", "gpt-5.5").strip(),
         request_timeout=timeout,
         embedding_model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small").strip(),
+        max_retries=max_retries,
     )
 
 
 def get_knowledge_persistence_settings() -> KnowledgePersistenceSettings:
-    batch_size = int(os.getenv("EMBEDDING_BATCH_SIZE", "100"))
+    batch_size = _env_int("EMBEDDING_BATCH_SIZE", 100)
     if batch_size <= 0:
         raise ValueError("EMBEDDING_BATCH_SIZE must be greater than zero")
     return KnowledgePersistenceSettings(
@@ -88,10 +116,11 @@ def get_knowledge_persistence_settings() -> KnowledgePersistenceSettings:
 
 
 def get_website_loader_settings() -> WebsiteLoaderSettings:
-    timeout_seconds = float(os.getenv("INGESTION_TIMEOUT_SECONDS", "10"))
-    max_pages = int(os.getenv("INGESTION_MAX_PAGES", "25"))
+    timeout_seconds = _env_float("INGESTION_TIMEOUT_SECONDS", 10)
+    max_pages = _env_int("INGESTION_MAX_PAGES", 25)
     user_agent = os.getenv("INGESTION_USER_AGENT", "AI-Discovery-Assistant/1.0").strip()
-    max_response_size = int(os.getenv("INGESTION_MAX_RESPONSE_SIZE", str(5 * 1024 * 1024)))
+    max_response_size = _env_int("INGESTION_MAX_RESPONSE_SIZE", 5 * 1024 * 1024)
+    max_retries = _env_int("INGESTION_HTTP_RETRIES", 2)
 
     if timeout_seconds <= 0:
         raise ValueError("INGESTION_TIMEOUT_SECONDS must be greater than zero")
@@ -101,19 +130,35 @@ def get_website_loader_settings() -> WebsiteLoaderSettings:
         raise ValueError("INGESTION_USER_AGENT must not be empty")
     if max_response_size <= 0:
         raise ValueError("INGESTION_MAX_RESPONSE_SIZE must be greater than zero")
+    if max_retries < 0:
+        raise ValueError("INGESTION_HTTP_RETRIES must not be negative")
     return WebsiteLoaderSettings(
         timeout_seconds=timeout_seconds,
         max_pages=max_pages,
         user_agent=user_agent,
         max_response_size=max_response_size,
+        max_retries=max_retries,
+    )
+
+
+def get_database_settings() -> DatabaseSettings:
+    connect_timeout = _env_int("DATABASE_CONNECT_TIMEOUT_SECONDS", 5)
+    operation_timeout = _env_float("DATABASE_OPERATION_TIMEOUT_SECONDS", 30)
+    if connect_timeout <= 0:
+        raise ValueError("DATABASE_CONNECT_TIMEOUT_SECONDS must be greater than zero")
+    if operation_timeout <= 0:
+        raise ValueError("DATABASE_OPERATION_TIMEOUT_SECONDS must be greater than zero")
+    return DatabaseSettings(
+        connect_timeout_seconds=connect_timeout,
+        operation_timeout_seconds=operation_timeout,
     )
 
 
 def get_content_processing_settings() -> ContentProcessingSettings:
-    chunk_size = int(os.getenv("INGESTION_CHUNK_SIZE_CHARACTERS", "1200"))
-    overlap = int(os.getenv("INGESTION_CHUNK_OVERLAP_CHARACTERS", "150"))
-    min_chunk_size = int(os.getenv("INGESTION_MIN_CHUNK_SIZE_CHARACTERS", "100"))
-    min_document_length = int(os.getenv("INGESTION_MIN_DOCUMENT_LENGTH_CHARACTERS", "50"))
+    chunk_size = _env_int("INGESTION_CHUNK_SIZE_CHARACTERS", 1200)
+    overlap = _env_int("INGESTION_CHUNK_OVERLAP_CHARACTERS", 150)
+    min_chunk_size = _env_int("INGESTION_MIN_CHUNK_SIZE_CHARACTERS", 100)
+    min_document_length = _env_int("INGESTION_MIN_DOCUMENT_LENGTH_CHARACTERS", 50)
 
     if chunk_size <= 0:
         raise ValueError("INGESTION_CHUNK_SIZE_CHARACTERS must be greater than zero")
@@ -149,8 +194,35 @@ def get_ingest_api_key() -> str | None:
 
 
 def get_max_upload_bytes() -> int:
-    return int(os.getenv("MAX_UPLOAD_MB", "25")) * 1024 * 1024
+    return _env_int("MAX_UPLOAD_MB", 25) * 1024 * 1024
 
 
 def get_upload_dir() -> Path:
     return Path(os.getenv("UPLOAD_DIR", "uploads"))
+
+
+def validate_startup_configuration() -> None:
+    """Validate every operational limit before the application accepts traffic."""
+    ai_settings = get_ai_settings()
+    if ai_settings.provider != "openai":
+        raise ValueError("AI_PROVIDER must be openai")
+    if not ai_settings.openai_model:
+        raise ValueError("OPENAI_MODEL must not be empty")
+    if not ai_settings.embedding_model:
+        raise ValueError("OPENAI_EMBEDDING_MODEL must not be empty")
+    get_knowledge_persistence_settings()
+    get_website_loader_settings()
+    get_content_processing_settings()
+    get_database_settings()
+    if get_max_upload_bytes() <= 0:
+        raise ValueError("MAX_UPLOAD_MB must be greater than zero")
+    if not get_upload_dir().as_posix().strip():
+        raise ValueError("UPLOAD_DIR must not be empty")
+    environment = os.getenv("APP_ENV", "development").strip().lower()
+    if environment not in {"development", "test", "staging", "production"}:
+        raise ValueError("APP_ENV must be development, test, staging, or production")
+    if environment == "production":
+        if not os.getenv("DATABASE_URL"):
+            raise ValueError("DATABASE_URL is required in production")
+        if not ai_settings.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required in production")

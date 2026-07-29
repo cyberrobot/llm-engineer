@@ -51,15 +51,24 @@ class OpenAIProvider(AIProvider):
         api_key: str,
         model: str,
         timeout: float,
+        max_retries: int = 2,
         embedding_model: str = "text-embedding-3-small",
         client: _OpenAIClient | None = None,
     ) -> None:
         self._model = model
         self._embedding_model = embedding_model
+        self._owns_client = client is None
         self._client = cast(
             _OpenAIClient,
-            client or OpenAI(api_key=api_key, timeout=timeout),
+            client or OpenAI(api_key=api_key, timeout=timeout, max_retries=max_retries),
         )
+
+    def close(self) -> None:
+        """Close the provider-owned SDK client and its HTTP connection pool."""
+        if self._owns_client:
+            close = getattr(self._client, "close", None)
+            if close is not None:
+                close()
 
     @property
     def name(self) -> str:

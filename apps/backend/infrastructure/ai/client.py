@@ -25,5 +25,6 @@ def create_ai_provider(settings: AISettings | None = None) -> AIProvider:
         api_key=resolved_settings.openai_api_key,
         model=resolved_settings.openai_model,
         timeout=resolved_settings.request_timeout,
+        max_retries=resolved_settings.max_retries,
         embedding_model=resolved_settings.embedding_model,
     )

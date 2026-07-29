@@ -1,12 +1,18 @@
 import psycopg
 
-from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS
+from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS, get_database_settings
 
 
 def get_connection():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not set in the environment variables.")
-    return psycopg.connect(DATABASE_URL)
+    settings = get_database_settings()
+    statement_timeout_ms = int(settings.operation_timeout_seconds * 1_000)
+    return psycopg.connect(
+        DATABASE_URL,
+        connect_timeout=settings.connect_timeout_seconds,
+        options=f"-c statement_timeout={statement_timeout_ms}",
+    )
 
 
 def init_db():
