@@ -107,9 +107,23 @@ The vector dimension remains a single canonical backend value matching the exist
 schema. Persistence logs counts and timing but never chunk text, vectors, provider responses, or
 credentials.
 
-Chunk 7D does not run website ingestion end to end. Chunk 7E will orchestrate website loading,
-content processing, this persistence service, and ingestion-job lifecycle updates. Background work,
-job status transitions, and website ingestion API changes remain intentionally deferred.
+`POST /assistant/knowledge/ingestions` runs the complete synchronous ingestion workflow using the
+existing dependency-injected components:
+
+```text
+create pending job -> mark running -> load website -> process content
+                   -> persist knowledge -> mark completed
+```
+
+The job records discovered and processed document counts plus chunks created by persistence. An
+unchanged rerun therefore completes with zero newly created chunks while retaining the existing
+indexed knowledge and avoiding duplicate embedding requests. Loader, processing, or persistence
+failures transition the running job to failed and return a generic application error without
+exposing upstream, provider, or database exceptions. Pipeline logs include stage and total timings,
+counts, and job identifiers, but never raw HTML, cleaned text, chunk contents, or embeddings.
+
+The endpoint intentionally remains synchronous. Background workers, scheduling, and retries are
+outside this workflow.
 
 ## Validate
 

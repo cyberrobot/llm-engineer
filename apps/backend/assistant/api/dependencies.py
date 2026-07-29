@@ -78,12 +78,6 @@ def get_ingestion_job_repository() -> IngestionJobRepository:
     return InMemoryIngestionJobRepository()
 
 
-def get_ingestion_service(
-    repository: Annotated[IngestionJobRepository, Depends(get_ingestion_job_repository)],
-) -> IngestionService:
-    return IngestionService(repository)
-
-
 @lru_cache
 def get_website_loader() -> WebsiteLoader:
     settings = get_website_loader_settings()
@@ -142,4 +136,22 @@ def get_knowledge_persistence_service(
         repository,
         embedding_dimensions=settings.embedding_dimensions,
         embedding_batch_size=settings.embedding_batch_size,
+    )
+
+
+def get_ingestion_service(
+    repository: Annotated[IngestionJobRepository, Depends(get_ingestion_job_repository)],
+    website_loader: Annotated[WebsiteLoader, Depends(get_website_loader)],
+    content_processing_service: Annotated[
+        ContentProcessingService, Depends(get_content_processing_service)
+    ],
+    knowledge_persistence_service: Annotated[
+        KnowledgePersistenceService, Depends(get_knowledge_persistence_service)
+    ],
+) -> IngestionService:
+    return IngestionService(
+        repository,
+        website_loader,
+        content_processing_service,
+        knowledge_persistence_service,
     )
