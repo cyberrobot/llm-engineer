@@ -19,6 +19,20 @@ class WebsiteTimeoutError(WebsiteLoadError):
     """Raised when loading the root website document times out."""
 
 
+class WebsiteHTTPStatusError(WebsiteLoadError):
+    """Raised with stable HTTP metadata when the root source rejects retrieval."""
+
+    def __init__(
+        self,
+        status_code: int,
+        *,
+        retry_after_seconds: float | None = None,
+    ) -> None:
+        super().__init__("Website root page returned an unsuccessful status.")
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+
+
 class WebsiteLoader(ABC):
     """Application port for retrieving raw documents from a website."""
 

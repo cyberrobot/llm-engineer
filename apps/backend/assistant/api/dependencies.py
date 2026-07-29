@@ -1,4 +1,6 @@
+from collections.abc import Callable
 from functools import lru_cache
+from time import sleep
 from typing import Annotated
 
 from fastapi import Depends
@@ -16,6 +18,10 @@ from assistant.application.ingestion_pipeline_steps import (
     EmbedIngestionStep,
     ParseIngestionStep,
     PersistIngestionStep,
+)
+from assistant.application.ingestion_retry import (
+    IngestionFailureClassifier,
+    IngestionRetryPolicy,
 )
 from assistant.application.ingestion_service import IngestionService
 from assistant.application.knowledge_persistence_service import KnowledgePersistenceService
@@ -46,6 +52,7 @@ from assistant.infrastructure.vector_store import InMemoryVectorStore, PgVectorS
 from core.config import (
     DATABASE_URL,
     get_content_processing_settings,
+    get_ingestion_retry_settings,
     get_knowledge_persistence_settings,
     get_website_loader_settings,
 )
@@ -211,6 +218,20 @@ def get_ingestion_pipeline_definition(
     )
 
 
+@lru_cache
+def get_ingestion_failure_classifier() -> IngestionFailureClassifier:
+    return IngestionFailureClassifier()
+
+
+@lru_cache
+def get_ingestion_retry_policy() -> IngestionRetryPolicy:
+    return IngestionRetryPolicy(get_ingestion_retry_settings())
+
+
+def get_ingestion_retry_sleeper() -> Callable[[float], None]:
+    return sleep
+
+
 def get_ingestion_pipeline_runner(
     repository: Annotated[
         DocumentIngestionJobRepository, Depends(get_document_ingestion_job_repository)
@@ -223,6 +244,9 @@ def get_ingestion_pipeline_runner(
     knowledge_persistence_service: Annotated[
         KnowledgePersistenceService, Depends(get_knowledge_persistence_service)
     ],
+    classifier: Annotated[IngestionFailureClassifier, Depends(get_ingestion_failure_classifier)],
+    retry_policy: Annotated[IngestionRetryPolicy, Depends(get_ingestion_retry_policy)],
+    sleeper: Annotated[Callable[[float], None], Depends(get_ingestion_retry_sleeper)],
 ) -> IngestionPipelineRunner:
     return IngestionPipelineRunner(
         repository,
@@ -233,4 +257,7 @@ def get_ingestion_pipeline_runner(
             content_processing_service,
             knowledge_persistence_service,
         ),
+        classifier=classifier,
+        retry_policy=retry_policy,
+        sleeper=sleeper,
     )

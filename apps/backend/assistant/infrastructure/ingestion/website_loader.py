@@ -10,6 +10,7 @@ import httpx
 
 from assistant.application.ports.website_loader import (
     InvalidWebsiteUrl,
+    WebsiteHTTPStatusError,
     WebsiteLoader,
     WebsiteLoadError,
     WebsiteTimeoutError,
@@ -36,6 +37,13 @@ class _PageFailure(RuntimeError):
 
 class _PageTimeout(_PageFailure):
     pass
+
+
+class _PageHTTPStatus(_PageFailure):
+    def __init__(self, status_code: int, retry_after: str | None) -> None:
+        super().__init__("Website returned an unsuccessful HTTP status.")
+        self.status_code = status_code
+        self.retry_after = retry_after
 
 
 class _LinkCollector(HTMLParser):
@@ -109,6 +117,12 @@ class HttpWebsiteLoader(WebsiteLoader):
         except _PageTimeout as exc:
             self._log_failed_crawl(root_url, started_at)
             raise WebsiteTimeoutError("Website root page request timed out.") from exc
+        except _PageHTTPStatus as exc:
+            self._log_failed_crawl(root_url, started_at)
+            raise WebsiteHTTPStatusError(
+                exc.status_code,
+                retry_after_seconds=self._parse_retry_after(exc.retry_after),
+            ) from exc
         except (InvalidWebsiteUrl, _PageFailure) as exc:
             self._log_failed_crawl(root_url, started_at)
             raise WebsiteLoadError("Website root page could not be loaded.") from exc
@@ -185,7 +199,9 @@ class HttpWebsiteLoader(WebsiteLoader):
                         current_url = normalise_url(urljoin(safe_url, location))
                         continue
                     if not response.is_success:
-                        raise _PageFailure(f"Website returned HTTP {response.status_code}.")
+                        raise _PageHTTPStatus(
+                            response.status_code, response.headers.get("Retry-After")
+                        )
 
                     content_type = (
                         response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -272,3 +288,13 @@ class HttpWebsiteLoader(WebsiteLoader):
             "Website crawl failed",
             extra={"root_url": root_url, "duration_seconds": monotonic() - started_at},
         )
+
+    @staticmethod
+    def _parse_retry_after(value: str | None) -> float | None:
+        if value is None:
+            return None
+        try:
+            delay = float(value)
+        except ValueError:
+            return None
+        return delay if delay >= 0 else None

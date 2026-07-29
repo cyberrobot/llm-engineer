@@ -100,7 +100,7 @@ class OpenAIProvider(AIProvider):
             raise AIAuthenticationError from exc
         except openai.RateLimitError as exc:
             self._log_result(started_at, success=False)
-            raise AIRateLimitError from exc
+            raise AIRateLimitError(retry_after_seconds=self._retry_after(exc)) from exc
         except openai.APITimeoutError as exc:
             self._log_result(started_at, success=False)
             raise AITimeoutError from exc
@@ -149,7 +149,7 @@ class OpenAIProvider(AIProvider):
             raise AIAuthenticationError from exc
         except openai.RateLimitError as exc:
             self._log_result(started_at, success=False)
-            raise AIRateLimitError from exc
+            raise AIRateLimitError(retry_after_seconds=self._retry_after(exc)) from exc
         except openai.APITimeoutError as exc:
             self._log_result(started_at, success=False)
             raise AITimeoutError from exc
@@ -177,3 +177,14 @@ class OpenAIProvider(AIProvider):
                 "success": success,
             },
         )
+
+    @staticmethod
+    def _retry_after(error: openai.RateLimitError) -> float | None:
+        value = error.response.headers.get("Retry-After")
+        if value is None:
+            return None
+        try:
+            delay = float(value)
+        except ValueError:
+            return None
+        return delay if delay >= 0 else None

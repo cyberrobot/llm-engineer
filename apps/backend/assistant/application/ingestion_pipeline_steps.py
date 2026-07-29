@@ -27,13 +27,13 @@ class ParseIngestionStep:
             )
         try:
             context.parsed_document = self.loader.load(source_url)
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Document parsing failed",
                 extra={"job_id": str(context.job_id), "document_id": context.document_id},
             )
             return IngestionStepResult.failure(
-                "document_parse_failed", "The source document could not be parsed."
+                "document_parse_failed", "The source document could not be parsed.", cause=exc
             )
         return IngestionStepResult.success()
 
@@ -50,13 +50,13 @@ class ChunkIngestionStep:
             )
         try:
             context.chunks = self.processor.process(context.parsed_document)
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Document chunking failed",
                 extra={"job_id": str(context.job_id), "document_id": context.document_id},
             )
             return IngestionStepResult.failure(
-                "document_chunking_failed", "The document could not be chunked."
+                "document_chunking_failed", "The document could not be chunked.", cause=exc
             )
         return IngestionStepResult.success()
 
@@ -82,13 +82,15 @@ class EmbedIngestionStep:
             context.embeddings = self.persistence.prepare(
                 context.chunks, access_roles=tuple(access_roles)
             )
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Document embedding failed",
                 extra={"job_id": str(context.job_id), "document_id": context.document_id},
             )
             return IngestionStepResult.failure(
-                "document_embedding_failed", "Document embeddings could not be generated."
+                "document_embedding_failed",
+                "Document embeddings could not be generated.",
+                cause=exc,
             )
         return IngestionStepResult.success()
 
@@ -107,12 +109,14 @@ class PersistIngestionStep:
             context.metadata["persistence_result"] = self.persistence.persist_prepared(
                 context.embeddings
             )
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Document persistence failed",
                 extra={"job_id": str(context.job_id), "document_id": context.document_id},
             )
             return IngestionStepResult.failure(
-                "document_persistence_failed", "Document knowledge could not be persisted."
+                "document_persistence_failed",
+                "Document knowledge could not be persisted.",
+                cause=exc,
             )
         return IngestionStepResult.success()

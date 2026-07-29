@@ -1,9 +1,17 @@
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from time import sleep
 from typing import Any, Protocol
 from uuid import UUID
 
+from assistant.application.ingestion_retry import (
+    FailureCategory,
+    FailureClassifier,
+    IngestionFailure,
+    IngestionFailureClassifier,
+    IngestionRetryPolicy,
+)
 from assistant.domain.content_processing_result import ContentProcessingResult
 from assistant.domain.document_ingestion_job import TERMINAL_STATUSES, IngestionStep
 from assistant.domain.ingestion_status import IngestionStatus
@@ -12,6 +20,7 @@ from assistant.domain.website_document import WebsiteDocument
 from assistant.infrastructure.repositories.document_ingestion_job import (
     DocumentIngestionJobRepository,
 )
+from core.config import IngestionRetrySettings
 
 logger = logging.getLogger(__name__)
 
@@ -37,16 +46,19 @@ class IngestionStepResult:
     succeeded: bool
     failure_code: str | None = None
     failure_message: str | None = None
+    cause: BaseException | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def success(cls) -> "IngestionStepResult":
         return cls(succeeded=True)
 
     @classmethod
-    def failure(cls, code: str, message: str) -> "IngestionStepResult":
+    def failure(
+        cls, code: str, message: str, *, cause: BaseException | None = None
+    ) -> "IngestionStepResult":
         if not code.strip() or not message.strip():
             raise ValueError("An ingestion step failure requires a safe code and message.")
-        return cls(False, code.strip(), message.strip())
+        return cls(False, code.strip(), message.strip(), cause)
 
 
 class IngestionPipelineStep(Protocol):
@@ -74,6 +86,11 @@ class IngestionPipelineResult:
     failed_step: IngestionStep | None = None
     failure_code: str | None = None
     failure_message: str | None = None
+    retryable: bool | None = None
+    attempts_used: int = 0
+    retries_performed: int = 0
+    retry_exhausted: bool = False
+    total_retries: int = 0
 
 
 class IngestionPipelineDefinition:
@@ -119,12 +136,20 @@ class IngestionPipelineRunner:
         definition: IngestionPipelineDefinition,
         *,
         context_factory: IngestionContextFactory | None = None,
+        classifier: FailureClassifier | None = None,
+        retry_policy: IngestionRetryPolicy | None = None,
+        sleeper=sleep,
     ) -> None:
         self._repository = repository
         self._definition = definition
         self._context_factory = context_factory or (
             lambda job_id, document_id, _checkpoint: IngestionPipelineContext(job_id, document_id)
         )
+        self._classifier = classifier or IngestionFailureClassifier()
+        self._retry_policy = retry_policy or IngestionRetryPolicy(
+            IngestionRetrySettings(1, 0, 1, 0, False)
+        )
+        self._sleeper = sleeper
 
     def run(self, job_id: UUID) -> IngestionPipelineResult:
         job = self._repository.get_by_id(job_id)
@@ -161,8 +186,14 @@ class IngestionPipelineRunner:
             job.mark_running()
             self._repository.update(job)
         next_step = self._next_step(job.last_completed_step)
+        reconstruction_step = job.last_completed_step
+        if job.current_step is not None and job.current_step_attempt_count > 0:
+            current_index = REQUIRED_STEP_ORDER.index(job.current_step)
+            reconstruction_step = (
+                REQUIRED_STEP_ORDER[current_index - 1] if current_index > 0 else None
+            )
         try:
-            context = self._context_factory(job.id, job.document_id, job.last_completed_step)
+            context = self._context_factory(job.id, job.document_id, reconstruction_step)
         except Exception:
             logger.exception(
                 "Ingestion context reconstruction failed",
@@ -171,8 +202,12 @@ class IngestionPipelineRunner:
             return self._fail(
                 job,
                 next_step,
-                "unexpected_ingestion_error",
-                "Ingestion failed unexpectedly.",
+                IngestionFailure(
+                    FailureCategory.unexpected,
+                    "unexpected_ingestion_error",
+                    "Ingestion failed unexpectedly.",
+                    False,
+                ),
             )
         logger.info(
             "pipeline_started",
@@ -192,42 +227,78 @@ class IngestionPipelineRunner:
                 )
                 continue
             job.set_current_step(step.step_id)
-            self._repository.update(job)
-            logger.info(
-                "step_started",
-                extra={"job_id": str(job.id), "step": step.step_id.value},
-            )
-            try:
-                outcome = step.execute(context)
-            except Exception:
-                logger.exception(
-                    "step_failed",
-                    extra={"job_id": str(job.id), "step": step.step_id.value},
+            if job.current_step_attempt_count == 0:
+                job.begin_step_attempt()
+                self._repository.update(job)
+            while True:
+                attempt_number = job.current_step_attempt_count
+                logger.info(
+                    "ingestion_step_attempt_started",
+                    extra=self._log_fields(job, step.step_id, attempt_number),
                 )
-                return self._fail(
-                    job,
-                    step.step_id,
-                    "unexpected_ingestion_error",
-                    "Ingestion failed unexpectedly.",
-                )
-            if not outcome.succeeded:
+                try:
+                    outcome = step.execute(context)
+                    failure = (
+                        None if outcome.succeeded else self._outcome_failure(outcome, step.step_id)
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "ingestion_step_attempt_failed",
+                        extra=self._log_fields(job, step.step_id, attempt_number),
+                    )
+                    failure = self._classifier.classify(exc, step.step_id)
+                if failure is None:
+                    if attempt_number > 1:
+                        logger.info(
+                            "ingestion_step_retry_succeeded",
+                            extra=self._log_fields(job, step.step_id, attempt_number),
+                        )
+                    break
                 logger.warning(
-                    "step_failed",
+                    "ingestion_step_attempt_failed",
+                    extra=self._log_fields(job, step.step_id, attempt_number, failure),
+                )
+                if not self._retry_policy.should_retry(failure, attempt_number):
+                    exhausted = failure.retryable and (
+                        attempt_number >= self._retry_policy.settings.maximum_attempts
+                    )
+                    logger.error(
+                        "ingestion_step_retry_exhausted"
+                        if exhausted
+                        else "ingestion_step_failed_permanently",
+                        extra=self._log_fields(job, step.step_id, attempt_number, failure),
+                    )
+                    return self._fail(job, step.step_id, failure, retry_exhausted=exhausted)
+                retry_number = attempt_number
+                delay = self._retry_policy.get_delay(retry_number, failure)
+                job = self._repository.record_retry(
+                    job.id,
+                    step.step_id,
+                    failure.failure_code,
+                    failure.failure_message,
+                )
+                logger.info(
+                    "ingestion_step_retry_scheduled",
                     extra={
-                        "job_id": str(job.id),
-                        "step": step.step_id.value,
-                        "failure_code": outcome.failure_code,
+                        **self._log_fields(
+                            job, step.step_id, job.current_step_attempt_count, failure
+                        ),
+                        "delay_seconds": delay,
                     },
                 )
-                return self._fail(
-                    job,
-                    step.step_id,
-                    outcome.failure_code or "ingestion_step_failed",
-                    outcome.failure_message or "Ingestion step failed.",
+                self._sleeper(delay)
+                logger.info(
+                    "ingestion_step_retry_started",
+                    extra=self._log_fields(job, step.step_id, job.current_step_attempt_count),
                 )
             if step.step_id in self._definition.checkpoint_steps:
                 job.mark_step_completed(step.step_id)
                 self._repository.update(job)
+            else:
+                job.current_step_attempt_count = 0
+                job.last_attempted_at = None
+                job.failure_code = None
+                job.failure_message = None
             logger.info(
                 "step_completed",
                 extra={"job_id": str(job.id), "step": step.step_id.value},
@@ -244,20 +315,27 @@ class IngestionPipelineRunner:
             job.status,
             True,
             last_completed_step=job.last_completed_step,
+            retries_performed=job.retry_count,
+            total_retries=job.retry_count,
         )
 
     def _fail(
         self,
         job: Any,
         step: IngestionStep,
-        code: str,
-        message: str,
+        failure: IngestionFailure,
+        *,
+        retry_exhausted: bool = False,
     ) -> IngestionPipelineResult:
-        job.mark_failed(code, message)
+        job.mark_failed(failure.failure_code, failure.failure_message)
         self._repository.update(job)
         logger.error(
             "pipeline_failed",
-            extra={"job_id": str(job.id), "step": step.value, "failure_code": code},
+            extra={
+                "job_id": str(job.id),
+                "step": step.value,
+                "failure_code": failure.failure_code,
+            },
         )
         return IngestionPipelineResult(
             job.id,
@@ -265,9 +343,47 @@ class IngestionPipelineRunner:
             False,
             last_completed_step=job.last_completed_step,
             failed_step=step,
-            failure_code=code,
-            failure_message=message,
+            failure_code=failure.failure_code,
+            failure_message=failure.failure_message,
+            retryable=failure.retryable,
+            attempts_used=job.current_step_attempt_count,
+            retries_performed=max(0, job.current_step_attempt_count - 1),
+            retry_exhausted=retry_exhausted,
+            total_retries=job.retry_count,
         )
+
+    def _outcome_failure(
+        self, outcome: IngestionStepResult, step: IngestionStep
+    ) -> IngestionFailure:
+        if outcome.cause is not None:
+            return self._classifier.classify(outcome.cause, step)
+        return IngestionFailure(
+            FailureCategory.validation,
+            outcome.failure_code or "ingestion_step_failed",
+            outcome.failure_message or "Ingestion step failed.",
+            False,
+        )
+
+    def _log_fields(
+        self,
+        job: Any,
+        step: IngestionStep,
+        attempt_number: int,
+        failure: IngestionFailure | None = None,
+    ) -> dict[str, object]:
+        fields: dict[str, object] = {
+            "job_id": str(job.id),
+            "document_id": job.document_id,
+            "step": step.value,
+            "attempt_number": attempt_number,
+            "maximum_attempts": self._retry_policy.settings.maximum_attempts,
+        }
+        if failure is not None:
+            fields.update(
+                failure_code=failure.failure_code,
+                retryable=failure.retryable,
+            )
+        return fields
 
     @staticmethod
     def _checkpoint_error(status: IngestionStatus, checkpoint: IngestionStep | None) -> str | None:

@@ -22,6 +22,8 @@ class DocumentIngestionJobResponse(BaseModel):
     current_step: IngestionStep | None
     last_completed_step: IngestionStep | None
     retry_count: int
+    current_step_attempt_count: int
+    last_attempted_at: datetime | None
     failure_code: str | None
     failure_message: str | None
     created_at: datetime
@@ -53,6 +55,11 @@ class IngestionPipelineResultResponse(BaseModel):
     failed_step: IngestionStep | None
     failure_code: str | None
     failure_message: str | None
+    retryable: bool | None
+    attempts_used: int
+    retries_performed: int
+    retry_exhausted: bool
+    total_retries: int
 
     @classmethod
     def from_result(cls, result: IngestionPipelineResult) -> "IngestionPipelineResultResponse":
