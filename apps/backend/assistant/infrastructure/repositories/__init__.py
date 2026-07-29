@@ -1,4 +1,9 @@
 from assistant.infrastructure.repositories.base import KnowledgeRepository
+from assistant.infrastructure.repositories.document_ingestion_job import (
+    DocumentIngestionJobRepository,
+    InMemoryDocumentIngestionJobRepository,
+    PostgresDocumentIngestionJobRepository,
+)
 from assistant.infrastructure.repositories.ingestion_job import (
     IngestionJobRepository,
     InMemoryIngestionJobRepository,
@@ -10,10 +15,13 @@ from assistant.infrastructure.repositories.knowledge_persistence import (
 from assistant.infrastructure.repositories.vector import VectorKnowledgeRepository
 
 __all__ = [
+    "DocumentIngestionJobRepository",
+    "InMemoryDocumentIngestionJobRepository",
     "IngestionJobRepository",
     "InMemoryIngestionJobRepository",
     "KnowledgeRepository",
     "PostgresIngestionJobRepository",
+    "PostgresDocumentIngestionJobRepository",
     "PostgresKnowledgePersistenceRepository",
     "VectorKnowledgeRepository",
 ]
