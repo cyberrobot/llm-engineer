@@ -4,10 +4,17 @@ from typing import Annotated
 from fastapi import Depends
 
 from assistant.application.chat import ChatService
+from assistant.application.content_processing_service import ContentProcessingService
 from assistant.application.ingestion_service import IngestionService
+from assistant.application.ports.content_extractor import ContentExtractor
+from assistant.application.ports.text_chunker import TextChunker
+from assistant.application.ports.text_cleaner import TextCleaner
 from assistant.application.ports.website_loader import WebsiteLoader
 from assistant.application.prompt_builder import PromptBuilder
 from assistant.application.retrieval_service import RetrievalService
+from assistant.infrastructure.ingestion.html_content_extractor import HtmlContentExtractor
+from assistant.infrastructure.ingestion.normalising_text_cleaner import NormalisingTextCleaner
+from assistant.infrastructure.ingestion.semantic_text_chunker import SemanticTextChunker
 from assistant.infrastructure.ingestion.website_loader import HttpWebsiteLoader
 from assistant.infrastructure.repositories import (
     IngestionJobRepository,
@@ -18,7 +25,11 @@ from assistant.infrastructure.repositories import (
 )
 from assistant.infrastructure.seed_knowledge import SEED_VECTOR_ENTRIES
 from assistant.infrastructure.vector_store import InMemoryVectorStore, PgVectorStore, VectorStore
-from core.config import DATABASE_URL, get_website_loader_settings
+from core.config import (
+    DATABASE_URL,
+    get_content_processing_settings,
+    get_website_loader_settings,
+)
 from infrastructure.ai import AIProvider, create_ai_provider
 
 
@@ -79,3 +90,32 @@ def get_website_loader() -> WebsiteLoader:
         max_pages=settings.max_pages,
         max_response_size=settings.max_response_size,
     )
+
+
+@lru_cache
+def get_content_extractor() -> ContentExtractor:
+    return HtmlContentExtractor()
+
+
+@lru_cache
+def get_text_cleaner() -> TextCleaner:
+    settings = get_content_processing_settings()
+    return NormalisingTextCleaner(min_document_length=settings.min_document_length_characters)
+
+
+@lru_cache
+def get_text_chunker() -> TextChunker:
+    settings = get_content_processing_settings()
+    return SemanticTextChunker(
+        chunk_size=settings.chunk_size_characters,
+        overlap=settings.chunk_overlap_characters,
+        min_chunk_size=settings.min_chunk_size_characters,
+    )
+
+
+def get_content_processing_service(
+    extractor: Annotated[ContentExtractor, Depends(get_content_extractor)],
+    cleaner: Annotated[TextCleaner, Depends(get_text_cleaner)],
+    chunker: Annotated[TextChunker, Depends(get_text_chunker)],
+) -> ContentProcessingService:
+    return ContentProcessingService(extractor, cleaner, chunker)
