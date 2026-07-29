@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
+from assistant.application.ingestion_service import IngestionJobNotFound
 from infrastructure.ai.exceptions import (
     AIAuthenticationError,
     AIConfigurationError,
@@ -52,6 +53,14 @@ def ai_provider_error_handler(request: Request, exc: Exception) -> Response:
     )
 
 
+def ingestion_job_not_found_handler(request: Request, exc: Exception) -> Response:
+    del request
+    if not isinstance(exc, IngestionJobNotFound):
+        raise exc
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
     app.add_exception_handler(AIProviderError, ai_provider_error_handler)
+    app.add_exception_handler(IngestionJobNotFound, ingestion_job_not_found_handler)

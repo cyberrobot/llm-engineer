@@ -133,7 +133,7 @@ def test_init_db_adds_evaluation_column_if_missing():
     )
 
 
-def test_init_db_adds_upload_schema():
+def test_init_db_preserves_document_upload_jobs_and_adds_knowledge_ingestion_schema():
     cursor = FakeCursor()
 
     with patch.object(database, "get_connection", return_value=FakeConnection(cursor)):
@@ -141,7 +141,14 @@ def test_init_db_adds_upload_schema():
 
     queries = [query for query, _params in cursor.execute_calls]
 
-    assert any("CREATE TABLE IF NOT EXISTS ingestion_jobs" in query for query in queries)
+    assert any("RENAME TO document_ingestion_jobs" in query for query in queries)
+    assert any("CREATE TABLE IF NOT EXISTS document_ingestion_jobs" in query for query in queries)
+    assert any(
+        "CREATE TABLE IF NOT EXISTS ingestion_jobs" in query
+        and "source_url TEXT NOT NULL" in query
+        and "completed_at TIMESTAMPTZ" in query
+        for query in queries
+    )
     assert any(
         "ALTER TABLE documents" in query and "ADD COLUMN IF NOT EXISTS status" in query
         for query in queries

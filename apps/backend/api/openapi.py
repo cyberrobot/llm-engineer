@@ -11,7 +11,10 @@ from assistant.schemas import (
     ChatResponse,
     ErrorResponse,
     HealthResponse,
+    IngestionJobResponse,
+    KnowledgeStatusResponse,
     SourceReference,
+    StartIngestionRequest,
 )
 
 API_CONTRACT_VERSION = "1.0.0"
@@ -21,7 +24,10 @@ CONTRACT_MODELS: tuple[type[BaseModel], ...] = (
     ChatResponse,
     ErrorResponse,
     HealthResponse,
+    IngestionJobResponse,
+    KnowledgeStatusResponse,
     SourceReference,
+    StartIngestionRequest,
 )
 
 
