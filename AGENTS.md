@@ -507,3 +507,130 @@ When the user requests commit, push, and pull-request creation:
    commands that actually passed.
 7. Verify and report the branch, commit, base branch, PR URL, draft status, and any files deliberately
    left uncommitted.
+
+# Library Reuse
+
+## Guiding Principle
+
+Prefer mature, well-maintained, existing libraries over custom implementations whenever they are suitable for the problem.
+
+The goal is to minimise maintenance burden, reduce bugs, improve reliability, and keep the codebase focused on business logic rather than reimplementing solved problems.
+
+---
+
+## Before Writing Code
+
+Before implementing any new functionality, always:
+
+1. Inspect the existing project dependencies.
+2. Inspect the existing codebase for reusable utilities or abstractions.
+3. Reuse existing libraries where they already solve the problem.
+4. Extend existing implementations instead of creating parallel ones.
+5. Introduce a new dependency only when there is a clear technical benefit that cannot reasonably be achieved using the current stack.
+
+Avoid creating duplicate functionality.
+
+---
+
+## Preferred Order
+
+Always follow this order of preference:
+
+1. Python Standard Library
+2. Existing project libraries
+3. Existing project utilities
+4. Well-maintained third-party libraries
+5. Custom implementation (only if necessary)
+
+Custom code should be the last resort, not the default.
+
+---
+
+## Do Not Reinvent Existing Solutions
+
+Avoid writing custom implementations for capabilities that are already well solved by established libraries.
+
+Examples include:
+
+- HTML parsing
+- HTTP clients
+- URL parsing and validation
+- Configuration management
+- Logging
+- Dependency injection
+- Database access
+- Migrations
+- Tokenisation
+- Text splitting
+- Retry strategies
+- Date and time handling
+- Hashing
+- Validation
+- Serialization
+- UUID generation
+- Markdown parsing
+- Sitemap parsing
+- Robots.txt parsing
+
+Use existing libraries whenever they satisfy the project's requirements.
+
+---
+
+## Reuse Existing Project Libraries
+
+Before introducing a new dependency, inspect the project's existing dependencies.
+
+For example:
+
+- If BeautifulSoup or Selectolax is already installed, reuse it.
+- If HTTPX is already used, continue using HTTPX.
+- If Pydantic already performs validation, do not introduce another validation library.
+- If SQLAlchemy is used, do not introduce another ORM.
+- If Alembic is used, continue using Alembic migrations.
+- If a tokenizer already exists in the project, reuse it rather than creating another implementation.
+
+Avoid multiple libraries solving the same problem.
+
+---
+
+## New Dependencies
+
+A new dependency may be introduced only if:
+
+- the existing stack cannot reasonably solve the problem
+- the library is mature and actively maintained
+- it has a permissive licence compatible with the project
+- it provides a clear improvement over writing custom code
+- it does not duplicate existing functionality
+
+Document the reason for introducing any new dependency.
+
+---
+
+## Extend Existing Abstractions
+
+When adding new functionality:
+
+- extend existing services
+- extend existing repositories
+- extend existing ports/interfaces
+- extend existing configuration
+- extend existing dependency injection
+
+Do not create parallel abstractions simply because they are convenient.
+
+---
+
+## Consistency
+
+When multiple libraries could solve the problem equally well, prefer the one already used by the project.
+
+Consistency across the codebase is more valuable than using the newest or most popular library.
+
+---
+
+## Goal
+
+Spend engineering effort solving business problems, not rebuilding infrastructure that already exists.
+
+Every custom implementation increases long-term maintenance cost. Prefer proven libraries and existing project abstractions whenever they meet the project's needs.
