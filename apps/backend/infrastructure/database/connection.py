@@ -1,6 +1,9 @@
 import psycopg
 
 from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS, get_database_settings
+from infrastructure.database.migrations.ingestion_job_domain import (
+    upgrade as upgrade_ingestion_job_domain,
+)
 
 
 def get_connection():
@@ -95,6 +98,7 @@ def init_db():
                     )
                 )
             """)
+            upgrade_ingestion_job_domain(cur)
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS chunks (
                     id TEXT PRIMARY KEY,
