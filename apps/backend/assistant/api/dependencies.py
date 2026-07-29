@@ -5,6 +5,7 @@ from fastapi import Depends
 
 from assistant.application.chat import ChatService
 from assistant.application.content_processing_service import ContentProcessingService
+from assistant.application.ingestion_job_service import DocumentIngestionJobService
 from assistant.application.ingestion_service import IngestionService
 from assistant.application.knowledge_persistence_service import KnowledgePersistenceService
 from assistant.application.ports.content_extractor import ContentExtractor
@@ -18,9 +19,12 @@ from assistant.infrastructure.ingestion.normalising_text_cleaner import Normalis
 from assistant.infrastructure.ingestion.semantic_text_chunker import SemanticTextChunker
 from assistant.infrastructure.ingestion.website_loader import HttpWebsiteLoader
 from assistant.infrastructure.repositories import (
+    DocumentIngestionJobRepository,
     IngestionJobRepository,
+    InMemoryDocumentIngestionJobRepository,
     InMemoryIngestionJobRepository,
     KnowledgeRepository,
+    PostgresDocumentIngestionJobRepository,
     PostgresIngestionJobRepository,
     PostgresKnowledgePersistenceRepository,
     VectorKnowledgeRepository,
@@ -76,6 +80,21 @@ def get_ingestion_job_repository() -> IngestionJobRepository:
     if DATABASE_URL:
         return PostgresIngestionJobRepository()
     return InMemoryIngestionJobRepository()
+
+
+@lru_cache
+def get_document_ingestion_job_repository() -> DocumentIngestionJobRepository:
+    if DATABASE_URL:
+        return PostgresDocumentIngestionJobRepository()
+    return InMemoryDocumentIngestionJobRepository()
+
+
+def get_document_ingestion_job_service(
+    repository: Annotated[
+        DocumentIngestionJobRepository, Depends(get_document_ingestion_job_repository)
+    ],
+) -> DocumentIngestionJobService:
+    return DocumentIngestionJobService(repository)
 
 
 @lru_cache

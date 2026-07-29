@@ -128,6 +128,31 @@ counts, and job identifiers, but never raw HTML, cleaned text, chunk contents, o
 The endpoint intentionally remains synchronous. Background workers, scheduling, and whole-job
 retries are outside this workflow.
 
+## Document ingestion jobs
+
+Document ingestion requests now have a separate persistent job record under `document_ingestion_jobs`.
+This preserves the existing synchronous website-ingestion workflow while establishing the state needed
+for later document-pipeline reliability work. A document must already exist before its job is created.
+
+Jobs begin in `queued` and may later move through `running` to `completed` or `failed`; `queued` and
+`running` jobs may also become `cancelled`. Terminal jobs cannot transition, change their current step,
+or increment their retry count. The reserved pipeline step identifiers are `parse`, `chunk`, `embed`,
+and `persist`. PR 9A stores these values but does not execute or resume any pipeline.
+
+The API provides:
+
+- `POST /ingestion/jobs` with a `document_id` JSON field
+- `GET /ingestion/jobs/{job_id}`
+- `GET /ingestion/jobs` with `limit`, `offset`, `status`, and `document_id` filters
+
+Creation returns `201 Created`. The optional, case-sensitive `Idempotency-Key` request header is trimmed
+and limited to 255 characters. Repeating the same key and document returns the original job with `201`;
+reusing the key for another document returns `409 Conflict`. A partial unique database index makes this
+safe under concurrent requests. The key is intentionally omitted from API responses.
+
+This foundation does not add parsing, chunking, embeddings, progress percentages, queues, workers,
+automatic retries, cancellation commands, or asynchronous execution.
+
 ## Production operations
 
 Set `APP_ENV=production` in deployed environments. Startup validates every ingestion limit,
