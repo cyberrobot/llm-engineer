@@ -37,6 +37,18 @@ def _env_float(name: str, default: float) -> float:
         raise ValueError(f"{name} must be a number") from exc
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalised = value.strip().lower()
+    if normalised == "true":
+        return True
+    if normalised == "false":
+        return False
+    raise ValueError(f"{name} must be true or false")
+
+
 @dataclass(frozen=True)
 class AISettings:
     """Environment-backed configuration for the Assistant AI provider."""
@@ -84,6 +96,32 @@ class ContentProcessingSettings:
     chunk_overlap_characters: int
     min_chunk_size_characters: int
     min_document_length_characters: int
+
+
+@dataclass(frozen=True)
+class IngestionRetrySettings:
+    """Synchronous per-step retry limits; maximum_attempts includes attempt one."""
+
+    maximum_attempts: int
+    initial_delay_seconds: float
+    backoff_multiplier: float
+    maximum_delay_seconds: float
+    jitter_enabled: bool
+
+    def __post_init__(self) -> None:
+        if self.maximum_attempts < 1:
+            raise ValueError("INGESTION_RETRY_MAX_ATTEMPTS must be at least 1")
+        if self.initial_delay_seconds < 0:
+            raise ValueError("INGESTION_RETRY_INITIAL_DELAY_SECONDS must not be negative")
+        if self.backoff_multiplier < 1:
+            raise ValueError("INGESTION_RETRY_BACKOFF_MULTIPLIER must be at least 1")
+        if self.maximum_delay_seconds < 0:
+            raise ValueError("INGESTION_RETRY_MAX_DELAY_SECONDS must not be negative")
+        if self.maximum_delay_seconds < self.initial_delay_seconds:
+            raise ValueError(
+                "INGESTION_RETRY_MAX_DELAY_SECONDS must not be smaller than "
+                "INGESTION_RETRY_INITIAL_DELAY_SECONDS"
+            )
 
 
 def get_ai_settings() -> AISettings:
@@ -185,6 +223,16 @@ def get_content_processing_settings() -> ContentProcessingSettings:
     )
 
 
+def get_ingestion_retry_settings() -> IngestionRetrySettings:
+    return IngestionRetrySettings(
+        maximum_attempts=_env_int("INGESTION_RETRY_MAX_ATTEMPTS", 3),
+        initial_delay_seconds=_env_float("INGESTION_RETRY_INITIAL_DELAY_SECONDS", 1),
+        backoff_multiplier=_env_float("INGESTION_RETRY_BACKOFF_MULTIPLIER", 2),
+        maximum_delay_seconds=_env_float("INGESTION_RETRY_MAX_DELAY_SECONDS", 30),
+        jitter_enabled=_env_bool("INGESTION_RETRY_JITTER_ENABLED", True),
+    )
+
+
 def get_openai_api_key() -> str | None:
     return os.getenv("OPENAI_API_KEY")
 
@@ -213,6 +261,7 @@ def validate_startup_configuration() -> None:
     get_knowledge_persistence_settings()
     get_website_loader_settings()
     get_content_processing_settings()
+    get_ingestion_retry_settings()
     get_database_settings()
     if get_max_upload_bytes() <= 0:
         raise ValueError("MAX_UPLOAD_MB must be greater than zero")

@@ -130,3 +130,26 @@ def test_job_only_checkpoints_the_step_currently_being_attempted():
     job.mark_step_completed(IngestionStep.parse, at=NOW + timedelta(seconds=3))
     assert job.last_completed_step is IngestionStep.parse
     assert job.current_step is IngestionStep.parse
+
+
+def test_step_attempt_state_is_persistable_and_resets_only_when_step_advances():
+    job = DocumentIngestionJob.create("document-1", created_at=NOW)
+    job.mark_running(at=NOW + timedelta(seconds=1))
+    job.set_current_step(IngestionStep.embed, at=NOW + timedelta(seconds=2))
+    job.begin_step_attempt(at=NOW + timedelta(seconds=3))
+    job.schedule_retry(
+        "ingestion_timeout",
+        "The ingestion operation timed out.",
+        at=NOW + timedelta(seconds=4),
+    )
+
+    assert job.retry_count == 1
+    assert job.current_step_attempt_count == 2
+    assert job.failure_code == "ingestion_timeout"
+    assert job.last_attempted_at == NOW + timedelta(seconds=4)
+
+    job.set_current_step(IngestionStep.embed, at=NOW + timedelta(seconds=5))
+    assert job.current_step_attempt_count == 2
+    job.set_current_step(IngestionStep.persist, at=NOW + timedelta(seconds=6))
+    assert job.current_step_attempt_count == 0
+    assert job.failure_code is None

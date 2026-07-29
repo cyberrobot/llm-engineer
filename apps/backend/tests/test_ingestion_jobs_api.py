@@ -45,6 +45,8 @@ def test_create_get_and_list_ingestion_jobs(client_and_documents):
         "current_step",
         "last_completed_step",
         "retry_count",
+        "current_step_attempt_count",
+        "last_attempted_at",
         "failure_code",
         "failure_message",
         "created_at",
@@ -129,4 +131,9 @@ def test_run_ingestion_job_returns_structured_synchronous_result():
         "failed_step": None,
         "failure_code": None,
         "failure_message": None,
+        "retryable": None,
+        "attempts_used": 0,
+        "retries_performed": 0,
+        "retry_exhausted": False,
+        "total_retries": 0,
     }

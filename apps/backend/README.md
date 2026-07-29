@@ -153,7 +153,8 @@ The orchestration loop is:
 
 ```text
 load job -> determine next durable stage -> execute step -> commit checkpoint -> continue
-         -> complete or persist safe failure
+         -> classify failure -> persist retry state -> wait -> retry the same step
+         -> complete or persist safe terminal failure
 ```
 
 The existing website loader, content processor, embedding preparation, and atomic knowledge repository
@@ -181,11 +182,47 @@ and limited to 255 characters. Repeating the same key and document returns the o
 reusing the key for another document returns `409 Conflict`. A partial unique database index makes this
 safe under concurrent requests. The key is intentionally omitted from API responses.
 
-This pipeline does not add progress percentages, queues, workers, automatic retries, retry backoff,
-distributed claiming, cancellation commands, or asynchronous execution. Retry policy is deferred to
-PR 9C. Durable source snapshots are required before finer website checkpoints are enabled. Distributed
-job claiming and worker leases remain deferred to PR 9F; a concurrent process can still begin the same
-non-terminal job.
+### Synchronous retry and recovery
+
+Retries execute synchronously inside the current `run` request and are scoped to the incomplete step;
+the runner never restarts a completed checkpoint or automatically reruns a terminal failed job. The
+ingestion classifier follows wrapped typed causes and defaults unknown exceptions to permanent. Network
+errors, timeouts, HTTP 429/502/503/504, provider unavailability, PostgreSQL operational failures, and
+deadlocks are retryable. Invalid URLs/input, provider credentials/configuration, other HTTP responses,
+database constraints, deterministic step failures, and unexpected exceptions fail immediately. Raw
+exception text is logged internally but never persisted or returned.
+
+`INGESTION_RETRY_MAX_ATTEMPTS` is the total executions allowed for one step, including attempt 1. The
+job-level `retry_count` is cumulative across all steps and counts only subsequent attempts: a first
+failure leaves it at zero, scheduling attempt 2 changes it to one. `current_step_attempt_count` records
+the scheduled/executing attempt for the current step and resets on step advance; `last_attempted_at`
+records when that state was persisted. The retry count and next attempt number are committed before
+backoff, so a new runner retains consumed attempts after interruption. Because a process cannot know
+whether an interrupted external request completed, replay still depends on the existing deterministic
+parse/chunk operations, stable UUID5 document and chunk identifiers, uniqueness constraints, content
+hash no-ops, and atomic per-document replacement. Provider calls may be repeated, but prepared vectors
+are not persisted until the idempotent persistence step.
+
+Backoff uses Tenacity's exponential wait primitive. Defaults are 3 maximum attempts, 1 second initial
+delay, multiplier 2, 30 second maximum delay, and full jitter enabled. Without jitter, retries wait
+1, 2, 4, 8 seconds up to the cap. A valid provider `Retry-After` is treated as a minimum: the effective
+delay is `max(local backoff, provider delay)`, capped by the configured maximum. No sleep occurs before
+attempt 1 or after exhaustion, and repository calls commit before sleeping, so no database transaction
+is held through backoff or provider work.
+
+Example:
+
+```text
+EMBED attempt 1 -> rate limited -> persist retry_count=1 -> wait 1 second
+EMBED attempt 2 -> provider unavailable -> persist retry_count=2 -> wait 2 seconds
+EMBED attempt 3 -> success -> persist checkpoint -> continue to PERSIST
+```
+
+This pipeline still does not add progress percentages, queues, workers, delayed scheduling,
+distributed claiming, manual retry endpoints, cancellation commands, or asynchronous execution.
+Durable source snapshots are required before finer website checkpoints are enabled. Transactional
+persistence strengthening, observability, distributed job claiming/leases, operational cleanup, and
+worker orchestration remain deferred to PRs 9D-9H.
 
 ## Production operations
 

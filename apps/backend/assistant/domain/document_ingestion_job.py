@@ -46,17 +46,22 @@ class DocumentIngestionJob:
     completed_at: datetime | None
     updated_at: datetime
     last_completed_step: IngestionStep | None = None
+    current_step_attempt_count: int = 0
+    last_attempted_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.document_id.strip():
             raise InvalidDocumentIngestionJob("An ingestion job requires a document identifier.")
         if self.retry_count < 0:
             raise InvalidDocumentIngestionJob("Ingestion job retry count cannot be negative.")
+        if self.current_step_attempt_count < 0:
+            raise InvalidDocumentIngestionJob("Current step attempt count cannot be negative.")
         for timestamp in (
             self.created_at,
             self.started_at,
             self.completed_at,
             self.updated_at,
+            self.last_attempted_at,
         ):
             if timestamp is not None:
                 _require_aware(timestamp)
@@ -89,6 +94,8 @@ class DocumentIngestionJob:
             completed_at=None,
             updated_at=timestamp,
             last_completed_step=None,
+            current_step_attempt_count=0,
+            last_attempted_at=None,
         )
 
     def mark_running(self, *, at: datetime | None = None) -> None:
@@ -99,6 +106,8 @@ class DocumentIngestionJob:
         self.current_step = None
         self.failure_code = None
         self.failure_message = None
+        self.current_step_attempt_count = 0
+        self.last_attempted_at = None
 
     def mark_failed(
         self,
@@ -120,8 +129,40 @@ class DocumentIngestionJob:
 
     def set_current_step(self, step: IngestionStep, *, at: datetime | None = None) -> None:
         self._require_non_terminal()
+        if self.current_step is not step:
+            self.current_step_attempt_count = 0
+            self.last_attempted_at = None
+            self.failure_code = None
+            self.failure_message = None
         self.current_step = step
         self._touch(at)
+
+    def begin_step_attempt(self, *, at: datetime | None = None) -> None:
+        self._require_non_terminal()
+        if self.status is not IngestionStatus.running or self.current_step is None:
+            raise InvalidDocumentIngestionJob("A running current step is required for an attempt.")
+        timestamp = self._validated_operation_time(at)
+        self.current_step_attempt_count += 1
+        self.last_attempted_at = timestamp
+        self.updated_at = timestamp
+
+    def schedule_retry(
+        self,
+        failure_code: str,
+        failure_message: str,
+        *,
+        at: datetime | None = None,
+    ) -> None:
+        self._require_non_terminal()
+        if self.status is not IngestionStatus.running or self.current_step_attempt_count < 1:
+            raise InvalidDocumentIngestionJob("A failed running attempt is required for a retry.")
+        timestamp = self._validated_operation_time(at)
+        self.retry_count += 1
+        self.current_step_attempt_count += 1
+        self.failure_code = failure_code.strip()
+        self.failure_message = failure_message.strip()
+        self.last_attempted_at = timestamp
+        self.updated_at = timestamp
 
     def mark_step_completed(self, step: IngestionStep, *, at: datetime | None = None) -> None:
         self._require_non_terminal()
@@ -132,6 +173,10 @@ class DocumentIngestionJob:
                 "Only the currently attempted ingestion step can be completed."
             )
         self.last_completed_step = step
+        self.current_step_attempt_count = 0
+        self.last_attempted_at = None
+        self.failure_code = None
+        self.failure_message = None
         self._touch(at)
 
     def increment_retry_count(self, *, at: datetime | None = None) -> None:
@@ -204,7 +249,9 @@ class DocumentIngestionJob:
             earliest = self.started_at or self.created_at
             if self.completed_at < earliest:
                 raise InvalidDocumentIngestionJob("completed_at is not chronological.")
-        if self.status is not IngestionStatus.failed and (
+        if self.status not in {IngestionStatus.failed, IngestionStatus.running} and (
             self.failure_code is not None or self.failure_message is not None
         ):
-            raise InvalidDocumentIngestionJob("Only a failed job may contain failure data.")
+            raise InvalidDocumentIngestionJob(
+                "Only a running retry or failed job may contain failure data."
+            )
