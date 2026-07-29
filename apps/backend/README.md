@@ -130,28 +130,62 @@ retries are outside this workflow.
 
 ## Document ingestion jobs
 
-Document ingestion requests now have a separate persistent job record under `document_ingestion_jobs`.
-This preserves the existing synchronous website-ingestion workflow while establishing the state needed
-for later document-pipeline reliability work. A document must already exist before its job is created.
+Document ingestion requests have a persistent job record under `document_ingestion_jobs`. A document
+must already exist before its job is created. `POST /ingestion/jobs/{job_id}/run` executes the job
+synchronously in the current API process through this explicit sequence:
+
+```text
+PARSE -> CHUNK -> EMBED -> PERSIST
+```
+
+The runner loads the current job, rejects terminal or inconsistent state, marks a queued job running,
+sets `current_step` before each attempt, and returns a structured result. It records safe failure codes
+and messages and always moves a terminal execution failure out of `running`. Full exceptions remain in
+server logs; raw source content, chunks, embeddings, credentials, and stack traces are not returned.
 
 Jobs begin in `queued` and may later move through `running` to `completed` or `failed`; `queued` and
 `running` jobs may also become `cancelled`. Terminal jobs cannot transition, change their current step,
-or increment their retry count. The reserved pipeline step identifiers are `parse`, `chunk`, `embed`,
-and `persist`. PR 9A stores these values but does not execute or resume any pipeline.
+or increment their retry count. `current_step` is the step being attempted. The nullable
+`last_completed_step` is written only after a configured durable boundary succeeds, and completion
+clears `current_step` while retaining `last_completed_step=persist`.
+
+The orchestration loop is:
+
+```text
+load job -> determine next durable stage -> execute step -> commit checkpoint -> continue
+         -> complete or persist safe failure
+```
+
+The existing website loader, content processor, embedding preparation, and atomic knowledge repository
+are composed as concrete steps. Parsing is read-only, cleaning/chunking is deterministic for a fixed
+source snapshot, embedding preparation has no writes, and final persistence is protected by stable
+document/chunk identifiers, unique constraints, a per-source database lock, and content-hash no-ops.
+
+Website HTML, processed chunks, and prepared vectors are not stored in the job row. Because the current
+loader keeps no durable source snapshot and a remote website can change between runs, the production
+website pipeline deliberately uses `PERSIST` as its only cross-process checkpoint. An interruption
+before persistence restarts at `PARSE`; an interruption after atomic persistence safely re-enters the
+idempotent persistence boundary before the final checkpoint when necessary. The runner supports finer
+checkpoints for source types whose prior outputs are durable or deterministically reconstructable, but
+the website wiring does not claim unsafe `PARSE`, `CHUNK`, or `EMBED` resumability.
 
 The API provides:
 
 - `POST /ingestion/jobs` with a `document_id` JSON field
 - `GET /ingestion/jobs/{job_id}`
 - `GET /ingestion/jobs` with `limit`, `offset`, `status`, and `document_id` filters
+- `POST /ingestion/jobs/{job_id}/run` for synchronous execution
 
 Creation returns `201 Created`. The optional, case-sensitive `Idempotency-Key` request header is trimmed
 and limited to 255 characters. Repeating the same key and document returns the original job with `201`;
 reusing the key for another document returns `409 Conflict`. A partial unique database index makes this
 safe under concurrent requests. The key is intentionally omitted from API responses.
 
-This foundation does not add parsing, chunking, embeddings, progress percentages, queues, workers,
-automatic retries, cancellation commands, or asynchronous execution.
+This pipeline does not add progress percentages, queues, workers, automatic retries, retry backoff,
+distributed claiming, cancellation commands, or asynchronous execution. Retry policy is deferred to
+PR 9C. Durable source snapshots are required before finer website checkpoints are enabled. Distributed
+job claiming and worker leases remain deferred to PR 9F; a concurrent process can still begin the same
+non-terminal job.
 
 ## Production operations
 

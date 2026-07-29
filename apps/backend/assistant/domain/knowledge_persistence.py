@@ -65,3 +65,20 @@ class KnowledgePersistenceResult:
     duration_ms: int
     embedding_duration_ms: int = 0
     database_duration_ms: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedKnowledgeDocument:
+    document: KnowledgeDocumentRecord
+    chunks: tuple[PersistedKnowledgeChunk, ...]
+    disposition: Literal["replace", "metadata", "unchanged"]
+    previous_chunk_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedKnowledge:
+    documents: tuple[PreparedKnowledgeDocument, ...]
+    chunks_received: int
+    embeddings_generated: int
+    embedding_duration_ms: int
+    database_duration_ms: int

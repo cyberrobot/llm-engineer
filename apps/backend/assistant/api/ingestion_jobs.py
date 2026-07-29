@@ -3,7 +3,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
-from assistant.api.dependencies import get_document_ingestion_job_service
+from assistant.api.dependencies import (
+    get_document_ingestion_job_service,
+    get_ingestion_pipeline_runner,
+)
 from assistant.application.ingestion_job_service import (
     DocumentIngestionJobService,
     DocumentNotFound,
@@ -12,11 +15,13 @@ from assistant.application.ingestion_job_service import (
     IngestionJobUnavailable,
     InvalidIdempotencyKey,
 )
+from assistant.application.ingestion_pipeline import IngestionPipelineRunner
 from assistant.domain.ingestion_status import IngestionStatus
 from assistant.schemas.document_ingestion_job import (
     CreateIngestionJobRequest,
     DocumentIngestionJobListResponse,
     DocumentIngestionJobResponse,
+    IngestionPipelineResultResponse,
 )
 
 router = APIRouter(prefix="/ingestion/jobs", tags=["ingestion jobs"])
@@ -84,3 +89,19 @@ def get_ingestion_job(
     except IngestionJobUnavailable as exc:
         raise _error(503, "ingestion_job_unavailable", str(exc)) from exc
     return DocumentIngestionJobResponse.from_job(job)
+
+
+@router.post("/{job_id}/run", response_model=IngestionPipelineResultResponse)
+def run_ingestion_job(
+    job_id: UUID,
+    runner: Annotated[IngestionPipelineRunner, Depends(get_ingestion_pipeline_runner)],
+) -> IngestionPipelineResultResponse:
+    result = runner.run(job_id)
+    if result.failure_code == "ingestion_job_not_found":
+        raise _error(404, result.failure_code, result.failure_message or "Ingestion job not found.")
+    if result.failure_code in {
+        "ingestion_job_not_runnable",
+        "invalid_ingestion_job_checkpoint",
+    }:
+        raise _error(409, result.failure_code, result.failure_message or "Ingestion job conflict.")
+    return IngestionPipelineResultResponse.from_result(result)
