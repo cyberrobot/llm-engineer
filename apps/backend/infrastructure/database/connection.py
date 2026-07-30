@@ -13,6 +13,9 @@ from infrastructure.database.migrations.ingestion_pipeline_checkpoint import (
 from infrastructure.database.migrations.ingestion_retry_recovery import (
     upgrade as upgrade_ingestion_retry_recovery,
 )
+from infrastructure.database.migrations.transactional_ingestion_persistence import (
+    upgrade as upgrade_transactional_ingestion_persistence,
+)
 
 
 def get_connection():
@@ -126,6 +129,7 @@ def init_db():
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
+            upgrade_transactional_ingestion_persistence(cur)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS audit_logs (
                     id BIGSERIAL PRIMARY KEY,

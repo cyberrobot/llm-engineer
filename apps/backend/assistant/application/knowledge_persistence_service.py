@@ -1,17 +1,26 @@
+import hashlib
+import json
 import logging
+import re
 from collections import defaultdict
 from collections.abc import Sequence
 from time import monotonic
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
+
+import psycopg
 
 from assistant.application.ports.embedding_provider import EmbeddingProvider
 from assistant.domain.content_processing_result import ContentProcessingResult
 from assistant.domain.knowledge_chunk import KnowledgeChunk
 from assistant.domain.knowledge_persistence import (
+    CommittedIngestionResult,
     KnowledgeDocumentRecord,
     KnowledgePersistenceRepository,
     KnowledgePersistenceResult,
+    KnowledgePersistenceWriteConflict,
     PersistedKnowledgeChunk,
+    PersistenceMode,
+    PersistIngestionResult,
     PreparedKnowledge,
     PreparedKnowledgeDocument,
 )
@@ -22,9 +31,25 @@ logger = logging.getLogger(__name__)
 class KnowledgePersistenceError(RuntimeError):
     """Base error exposed by the knowledge-persistence application boundary."""
 
+    code = "ingestion_persistence_failed"
+
+
+class IngestionPersistenceConflictError(KnowledgePersistenceError):
+    code = "ingestion_persistence_conflict"
+
+
+class IngestionPersistenceTransientError(KnowledgePersistenceError):
+    code = "ingestion_persistence_transient_error"
+
+
+class IngestionPersistenceConsistencyError(KnowledgePersistenceError):
+    code = "ingestion_persistence_inconsistent_state"
+
 
 class InvalidKnowledgeInputError(KnowledgePersistenceError):
     """Raised before side effects when processed knowledge violates its contract."""
+
+    code = "invalid_ingestion_persistence_input"
 
 
 class EmbeddingGenerationError(KnowledgePersistenceError):
@@ -60,9 +85,14 @@ class KnowledgePersistenceService:
         processing_result: ContentProcessingResult,
         *,
         access_roles: Sequence[str] = ("user",),
+        mode: PersistenceMode = PersistenceMode.new,
     ) -> KnowledgePersistenceResult:
         started_at = monotonic()
-        prepared = self.prepare(processing_result, access_roles=access_roles)
+        prepared = self.prepare(
+            processing_result,
+            access_roles=access_roles,
+            force_replace=mode is PersistenceMode.reindex,
+        )
         return self.persist_prepared(prepared, started_at=started_at)
 
     def prepare(
@@ -70,6 +100,7 @@ class KnowledgePersistenceService:
         processing_result: ContentProcessingResult,
         *,
         access_roles: Sequence[str] = ("user",),
+        force_replace: bool = False,
     ) -> PreparedKnowledge:
         started_at = monotonic()
         grouped_chunks = self._validate_and_group(processing_result)
@@ -96,7 +127,11 @@ class KnowledgePersistenceService:
                     existing = self._repository.find_document_by_source_url(source_url)
                 finally:
                     database_duration_ms += max(0, int((monotonic() - database_started_at) * 1_000))
-                if existing and existing.content_hash == first.document_content_hash:
+                if (
+                    existing
+                    and existing.content_hash == first.document_content_hash
+                    and not force_replace
+                ):
                     document = KnowledgeDocumentRecord(
                         id=existing.id,
                         source_url=source_url,
@@ -114,6 +149,7 @@ class KnowledgePersistenceService:
                                 else "metadata"
                             ),
                             previous_chunk_count=len(ordered_chunks),
+                            expected_previous_content_hash=existing.content_hash,
                         )
                     )
                     continue
@@ -148,7 +184,13 @@ class KnowledgePersistenceService:
                     for item, embedding in zip(ordered_chunks, embeddings, strict=True)
                 )
                 prepared_documents.append(
-                    PreparedKnowledgeDocument(document, persisted_chunks, "replace", 0)
+                    PreparedKnowledgeDocument(
+                        document,
+                        persisted_chunks,
+                        "replace",
+                        0,
+                        existing.content_hash if existing else None,
+                    )
                 )
         except (EmbeddingGenerationError, InvalidKnowledgeInputError):
             self._log_failure(
@@ -182,8 +224,23 @@ class KnowledgePersistenceService:
         prepared: PreparedKnowledge,
         *,
         started_at: float | None = None,
+        command: PersistIngestionResult | None = None,
     ) -> KnowledgePersistenceResult:
         operation_started_at = started_at if started_at is not None else monotonic()
+        try:
+            self._validate_prepared(prepared)
+            if command is not None:
+                self._validate_command(command, prepared)
+        except InvalidKnowledgeInputError:
+            logger.warning(
+                "ingestion_persistence_validation_failed",
+                extra=self._log_context(command, prepared),
+            )
+            raise
+        logger.info(
+            "ingestion_persistence_started",
+            extra=self._log_context(command, prepared),
+        )
         documents_created = 0
         documents_updated = 0
         documents_unchanged = 0
@@ -191,36 +248,87 @@ class KnowledgePersistenceService:
         chunks_updated = 0
         chunks_unchanged = 0
         chunks_removed = 0
+        activated_documents: list[str] = []
+        superseded_documents: list[str] = []
         database_duration_ms = prepared.database_duration_ms
         try:
-            for item in prepared.documents:
-                if item.disposition == "unchanged":
-                    documents_unchanged += 1
-                    chunks_unchanged += item.previous_chunk_count
-                    continue
-                database_started_at = monotonic()
-                try:
+            database_started_at = monotonic()
+            logger.info(
+                "ingestion_persistence_transaction_started",
+                extra=self._log_context(command, prepared),
+            )
+            with self._repository.transaction() as transaction:
+                if command is not None:
+                    transaction.lock_ingestion_job(command.ingestion_job_id, command.document_id)
+                    committed = transaction.find_committed_result(command.ingestion_job_id)
+                    if committed is not None:
+                        return self._resolve_committed_result(committed, command, prepared)
+                for item in prepared.documents:
+                    if item.disposition == "unchanged":
+                        documents_unchanged += 1
+                        chunks_unchanged += item.previous_chunk_count
+                        continue
                     if item.disposition == "metadata":
-                        write_result = self._repository.update_document_metadata(item.document)
+                        write_result = transaction.update_document_metadata(item.document)
                     else:
-                        write_result = self._repository.replace_document(
-                            item.document, list(item.chunks)
+                        write_result = transaction.replace_document(
+                            item.document,
+                            list(item.chunks),
+                            ingestion_job_id=(command.ingestion_job_id if command else None),
+                            expected_previous_content_hash=item.expected_previous_content_hash,
+                            force_replace=(
+                                command is not None and command.mode is PersistenceMode.reindex
+                            ),
                         )
-                finally:
-                    database_duration_ms += max(0, int((monotonic() - database_started_at) * 1_000))
-                if item.disposition == "metadata":
-                    documents_updated += 1
-                    chunks_updated += write_result.previous_chunk_count
-                elif write_result.action == "created":
-                    documents_created += 1
-                    chunks_created += len(item.chunks)
-                elif write_result.action == "updated":
-                    documents_updated += 1
-                    chunks_created += len(item.chunks)
-                    chunks_removed += write_result.previous_chunk_count
-                else:
-                    documents_unchanged += 1
-                    chunks_unchanged += len(item.chunks)
+                    if item.disposition == "metadata":
+                        documents_updated += 1
+                        chunks_updated += write_result.previous_chunk_count
+                    elif write_result.action == "created":
+                        documents_created += 1
+                        chunks_created += len(item.chunks)
+                        activated_documents.append(write_result.document_id)
+                    elif write_result.action == "updated":
+                        documents_updated += 1
+                        chunks_created += len(item.chunks)
+                        chunks_removed += write_result.previous_chunk_count
+                        activated_documents.append(write_result.document_id)
+                        superseded_documents.append(write_result.document_id)
+                    else:
+                        documents_unchanged += 1
+                        chunks_unchanged += len(item.chunks)
+
+                database_duration_ms += max(0, int((monotonic() - database_started_at) * 1_000))
+                outcome = KnowledgePersistenceResult(
+                    documents_received=len(prepared.documents),
+                    documents_created=documents_created,
+                    documents_updated=documents_updated,
+                    documents_unchanged=documents_unchanged,
+                    chunks_received=prepared.chunks_received,
+                    chunks_created=chunks_created,
+                    chunks_updated=chunks_updated,
+                    chunks_unchanged=chunks_unchanged,
+                    chunks_removed=chunks_removed,
+                    embeddings_generated=prepared.embeddings_generated,
+                    duration_ms=max(0, int((monotonic() - operation_started_at) * 1_000)),
+                    embedding_duration_ms=prepared.embedding_duration_ms,
+                    database_duration_ms=database_duration_ms,
+                )
+                if command is not None:
+                    transaction.record_committed_result(command, outcome)
+        except KnowledgePersistenceError as exc:
+            if isinstance(
+                exc,
+                (IngestionPersistenceConflictError, IngestionPersistenceConsistencyError),
+            ):
+                logger.warning(
+                    "ingestion_persistence_conflict",
+                    extra=self._log_context(command, prepared),
+                )
+            logger.warning(
+                "ingestion_persistence_rolled_back",
+                extra=self._log_context(command, prepared),
+            )
+            raise
         except Exception as exc:
             self._log_failure(
                 operation_started_at,
@@ -229,25 +337,34 @@ class KnowledgePersistenceService:
                 prepared.embedding_duration_ms,
                 database_duration_ms,
             )
-            raise KnowledgePersistenceError("Knowledge could not be persisted.") from exc
+            logger.warning(
+                "ingestion_persistence_rolled_back",
+                extra=self._log_context(command, prepared),
+            )
+            mapped = self._map_persistence_error(exc)
+            if isinstance(
+                mapped,
+                (IngestionPersistenceConflictError, IngestionPersistenceConsistencyError),
+            ):
+                logger.warning(
+                    "ingestion_persistence_conflict",
+                    extra=self._log_context(command, prepared),
+                )
+            raise mapped from exc
 
-        outcome = KnowledgePersistenceResult(
-            documents_received=len(prepared.documents),
-            documents_created=documents_created,
-            documents_updated=documents_updated,
-            documents_unchanged=documents_unchanged,
-            chunks_received=prepared.chunks_received,
-            chunks_created=chunks_created,
-            chunks_updated=chunks_updated,
-            chunks_unchanged=chunks_unchanged,
-            chunks_removed=chunks_removed,
-            embeddings_generated=prepared.embeddings_generated,
-            duration_ms=max(0, int((monotonic() - operation_started_at) * 1_000)),
-            embedding_duration_ms=prepared.embedding_duration_ms,
-            database_duration_ms=database_duration_ms,
-        )
+        for document_id in superseded_documents:
+            logger.info(
+                "ingestion_representation_superseded",
+                extra={**self._log_context(command, prepared), "document_id": document_id},
+            )
+        for document_id in activated_documents:
+            logger.info(
+                "ingestion_representation_activated",
+                extra={**self._log_context(command, prepared), "document_id": document_id},
+            )
+
         logger.info(
-            "Knowledge persistence completed",
+            "ingestion_persistence_committed",
             extra={
                 "documents_received": outcome.documents_received,
                 "documents_created": outcome.documents_created,
@@ -265,6 +382,127 @@ class KnowledgePersistenceService:
             },
         )
         return outcome
+
+    def create_command(
+        self,
+        prepared: PreparedKnowledge,
+        *,
+        ingestion_job_id: UUID,
+        document_id: str,
+        mode: PersistenceMode = PersistenceMode.new,
+        source_fingerprint: str | None = None,
+    ) -> PersistIngestionResult:
+        self._validate_prepared(prepared)
+        if not document_id.strip():
+            raise InvalidKnowledgeInputError("Document identity must not be empty.")
+        if (
+            source_fingerprint is not None
+            and re.fullmatch(r"[0-9a-f]{64}", source_fingerprint) is None
+        ):
+            raise InvalidKnowledgeInputError("Source fingerprint must be a SHA-256 digest.")
+        payload = {
+            "document_id": document_id,
+            "mode": mode.value,
+            "source_fingerprint": source_fingerprint,
+            "documents": [
+                {
+                    "id": item.document.id,
+                    "source_url": item.document.source_url,
+                    "title": item.document.title,
+                    "content_hash": item.document.content_hash,
+                    "access_roles": item.document.access_roles,
+                }
+                for item in prepared.documents
+            ],
+        }
+        command_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        return PersistIngestionResult(
+            ingestion_job_id,
+            document_id,
+            prepared,
+            mode,
+            command_hash,
+            source_fingerprint,
+        )
+
+    @staticmethod
+    def _validate_command(command: PersistIngestionResult, prepared: PreparedKnowledge) -> None:
+        if command.prepared != prepared:
+            raise InvalidKnowledgeInputError("Persistence command data does not match its payload.")
+        if (
+            not command.document_id.strip()
+            or re.fullmatch(r"[0-9a-f]{64}", command.command_hash) is None
+        ):
+            raise InvalidKnowledgeInputError("Persistence command identity is invalid.")
+
+    def _validate_prepared(self, prepared: PreparedKnowledge) -> None:
+        if not prepared.documents:
+            raise InvalidKnowledgeInputError(
+                "Prepared knowledge must contain at least one document."
+            )
+        chunk_ids: set[str] = set()
+        for item in prepared.documents:
+            if not item.document.id.strip() or not item.document.source_url.strip():
+                raise InvalidKnowledgeInputError("Prepared document identity is invalid.")
+            if item.disposition == "replace" and not item.chunks:
+                raise InvalidKnowledgeInputError("Replacement must contain at least one chunk.")
+            for chunk in item.chunks:
+                if chunk.id in chunk_ids:
+                    raise InvalidKnowledgeInputError("Prepared chunk identifiers must be unique.")
+                chunk_ids.add(chunk.id)
+                if chunk.document_id != item.document.id or not chunk.text.strip():
+                    raise InvalidKnowledgeInputError("Prepared chunk association is invalid.")
+                if len(chunk.embedding) != self._embedding_dimensions:
+                    raise InvalidKnowledgeInputError("Prepared embedding dimensions are invalid.")
+
+    @staticmethod
+    def _resolve_committed_result(
+        committed: CommittedIngestionResult,
+        command: PersistIngestionResult,
+        prepared: PreparedKnowledge,
+    ) -> KnowledgePersistenceResult:
+        if (
+            committed.document_id != command.document_id
+            or committed.command_hash != command.command_hash
+        ):
+            raise IngestionPersistenceConsistencyError(
+                "The ingestion job already committed a different representation."
+            )
+        logger.info(
+            "ingestion_persistence_retry_detected_existing_commit",
+            extra=KnowledgePersistenceService._log_context(command, prepared),
+        )
+        return committed.result
+
+    @staticmethod
+    def _map_persistence_error(error: Exception) -> KnowledgePersistenceError:
+        if isinstance(error, (psycopg.OperationalError, psycopg.errors.DeadlockDetected)):
+            return IngestionPersistenceTransientError(
+                "Knowledge persistence is temporarily unavailable."
+            )
+        if isinstance(error, psycopg.IntegrityError):
+            return IngestionPersistenceConflictError(
+                "Knowledge persistence conflicted with existing data."
+            )
+        if isinstance(error, KnowledgePersistenceWriteConflict):
+            return IngestionPersistenceConflictError(
+                "The indexed document changed while its replacement was being persisted."
+            )
+        return KnowledgePersistenceError("Knowledge could not be persisted.")
+
+    @staticmethod
+    def _log_context(
+        command: PersistIngestionResult | None, prepared: PreparedKnowledge
+    ) -> dict[str, object]:
+        return {
+            "ingestion_job_id": str(command.ingestion_job_id) if command else None,
+            "document_id": command.document_id if command else None,
+            "persistence_mode": command.mode.value if command else None,
+            "chunk_count": prepared.chunks_received,
+            "embedding_count": prepared.embeddings_generated,
+        }
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
         embeddings: list[list[float]] = []

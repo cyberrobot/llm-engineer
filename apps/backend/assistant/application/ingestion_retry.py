@@ -10,6 +10,13 @@ import httpx
 import psycopg
 from tenacity import RetryCallState, wait_exponential
 
+from assistant.application.knowledge_persistence_service import (
+    IngestionPersistenceConflictError,
+    IngestionPersistenceConsistencyError,
+    IngestionPersistenceTransientError,
+    InvalidKnowledgeInputError,
+    KnowledgePersistenceError,
+)
 from assistant.application.ports.website_loader import (
     InvalidWebsiteUrl,
     WebsiteHTTPStatusError,
@@ -78,6 +85,41 @@ class IngestionFailureClassifier:
         )
 
     def _classify_one(self, error: BaseException, step: IngestionStep) -> IngestionFailure | None:
+        if isinstance(error, IngestionPersistenceTransientError):
+            return self._failure(
+                FailureCategory.database_transient,
+                error.code,
+                "Ingestion persistence is temporarily unavailable.",
+                True,
+            )
+        if isinstance(error, IngestionPersistenceConflictError):
+            return self._failure(
+                FailureCategory.database_permanent,
+                error.code,
+                "Ingestion persistence conflicted with existing data.",
+                False,
+            )
+        if isinstance(error, IngestionPersistenceConsistencyError):
+            return self._failure(
+                FailureCategory.database_permanent,
+                error.code,
+                "The committed ingestion result is inconsistent.",
+                False,
+            )
+        if isinstance(error, InvalidKnowledgeInputError):
+            return self._failure(
+                FailureCategory.validation,
+                error.code,
+                "Ingestion persistence input is invalid.",
+                False,
+            )
+        if isinstance(error, KnowledgePersistenceError) and step is IngestionStep.persist:
+            return self._failure(
+                FailureCategory.database_permanent,
+                error.code,
+                "Ingestion persistence failed.",
+                False,
+            )
         if isinstance(error, AIRateLimitError):
             return self._failure(
                 FailureCategory.rate_limit,

@@ -9,7 +9,7 @@ from assistant.application.ingestion_pipeline import (
 from assistant.application.knowledge_persistence_service import KnowledgePersistenceService
 from assistant.application.ports.website_loader import WebsiteLoader
 from assistant.domain.document_ingestion_job import IngestionStep
-from assistant.domain.knowledge_persistence import PreparedKnowledge
+from assistant.domain.knowledge_persistence import PersistenceMode, PreparedKnowledge
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +79,19 @@ class EmbedIngestionStep:
                 "invalid_ingestion_metadata", "Document access roles are invalid."
             )
         try:
+            mode_value = context.metadata.get("persistence_mode", PersistenceMode.new.value)
+            try:
+                mode = PersistenceMode(mode_value)
+            except (TypeError, ValueError) as exc:
+                return IngestionStepResult.failure(
+                    "invalid_ingestion_persistence_input",
+                    "The ingestion persistence mode is invalid.",
+                    cause=exc,
+                )
             context.embeddings = self.persistence.prepare(
-                context.chunks, access_roles=tuple(access_roles)
+                context.chunks,
+                access_roles=tuple(access_roles),
+                force_replace=mode is PersistenceMode.reindex,
             )
         except Exception as exc:
             logger.exception(
@@ -106,8 +117,30 @@ class PersistIngestionStep:
                 "missing_ingestion_embeddings", "Prepared document embeddings are unavailable."
             )
         try:
+            mode_value = context.metadata.get("persistence_mode", PersistenceMode.new.value)
+            try:
+                mode = PersistenceMode(mode_value)
+            except (TypeError, ValueError) as exc:
+                return IngestionStepResult.failure(
+                    "invalid_ingestion_persistence_input",
+                    "The ingestion persistence mode is invalid.",
+                    cause=exc,
+                )
+            fingerprint = context.metadata.get("source_fingerprint")
+            if fingerprint is not None and not isinstance(fingerprint, str):
+                return IngestionStepResult.failure(
+                    "invalid_ingestion_persistence_input",
+                    "The ingestion source fingerprint is invalid.",
+                )
+            command = self.persistence.create_command(
+                context.embeddings,
+                ingestion_job_id=context.job_id,
+                document_id=context.document_id,
+                mode=mode,
+                source_fingerprint=fingerprint,
+            )
             context.metadata["persistence_result"] = self.persistence.persist_prepared(
-                context.embeddings
+                context.embeddings, command=command
             )
         except Exception as exc:
             logger.exception(
