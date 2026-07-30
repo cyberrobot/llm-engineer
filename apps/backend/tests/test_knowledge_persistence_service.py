@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import replace
 from typing import Literal
 from uuid import UUID
@@ -13,6 +15,10 @@ from assistant.application.knowledge_persistence_service import (
 )
 from assistant.domain.content_processing_result import ContentProcessingResult
 from assistant.domain.knowledge_chunk import KnowledgeChunk
+from assistant.domain.knowledge_persistence import (
+    CommittedIngestionResult,
+    PersistenceMode,
+)
 from assistant.infrastructure.repositories.knowledge_persistence import (
     KnowledgeDocumentRecord,
     KnowledgeWriteResult,
@@ -75,6 +81,30 @@ class FakeKnowledgePersistenceRepository:
         self.chunks: dict[str, list[PersistedKnowledgeChunk]] = {}
         self.writes: list[tuple[KnowledgeDocumentRecord, list[PersistedKnowledgeChunk]]] = []
         self.error: Exception | None = None
+        self.fail_after_writes: int | None = None
+        self.committed: dict[UUID, CommittedIngestionResult] = {}
+        self.transactions_started = 0
+
+    @contextmanager
+    def transaction(self):
+        self.transactions_started += 1
+        snapshot = deepcopy((self.documents, self.chunks, self.writes, self.committed))
+        try:
+            yield self
+        except Exception:
+            self.documents, self.chunks, self.writes, self.committed = snapshot
+            raise
+
+    def lock_ingestion_job(self, ingestion_job_id, document_id):
+        return None
+
+    def find_committed_result(self, ingestion_job_id):
+        return self.committed.get(ingestion_job_id)
+
+    def record_committed_result(self, command, result):
+        self.committed[command.ingestion_job_id] = CommittedIngestionResult(
+            command.ingestion_job_id, command.document_id, command.command_hash, result
+        )
 
     def find_document_by_source_url(self, source_url: str) -> KnowledgeDocumentRecord | None:
         return self.documents.get(source_url)
@@ -83,11 +113,17 @@ class FakeKnowledgePersistenceRepository:
         self,
         document: KnowledgeDocumentRecord,
         chunks: list[PersistedKnowledgeChunk],
+        *,
+        ingestion_job_id=None,
+        expected_previous_content_hash=None,
+        force_replace=False,
     ) -> KnowledgeWriteResult:
         if self.error:
             raise self.error
+        if self.fail_after_writes is not None and len(self.writes) >= self.fail_after_writes:
+            raise RuntimeError("injected persistence failure")
         existing = self.documents.get(document.source_url)
-        if existing and existing.content_hash == document.content_hash:
+        if existing and existing.content_hash == document.content_hash and not force_replace:
             return KnowledgeWriteResult(
                 action="unchanged",
                 document_id=existing.id,
@@ -322,3 +358,56 @@ def test_maps_repository_failure_at_application_boundary():
         persistence.persist(result(chunk()))
 
     assert "database credentials" not in str(raised.value)
+
+
+def test_multiple_document_failure_rolls_back_the_complete_persistence_operation():
+    repository = FakeKnowledgePersistenceRepository()
+    repository.fail_after_writes = 1
+    persistence, _, _ = service(repository=repository)
+
+    with pytest.raises(KnowledgePersistenceError):
+        persistence.persist(
+            result(
+                chunk(source_url="https://example.com/one"),
+                chunk(source_url="https://example.com/two", sequence=1),
+            )
+        )
+
+    assert repository.documents == {}
+    assert repository.chunks == {}
+    assert repository.writes == []
+    assert repository.transactions_started == 1
+
+
+def test_retry_after_committed_result_returns_existing_result_without_rewriting():
+    persistence, _, repository = service()
+    prepared = persistence.prepare(result(chunk()))
+    command = persistence.create_command(
+        prepared,
+        ingestion_job_id=UUID(int=42),
+        document_id="document-1",
+        mode=PersistenceMode.recovery,
+    )
+
+    first = persistence.persist_prepared(prepared, command=command)
+    writes_after_commit = list(repository.writes)
+    replay = persistence.persist_prepared(prepared, command=command)
+
+    assert replay == first
+    assert repository.writes == writes_after_commit
+    assert len(repository.committed) == 1
+
+
+def test_invalid_source_fingerprint_is_rejected_before_transaction_starts():
+    persistence, _, repository = service()
+    prepared = persistence.prepare(result(chunk()))
+
+    with pytest.raises(InvalidKnowledgeInputError, match="SHA-256"):
+        persistence.create_command(
+            prepared,
+            ingestion_job_id=UUID(int=42),
+            document_id="document-1",
+            source_fingerprint="not-a-digest",
+        )
+
+    assert repository.transactions_started == 0

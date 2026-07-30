@@ -15,6 +15,12 @@ from infrastructure.database.migrations.ingestion_retry_recovery import (
     downgrade as downgrade_retry,
 )
 from infrastructure.database.migrations.ingestion_retry_recovery import upgrade as upgrade_retry
+from infrastructure.database.migrations.transactional_ingestion_persistence import (
+    downgrade as downgrade_transactional_persistence,
+)
+from infrastructure.database.migrations.transactional_ingestion_persistence import (
+    upgrade as upgrade_transactional_persistence,
+)
 
 
 class RecordingCursor:
@@ -120,3 +126,24 @@ def test_file_integrity_migration_adds_nullable_metadata_scoped_uniqueness_and_j
     assert "DROP COLUMN IF EXISTS checksum_algorithm" in downgraded
     assert "DROP COLUMN IF EXISTS request_checksum" in downgraded
     assert "DROP TABLE IF EXISTS ingestion_file_requests" in downgraded
+
+
+def test_transactional_persistence_migration_adds_replay_evidence_and_linkage():
+    cursor = RecordingCursor()
+
+    upgrade_transactional_persistence(cursor)
+    upgraded = "\n".join(cursor.queries)
+
+    assert "ADD COLUMN IF NOT EXISTS last_ingestion_job_id TEXT" in upgraded
+    assert "ADD COLUMN IF NOT EXISTS ingestion_job_id TEXT" in upgraded
+    assert "CREATE TABLE IF NOT EXISTS ingestion_persistence_results" in upgraded
+    assert "ingestion_job_id TEXT PRIMARY KEY" in upgraded
+    assert "persistence_mode IN ('NEW', 'REINDEX', 'RECOVERY')" in upgraded
+    assert "command_hash ~ '^[0-9a-f]{64}$'" in upgraded
+
+    cursor.queries.clear()
+    downgrade_transactional_persistence(cursor)
+    downgraded = "\n".join(cursor.queries)
+    assert "DROP TABLE IF EXISTS ingestion_persistence_results" in downgraded
+    assert "ALTER TABLE chunks DROP COLUMN IF EXISTS ingestion_job_id" in downgraded
+    assert "ALTER TABLE documents DROP COLUMN IF EXISTS last_ingestion_job_id" in downgraded

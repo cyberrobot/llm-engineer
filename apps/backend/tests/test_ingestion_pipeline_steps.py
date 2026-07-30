@@ -12,7 +12,7 @@ from assistant.application.ingestion_pipeline_steps import (
 )
 from assistant.domain.content_processing_result import ContentProcessingResult
 from assistant.domain.document_ingestion_job import IngestionStep
-from assistant.domain.knowledge_persistence import PreparedKnowledge
+from assistant.domain.knowledge_persistence import PersistenceMode, PreparedKnowledge
 from assistant.domain.website_document import WebsiteDocument
 from assistant.infrastructure.repositories.document_ingestion_job import (
     IngestionDocumentSource,
@@ -52,15 +52,24 @@ class FakePersistence:
     prepared: PreparedKnowledge = PreparedKnowledge((), 0, 0, 0, 0)
     prepare_calls: int = 0
     persist_calls: int = 0
+    command: object | None = None
+    prepare_force_replace: bool = False
 
-    def prepare(self, chunks, *, access_roles=("user",)):
+    def prepare(self, chunks, *, access_roles=("user",), force_replace=False):
         assert isinstance(chunks, ContentProcessingResult)
         assert access_roles == ("manager",)
+        self.prepare_force_replace = force_replace
         self.prepare_calls += 1
         return self.prepared
 
-    def persist_prepared(self, prepared):
+    def create_command(self, prepared, **values):
         assert prepared is self.prepared
+        self.command = values
+        return values
+
+    def persist_prepared(self, prepared, *, command=None):
+        assert prepared is self.prepared
+        assert command is self.command
         self.persist_calls += 1
         return "persisted"
 
@@ -83,6 +92,12 @@ def test_concrete_steps_transfer_typed_context_without_crossing_responsibilities
     assert persistence.persist_calls == 0
     assert PersistIngestionStep(persistence).execute(state).succeeded
     assert persistence.persist_calls == 1
+    assert persistence.command == {
+        "ingestion_job_id": state.job_id,
+        "document_id": "document-1",
+        "mode": PersistenceMode.new,
+        "source_fingerprint": None,
+    }
     assert state.metadata["persistence_result"] == "persisted"
 
 
@@ -101,6 +116,19 @@ def test_steps_return_safe_failures_for_missing_input_and_dependency_errors():
     assert chunk_result.failure_code == "missing_parsed_document"
     assert embed_result.failure_code == "missing_ingestion_chunks"
     assert persist_result.failure_code == "missing_ingestion_embeddings"
+
+
+def test_reindex_intent_forces_embedding_preparation_and_reaches_persistence_command():
+    state = context()
+    state.metadata.update(access_roles=("manager",), persistence_mode="REINDEX")
+    persistence = FakePersistence()
+    state.chunks = ContentProcessingResult(1, 1, 0, 0, [], [], 1)
+
+    assert EmbedIngestionStep(persistence).execute(state).succeeded
+    assert persistence.prepare_force_replace
+    assert PersistIngestionStep(persistence).execute(state).succeeded
+    assert isinstance(persistence.command, dict)
+    assert persistence.command["mode"] is PersistenceMode.reindex
 
 
 def test_context_factory_reconstructs_transient_inputs_for_a_seeded_checkpoint():

@@ -215,6 +215,52 @@ load job -> determine next durable stage -> execute step -> commit checkpoint ->
          -> complete or persist safe terminal failure
 ```
 
+### Transactional final persistence
+
+`KnowledgePersistenceService` owns the single database transaction for the pipeline's final
+`PERSIST` step. Parsing, chunking, and embedding generation finish before this transaction opens.
+The step builds an immutable `PersistIngestionResult` command containing the ingestion-job and
+document identities, explicit `NEW`, `REINDEX`, or `RECOVERY` intent, the prepared document/chunk
+graph, and a stable command hash. The transaction then writes document metadata, chunk text,
+database-backed pgvector embeddings, chunk metadata and access roles, ingestion-job links, and the
+committed-result receipt together:
+
+```text
+pipeline prepares complete indexed data -> begin database transaction
+-> lock ingestion job -> write document representation -> write chunks and embeddings
+-> record committed result -> commit -> advance PERSIST checkpoint
+```
+
+The schema retains the existing direct replacement model rather than adding document-version
+history. Re-indexing takes a document-scoped advisory transaction lock, deletes the old chunks and
+inserts the complete replacement in the same PostgreSQL transaction. PostgreSQL rollback therefore
+restores the prior indexed document and chunk set if any later write, flush, activation-link update,
+or result-record insert fails. A successful commit leaves one chunk set under the document; existing
+document/sequence and document/content-hash unique indexes remain the active-representation
+safeguards.
+
+`ingestion_persistence_results` stores one committed receipt per ingestion job. Its primary key and
+foreign keys ensure one job cannot create two committed results, while `documents.last_ingestion_job_id`
+and `chunks.ingestion_job_id` identify the active database representation produced by that job.
+Retries lock the job and inspect its receipt before writing. An exact command-hash match is treated
+as an already successful ambiguous commit; a different command for the same job fails as an
+inconsistent state instead of inserting duplicates. Transient connection, deadlock, integrity,
+validation, conflict, and consistency failures are mapped to safe typed persistence errors for the
+existing retry classifier.
+
+```text
+write fails -> rollback transaction -> keep previous representation
+-> discard the failed connection/session -> do not advance checkpoint
+-> classify for retry or terminal handling
+```
+
+The migration leaves legacy indexed documents and chunks queryable with nullable ingestion-job
+links; only new pipeline commits require a durable receipt. It is reversible and performs no
+external I/O. Embeddings are vector columns on `chunks`, so every persisted embedding participates
+in the same PostgreSQL transaction. There is no external vector-store write in this path and no
+distributed-transaction limitation. Operational claiming/leases, observability expansion, cleanup,
+and worker orchestration remain deferred to PRs 9F-9H.
+
 The existing website loader, content processor, embedding preparation, and atomic knowledge repository
 are composed as concrete steps. Parsing is read-only, cleaning/chunking is deterministic for a fixed
 source snapshot, embedding preparation has no writes, and final persistence is protected by stable
