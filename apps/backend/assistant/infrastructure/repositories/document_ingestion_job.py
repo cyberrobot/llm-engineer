@@ -47,6 +47,15 @@ class DocumentIngestionJobRepository(ABC):
     def update(self, job: DocumentIngestionJob) -> None: ...
 
     @abstractmethod
+    def record_retry(
+        self,
+        job_id: UUID,
+        step: IngestionStep,
+        failure_code: str,
+        failure_message: str,
+    ) -> DocumentIngestionJob: ...
+
+    @abstractmethod
     def get_by_id(self, job_id: UUID) -> DocumentIngestionJob | None: ...
 
     @abstractmethod
@@ -104,7 +113,24 @@ class InMemoryDocumentIngestionJobRepository(DocumentIngestionJobRepository):
         with self._lock:
             if job.id not in self._jobs:
                 raise IngestionJobRepositoryFailure("Ingestion job does not exist.")
+            job.retry_count = max(job.retry_count, self._jobs[job.id].retry_count)
             self._jobs[job.id] = deepcopy(job)
+
+    def record_retry(
+        self,
+        job_id: UUID,
+        step: IngestionStep,
+        failure_code: str,
+        failure_message: str,
+    ) -> DocumentIngestionJob:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.current_step is not step:
+                raise IngestionJobRepositoryFailure("Ingestion retry state is stale.")
+            updated = deepcopy(job)
+            updated.schedule_retry(failure_code, failure_message)
+            self.update(updated)
+            return deepcopy(updated)
 
     def get_by_idempotency_key(self, key: str) -> DocumentIngestionJob | None:
         with self._lock:
@@ -132,7 +158,7 @@ class InMemoryDocumentIngestionJobRepository(DocumentIngestionJobRepository):
 
 class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
     _columns = """id, document_id, status, current_step, last_completed_step,
-                  retry_count, failure_code,
+                  retry_count, current_step_attempt_count, last_attempted_at, failure_code,
                   failure_message, idempotency_key, created_at, started_at,
                   completed_at, updated_at"""
 
@@ -168,7 +194,7 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
                 connection.execute(
                     f"""
                     INSERT INTO document_ingestion_jobs ({self._columns})
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     self._parameters(job),
                 )
@@ -194,7 +220,8 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
                     """
                     UPDATE document_ingestion_jobs
                     SET status = %s, current_step = %s, last_completed_step = %s,
-                        retry_count = %s,
+                        retry_count = GREATEST(retry_count, %s),
+                        current_step_attempt_count = %s, last_attempted_at = %s,
                         failure_code = %s, failure_message = %s, started_at = %s,
                         completed_at = %s, updated_at = %s
                     WHERE id = %s
@@ -204,6 +231,8 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
                         job.current_step.value if job.current_step else None,
                         job.last_completed_step.value if job.last_completed_step else None,
                         job.retry_count,
+                        job.current_step_attempt_count,
+                        job.last_attempted_at,
                         job.failure_code,
                         job.failure_message,
                         job.started_at,
@@ -218,6 +247,37 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
             raise
         except psycopg.Error as exc:
             raise IngestionJobRepositoryFailure("Ingestion job update failed.") from exc
+
+    def record_retry(
+        self,
+        job_id: UUID,
+        step: IngestionStep,
+        failure_code: str,
+        failure_message: str,
+    ) -> DocumentIngestionJob:
+        try:
+            with self._connection_factory() as connection:
+                row = connection.execute(
+                    f"""
+                    UPDATE document_ingestion_jobs
+                    SET retry_count = retry_count + 1,
+                        current_step_attempt_count = current_step_attempt_count + 1,
+                        failure_code = %s,
+                        failure_message = %s,
+                        last_attempted_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = %s AND status = 'running' AND current_step = %s
+                    RETURNING {self._columns}
+                    """,
+                    (failure_code, failure_message, str(job_id), step.value),
+                ).fetchone()
+            if row is None:
+                raise IngestionJobRepositoryFailure("Ingestion retry state is stale.")
+            return self._from_row(row)
+        except IngestionJobRepositoryFailure:
+            raise
+        except psycopg.Error as exc:
+            raise IngestionJobRepositoryFailure("Ingestion retry update failed.") from exc
 
     def get_by_idempotency_key(self, key: str) -> DocumentIngestionJob | None:
         return self._fetch_one("WHERE idempotency_key = %s", (key,))
@@ -274,6 +334,8 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
             job.current_step.value if job.current_step else None,
             job.last_completed_step.value if job.last_completed_step else None,
             job.retry_count,
+            job.current_step_attempt_count,
+            job.last_attempted_at,
             job.failure_code,
             job.failure_message,
             job.idempotency_key,
@@ -292,11 +354,13 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
             current_step=IngestionStep(row[3]) if row[3] is not None else None,
             last_completed_step=IngestionStep(row[4]) if row[4] is not None else None,
             retry_count=row[5],
-            failure_code=row[6],
-            failure_message=row[7],
-            idempotency_key=row[8],
-            created_at=row[9],
-            started_at=row[10],
-            completed_at=row[11],
-            updated_at=row[12],
+            current_step_attempt_count=row[6],
+            last_attempted_at=row[7],
+            failure_code=row[8],
+            failure_message=row[9],
+            idempotency_key=row[10],
+            created_at=row[11],
+            started_at=row[12],
+            completed_at=row[13],
+            updated_at=row[14],
         )

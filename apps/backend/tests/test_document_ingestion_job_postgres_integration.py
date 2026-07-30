@@ -7,7 +7,7 @@ import pytest
 from psycopg import sql
 
 from assistant.application.ingestion_job_service import DocumentIngestionJobService
-from assistant.domain.document_ingestion_job import IngestionStep
+from assistant.domain.document_ingestion_job import DocumentIngestionJob, IngestionStep
 from assistant.infrastructure.repositories.document_ingestion_job import (
     PostgresDocumentIngestionJobRepository,
 )
@@ -20,6 +20,10 @@ from infrastructure.database.migrations.ingestion_pipeline_checkpoint import (
 from infrastructure.database.migrations.ingestion_pipeline_checkpoint import (
     upgrade as upgrade_checkpoint,
 )
+from infrastructure.database.migrations.ingestion_retry_recovery import (
+    downgrade as downgrade_retry,
+)
+from infrastructure.database.migrations.ingestion_retry_recovery import upgrade as upgrade_retry
 
 
 def require_database() -> None:
@@ -61,10 +65,14 @@ def test_postgres_repository_persists_queries_filters_and_enforces_retry_constra
 
         created.mark_running()
         created.set_current_step(IngestionStep.parse)
+        created.begin_step_attempt()
+        created.schedule_retry("ingestion_timeout", "The ingestion operation timed out.")
         repository = PostgresDocumentIngestionJobRepository()
         repository.update(created)
 
         assert service.get(created.id) == created
+        assert created.retry_count == 1
+        assert created.current_step_attempt_count == 2
         source = repository.get_document_source(document_id)
         assert source is not None
         assert source.source_url == "https://example.com/source"
@@ -121,6 +129,39 @@ def test_concurrent_idempotent_creation_returns_one_job_and_leaves_one_row():
         delete_document(document_id)
 
 
+def test_concurrent_retry_updates_atomically_preserve_both_attempts():
+    require_database()
+    init_db()
+    document_id = str(uuid4())
+    create_document(document_id)
+    repository = PostgresDocumentIngestionJobRepository()
+
+    try:
+        job = repository.create(DocumentIngestionJob.create(document_id))
+        job.mark_running()
+        job.set_current_step(IngestionStep.embed)
+        job.begin_step_attempt()
+        repository.update(job)
+
+        def retry() -> None:
+            PostgresDocumentIngestionJobRepository().record_retry(
+                job.id,
+                IngestionStep.embed,
+                "ingestion_timeout",
+                "The ingestion operation timed out.",
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            list(executor.map(lambda _: retry(), range(2)))
+
+        stored = repository.get_by_id(job.id)
+        assert stored is not None
+        assert stored.retry_count == 2
+        assert stored.current_step_attempt_count == 3
+    finally:
+        delete_document(document_id)
+
+
 def test_migration_downgrades_and_reupgrades_an_isolated_schema():
     require_database()
     schema = f"migration_{uuid4().hex}"
@@ -145,6 +186,7 @@ def test_migration_downgrades_and_reupgrades_an_isolated_schema():
 
             upgrade(cursor)
             upgrade_checkpoint(cursor)
+            upgrade_retry(cursor)
             upgraded_columns = {
                 row[0]
                 for row in cursor.execute(
@@ -161,8 +203,11 @@ def test_migration_downgrades_and_reupgrades_an_isolated_schema():
                 "retry_count",
                 "idempotency_key",
                 "completed_at",
+                "current_step_attempt_count",
+                "last_attempted_at",
             } <= upgraded_columns
 
+            downgrade_retry(cursor)
             downgrade_checkpoint(cursor)
             downgrade(cursor)
             downgraded_columns = {
@@ -177,9 +222,12 @@ def test_migration_downgrades_and_reupgrades_an_isolated_schema():
             }
             assert "current_step" not in downgraded_columns
             assert "last_completed_step" not in downgraded_columns
+            assert "current_step_attempt_count" not in downgraded_columns
+            assert "last_attempted_at" not in downgraded_columns
 
             upgrade(cursor)
             upgrade_checkpoint(cursor)
+            upgrade_retry(cursor)
             reupgraded_columns = {
                 row[0]
                 for row in cursor.execute(
@@ -192,5 +240,7 @@ def test_migration_downgrades_and_reupgrades_an_isolated_schema():
             }
             assert "current_step" in reupgraded_columns
             assert "last_completed_step" in reupgraded_columns
+            assert "current_step_attempt_count" in reupgraded_columns
+            assert "last_attempted_at" in reupgraded_columns
 
         connection.rollback()

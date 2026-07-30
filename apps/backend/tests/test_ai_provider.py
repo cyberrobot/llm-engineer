@@ -36,9 +36,10 @@ def make_provider(response_or_error) -> tuple[OpenAIProvider, Mock]:
     )
 
 
-def status_error(error_type, status_code: int) -> Exception:
+def status_error(error_type, status_code: int, *, retry_after: str | None = None) -> Exception:
     request = httpx.Request("POST", "https://api.openai.com/v1/responses")
-    response = httpx.Response(status_code, request=request)
+    headers = {"Retry-After": retry_after} if retry_after is not None else None
+    response = httpx.Response(status_code, request=request, headers=headers)
     return error_type("provider error", response=response, body=None)
 
 
@@ -99,6 +100,15 @@ def test_openai_provider_rejects_empty_output():
 
     with pytest.raises(AIProviderError, match="empty response"):
         provider.generate_response(system_prompt="system", user_prompt="user")
+
+
+def test_openai_provider_preserves_valid_rate_limit_retry_delay():
+    provider, _ = make_provider(status_error(openai.RateLimitError, 429, retry_after="7"))
+
+    with pytest.raises(AIRateLimitError) as raised:
+        provider.generate_response(system_prompt="system", user_prompt="user")
+
+    assert raised.value.retry_after_seconds == 7
 
 
 def test_openai_provider_generates_embedding_through_provider_boundary():

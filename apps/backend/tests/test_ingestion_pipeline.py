@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
+import psycopg
 import pytest
 
 from assistant.application.ingestion_pipeline import (
@@ -10,11 +11,17 @@ from assistant.application.ingestion_pipeline import (
     IngestionStepResult,
     InvalidIngestionPipeline,
 )
+from assistant.application.ingestion_retry import (
+    IngestionFailureClassifier,
+    IngestionRetryPolicy,
+)
 from assistant.domain.document_ingestion_job import DocumentIngestionJob, IngestionStep
 from assistant.domain.ingestion_status import IngestionStatus
 from assistant.infrastructure.repositories.document_ingestion_job import (
     InMemoryDocumentIngestionJobRepository,
 )
+from core.config import IngestionRetrySettings
+from infrastructure.ai.exceptions import AIRateLimitError, AITimeoutError
 
 
 @dataclass
@@ -30,6 +37,28 @@ class FakeStep:
         if self.error is not None:
             raise self.error
         return self.result
+
+
+@dataclass
+class SequencedStep:
+    step_id: IngestionStep
+    calls: list[IngestionStep]
+    outcomes: list[IngestionStepResult | Exception]
+
+    def execute(self, context: IngestionPipelineContext) -> IngestionStepResult:
+        self.calls.append(self.step_id)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+class RecordingSleeper:
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    def __call__(self, delay: float) -> None:
+        self.delays.append(delay)
 
 
 class RecordingRepository(InMemoryDocumentIngestionJobRepository):
@@ -230,3 +259,192 @@ def test_unknown_job_returns_typed_not_found_result():
 
     assert result.failure_code == "ingestion_job_not_found"
     assert result.status is None
+
+
+def test_retryable_failure_retries_only_same_step_and_persists_count_before_sleep():
+    document_id = str(uuid4())
+    repository = RecordingRepository(document_id)
+    created = repository.create(DocumentIngestionJob.create(document_id))
+    calls: list[IngestionStep] = []
+    embed = SequencedStep(
+        IngestionStep.embed,
+        calls,
+        [AITimeoutError(), IngestionStepResult.success()],
+    )
+    sleeper = RecordingSleeper()
+    definition = pipeline(calls, embed=embed)  # type: ignore[arg-type]
+    runner = IngestionPipelineRunner(
+        repository,
+        definition,
+        classifier=IngestionFailureClassifier(),
+        retry_policy=IngestionRetryPolicy(IngestionRetrySettings(3, 1, 2, 30, False)),
+        sleeper=sleeper,
+    )
+
+    result = runner.run(created.id)
+
+    assert result.succeeded
+    assert calls == [
+        IngestionStep.parse,
+        IngestionStep.chunk,
+        IngestionStep.embed,
+        IngestionStep.embed,
+        IngestionStep.persist,
+    ]
+    assert sleeper.delays == [1]
+    assert result.total_retries == 1
+    stored = stored_job(repository, created.id)
+    assert stored.retry_count == 1
+    assert stored.current_step_attempt_count == 0
+    assert stored.failure_code is None
+    retry_snapshot = next(
+        snapshot for snapshot in repository.snapshots if snapshot.retry_count == 1
+    )
+    assert retry_snapshot.status is IngestionStatus.running
+    assert retry_snapshot.current_step is IngestionStep.embed
+    assert retry_snapshot.current_step_attempt_count == 2
+
+
+def test_non_retryable_failure_fails_without_sleep_or_retry_increment():
+    document_id = str(uuid4())
+    repository = RecordingRepository(document_id)
+    created = repository.create(DocumentIngestionJob.create(document_id))
+    calls: list[IngestionStep] = []
+    sleeper = RecordingSleeper()
+    parse = SequencedStep(IngestionStep.parse, calls, [ValueError("invalid input")])
+
+    result = IngestionPipelineRunner(
+        repository,
+        pipeline(calls, parse=parse),
+        sleeper=sleeper,  # type: ignore[arg-type]
+    ).run(created.id)
+
+    assert not result.succeeded
+    assert not result.retryable
+    assert not result.retry_exhausted
+    assert result.attempts_used == 1
+    assert sleeper.delays == []
+    assert stored_job(repository, created.id).retry_count == 0
+
+
+def test_retry_exhaustion_fails_safely_without_advancing_or_running_later_steps():
+    document_id = str(uuid4())
+    repository = RecordingRepository(document_id)
+    created = repository.create(DocumentIngestionJob.create(document_id))
+    calls: list[IngestionStep] = []
+    sleeper = RecordingSleeper()
+    parse = SequencedStep(
+        IngestionStep.parse,
+        calls,
+        [AIRateLimitError(), AIRateLimitError(), AIRateLimitError()],
+    )
+    result = IngestionPipelineRunner(
+        repository,
+        pipeline(calls, parse=parse),  # type: ignore[arg-type]
+        classifier=IngestionFailureClassifier(),
+        retry_policy=IngestionRetryPolicy(IngestionRetrySettings(3, 1, 2, 30, False)),
+        sleeper=sleeper,
+    ).run(created.id)
+
+    assert not result.succeeded
+    assert result.retryable
+    assert result.retry_exhausted
+    assert result.attempts_used == 3
+    assert result.retries_performed == 2
+    assert calls == [IngestionStep.parse] * 3
+    assert sleeper.delays == [1, 2]
+    stored = stored_job(repository, created.id)
+    assert stored.status is IngestionStatus.failed
+    assert stored.last_completed_step is None
+    assert stored.retry_count == 2
+    assert stored.failure_code == "ingestion_rate_limited"
+
+
+def test_new_runner_retains_scheduled_attempt_and_completed_checkpoint_after_interruption():
+    document_id = str(uuid4())
+    repository = RecordingRepository(document_id)
+    job = DocumentIngestionJob.create(document_id)
+    job.mark_running()
+    job.set_current_step(IngestionStep.parse)
+    job.begin_step_attempt()
+    job.mark_step_completed(IngestionStep.parse)
+    job.set_current_step(IngestionStep.chunk)
+    job.begin_step_attempt()
+    job.mark_step_completed(IngestionStep.chunk)
+    job.set_current_step(IngestionStep.embed)
+    job.begin_step_attempt()
+    job.schedule_retry("ingestion_timeout", "The ingestion operation timed out.")
+    repository.create(job)
+    calls: list[IngestionStep] = []
+    embed = SequencedStep(IngestionStep.embed, calls, [IngestionStepResult.success()])
+
+    result = IngestionPipelineRunner(
+        repository,
+        pipeline(calls, embed=embed),  # type: ignore[arg-type]
+        classifier=IngestionFailureClassifier(),
+        retry_policy=IngestionRetryPolicy(IngestionRetrySettings(3, 0, 2, 30, False)),
+        sleeper=RecordingSleeper(),
+    ).run(job.id)
+
+    assert result.succeeded
+    assert calls == [IngestionStep.embed, IngestionStep.persist]
+    assert stored_job(repository, job.id).retry_count == 1
+
+
+def test_restart_at_final_scheduled_attempt_does_not_grant_an_extra_retry():
+    document_id = str(uuid4())
+    repository = RecordingRepository(document_id)
+    job = DocumentIngestionJob.create(document_id)
+    job.mark_running()
+    job.set_current_step(IngestionStep.parse)
+    job.begin_step_attempt()
+    job.schedule_retry("ingestion_rate_limited", "Provider rate limited.")
+    job.schedule_retry("ingestion_rate_limited", "Provider rate limited.")
+    repository.create(job)
+    calls: list[IngestionStep] = []
+    parse = SequencedStep(IngestionStep.parse, calls, [AIRateLimitError()])
+    sleeper = RecordingSleeper()
+
+    result = IngestionPipelineRunner(
+        repository,
+        pipeline(calls, parse=parse),  # type: ignore[arg-type]
+        classifier=IngestionFailureClassifier(),
+        retry_policy=IngestionRetryPolicy(IngestionRetrySettings(3, 0, 2, 30, False)),
+        sleeper=sleeper,
+    ).run(job.id)
+
+    assert not result.succeeded
+    assert result.retry_exhausted
+    assert calls == [IngestionStep.parse]
+    assert sleeper.delays == []
+    assert stored_job(repository, job.id).retry_count == 2
+
+
+def test_transient_database_failure_retries_persist_without_restarting_prior_steps():
+    document_id = str(uuid4())
+    repository = RecordingRepository(document_id)
+    created = repository.create(DocumentIngestionJob.create(document_id))
+    calls: list[IngestionStep] = []
+    persist = SequencedStep(
+        IngestionStep.persist,
+        calls,
+        [psycopg.OperationalError("private database detail"), IngestionStepResult.success()],
+    )
+
+    result = IngestionPipelineRunner(
+        repository,
+        pipeline(calls, persist=persist),  # type: ignore[arg-type]
+        classifier=IngestionFailureClassifier(),
+        retry_policy=IngestionRetryPolicy(IngestionRetrySettings(3, 0, 2, 30, False)),
+        sleeper=RecordingSleeper(),
+    ).run(created.id)
+
+    assert result.succeeded
+    assert calls == [
+        IngestionStep.parse,
+        IngestionStep.chunk,
+        IngestionStep.embed,
+        IngestionStep.persist,
+        IngestionStep.persist,
+    ]
+    assert stored_job(repository, created.id).retry_count == 1

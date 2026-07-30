@@ -48,6 +48,8 @@ def test_postgres_row_mapping_preserves_enums_nullable_fields_and_timestamps():
             None,
             None,
             0,
+            0,
+            None,
             None,
             None,
             None,
