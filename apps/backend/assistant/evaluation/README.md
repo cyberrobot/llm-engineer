@@ -1,9 +1,9 @@
 # Evaluation domain models
 
 This package defines the stable, serializable records used by the evaluation framework, loads
-repository-managed evaluation datasets from JSON, and calculates deterministic retrieval and
-answer-quality metrics from results supplied by a caller. It does not execute retrieval, generate
-answers, orchestrate evaluation runs, or persist reports.
+repository-managed evaluation datasets from JSON, calculates deterministic retrieval and
+answer-quality metrics, and orchestrates complete in-memory evaluation runs. It does not persist
+reports and does not provide a CLI or API endpoint.
 
 The models have three boundaries:
 
@@ -195,3 +195,56 @@ citations. It does not alter the response or its answer formatting.
 pass rate across evaluable cases; average raw citation count across all supplied results; and the
 result-level citation validity rate across results where grounding was evaluated. Empty aggregates
 have an average citation count of `0.0`, with pass and citation-validity rates left as `None`.
+
+## Evaluation runner
+
+`EvaluationRunner` composes the production retrieval and answer-generation services with the pure
+evaluators. The current application services are synchronous, so `run_case` and `run_dataset` are
+synchronous. Dataset cases execute sequentially and retain their input order. The runner neither
+loads a dataset file nor writes files or database records.
+
+For each case, the runner retrieves the production `KnowledgeChunk` context, adapts it with
+`to_evaluation_retrieved_items`, evaluates retrieval, asks `ChatService.generate` to generate from
+that same context, and adapts/evaluates the resulting `ChatResponse`. This avoids a second retrieval
+and keeps prompt construction in `ChatService`. `retrieval_k` limits metric evaluation only because
+the production `RetrievalService.retrieve` contract does not accept a per-call limit; it does not
+change the service's configured retrieval behavior or the context supplied to generation.
+
+The active `RetrievalService` contract accepts only the question. The runner therefore introduces
+no role override or access bypass: callers inject the same configured service used by the
+application, and any repository-level visibility rules remain that service's responsibility. No
+credentials, service instances, prompts, or environment values are copied into run configuration.
+
+Cases are `passed` when every applicable retrieval and answer check passes, `failed` when execution
+completes but a deterministic check fails, `error` when a service, adapter, or evaluator raises, and
+`skipped` when neither stage has an evaluable expectation. Complete-source recall is required by
+default; `require_all_expected_sources=False` accepts any retrieval hit. Answer pass semantics come
+directly from `AnswerEvaluationResult.passed`.
+
+Errors are isolated by default and later cases continue. Error results retain completed retrieval
+evaluation when answer generation fails, but expose only the exception type rather than potentially
+sensitive exception text. With `continue_on_error=False`, the first errored case stops execution and
+the returned partial run is `failed`. Otherwise, a fully processed run is `completed` even when it
+contains failed, errored, or skipped cases.
+
+The run summary combines the existing retrieval and answer aggregation functions with status counts
+and the mean of all available case durations, including zero durations. Configuration snapshots are
+JSON-safe and contain retrieval depth, continuation, content-retention, complete-recall, and answer
+evaluation settings. Retrieved content is omitted from results by default; IDs, ranks, scores, and
+safe metadata remain available. Clock and ID generation are injectable for deterministic tests.
+
+```python
+from assistant.evaluation import EvaluationRunOptions, EvaluationRunner, load_evaluation_dataset
+
+dataset = load_evaluation_dataset("examples/evaluation/example-dataset.json")
+runner = EvaluationRunner(
+    retrieval_service=retrieval_service,
+    answer_service=chat_service,
+)
+run = runner.run_dataset(
+    dataset,
+    options=EvaluationRunOptions(retrieval_k=5),
+)
+print(run.status)
+print(run.summary)
+```

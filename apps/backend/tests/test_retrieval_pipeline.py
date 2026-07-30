@@ -121,3 +121,30 @@ def test_chat_service_retrieves_builds_prompt_and_maps_unique_citations():
     assert [source.model_dump() for source in response.sources] == [
         {"id": "doc-1", "title": "Discovery guide"}
     ]
+
+
+def test_chat_service_generates_from_supplied_context_without_retrieving_again():
+    provider = StubProvider()
+    retrieval = RetrievalService(
+        provider,
+        VectorKnowledgeRepository(InMemoryVectorStore(())),
+    )
+    supplied = [
+        KnowledgeChunk(
+            id="chunk-1",
+            document=KnowledgeDocument(id="doc-1", title="Discovery guide"),
+            content="Workshops align stakeholders.",
+            score=0.91,
+        )
+    ]
+
+    response = ChatService(provider, retrieval).generate(
+        question="How do workshops help?",
+        retrieved_context=supplied,
+    )
+
+    assert provider.embedding_calls == []
+    assert provider.response_call is not None
+    assert "Workshops align stakeholders." in provider.response_call[1]
+    assert response.message == "Use workshops to align on outcomes. [Source 1]"
+    assert [source.id for source in response.sources] == ["doc-1"]
