@@ -39,9 +39,7 @@ from pathlib import Path
 
 from assistant.evaluation import load_evaluation_dataset
 
-dataset = load_evaluation_dataset(
-    Path("examples/evaluation/example-dataset.json")
-)
+dataset = load_evaluation_dataset(Path("examples/evaluation/example-dataset.json"))
 print(dataset.name)
 print(len(dataset.cases))
 ```
@@ -248,3 +246,81 @@ run = runner.run_dataset(
 print(run.status)
 print(run.summary)
 ```
+
+## Command-line interface
+
+Run a repository-managed JSON dataset from `apps/backend` with the production retrieval and answer
+services:
+
+```bash
+python -m assistant.evaluation \
+  --dataset examples/evaluation/example-dataset.json \
+  --retrieval-k 5
+```
+
+The command uses the application's existing environment configuration and service factories.
+`OPENAI_API_KEY` is required by the configured provider; database and provider settings retain their
+existing meanings. When `DATABASE_URL` is set, retrieval uses the production pgvector repository;
+otherwise it uses the application's in-memory seed store. The CLI does not initialize or migrate a
+database.
+
+The runner contract introduced in PR 8E has no caller-supplied role or access-context option, so the
+CLI deliberately has no `--user-role` argument. It uses the same configured `RetrievalService` and
+does not add an access override or imply elevated access.
+
+The main options are:
+
+- `--dataset PATH` selects exactly one relative or absolute JSON dataset path.
+- `--retrieval-k INTEGER` evaluates retrieval metrics at a depth of at least one. Omitting it keeps
+  the runner default. It does not change production retrieval depth or answer context.
+- `--stop-on-error` stops after the first case execution error. The default continues through later
+  cases.
+- `--allow-partial-source-recall` allows a retrieval hit without requiring every expected source.
+- `--include-retrieved-content` includes full retrieved chunk content in the result. Content is
+  excluded by default, but the full production context is always supplied to answer generation.
+- `--case-sensitive`, `--no-normalise-whitespace`, `--allow-missing-citations`, and
+  `--skip-citation-validation` expose the corresponding deterministic answer-evaluation controls.
+- `--json` writes only the complete serialized `EvaluationRun` to standard output. `--pretty` adds
+  indentation and is rejected unless `--json` is also present.
+
+By default, standard output contains a concise run summary, aggregate retrieval/answer metrics,
+timing, and safe diagnostics for failed or errored cases. It does not include prompts, generated
+answers, retrieved chunk content, stack traces, or secrets. Loading, configuration, bootstrap, and
+run-level errors go to standard error. Provider resources are closed after both successful and
+failed runs.
+
+JSON output can be piped to another process without human-readable text mixed into it:
+
+```bash
+python -m assistant.evaluation \
+  --dataset examples/evaluation/example-dataset.json \
+  --json
+```
+
+Stop on the first execution error with:
+
+```bash
+python -m assistant.evaluation \
+  --dataset examples/evaluation/example-dataset.json \
+  --stop-on-error
+```
+
+Exit codes are stable:
+
+| Code | Meaning |
+| ---: | --- |
+| 0 | The run completed and every evaluated case passed. |
+| 1 | A deterministic evaluation failed, or every case was skipped. |
+| 2 | Command usage or argument validation failed. |
+| 3 | Dataset loading, JSON parsing, schema, or field validation failed. |
+| 4 | The run completed with one or more case execution errors. |
+| 5 | Service bootstrap or run-level execution failed. |
+
+Case execution errors take precedence over deterministic failures. Some skipped cases do not fail a
+run when all evaluated cases pass.
+
+The CLI keeps each run in memory. It writes no report or baseline files, performs no baseline
+comparison, and intentionally does not modify the dataset or application configuration. The
+production services used by this runner are stateless for these operations and do not invoke the
+legacy RAG audit-log path; future changes to those service contracts may introduce inherited side
+effects that should be documented here.
