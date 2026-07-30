@@ -130,6 +130,64 @@ retries are outside this workflow.
 
 ## Document ingestion jobs
 
+### Uploaded-file integrity and exact-content deduplication
+
+PDF upload preflight calculates a SHA-256 fingerprint from the exact stored bytes before opening a
+database transaction or creating an ingestion job:
+
+```text
+store source -> stream SHA-256 -> search within access-role scope -> classify content
+             -> reuse, skip, or create ingestion job -> run pipeline only when required
+```
+
+The fingerprint is a lowercase 64-character digest plus the exact byte count from the same streaming
+read. The service reads in bounded chunks, supports empty content deterministically (the upload API
+continues to reject empty PDFs), rewinds seekable caller-owned streams to their original position, and
+does not close them. Filename and MIME type are retained as audit/display metadata but do not
+participate in content identity. Upload filenames are reduced to their basename before persistence.
+
+Fingerprint fields are nullable on `documents`, because legacy documents remain readable and are not
+backfilled by schema migration. New uploaded-file rows store `checksum_algorithm`, `checksum`,
+`file_size_bytes`, `mime_type`, and a timezone-aware `checksum_calculated_at`. This application has no
+tenant or soft-delete model; its relevant visibility boundary is the canonical sorted `access_roles`
+set. The unique fingerprint index therefore covers
+`access_roles + checksum_algorithm + checksum + file_size_bytes`. Identical bytes in a different role
+scope create an independent document and reveal no canonical identifier from the other scope. The
+current document model has no archive state, so every persisted, accessible document with a fingerprint
+is eligible as canonical content.
+
+Upload responses distinguish `NEW_CONTENT`, `DUPLICATE_CONTENT`, `MODIFIED_CONTENT`, and
+`FORCED_REINDEX`. New content returns `201` with one queued ingestion job. A completed identical upload
+returns `200`, the canonical document and completed job, and `ingestion_required=false`. A queued or
+running match returns its active job with `ingestion_in_progress=true`; it never creates a second active
+job. Failed or cancelled matches retain their terminal history and create a new queued recovery job on
+the canonical document. `force_reindex=true` is opt-in, reuses the canonical document, and creates a new
+queued job once no job is active. A request may supply `document_id` to identify an established logical
+source; different bytes then update that document's source fingerprint and enqueue a
+`MODIFIED_CONTENT` job. Filename alone is never treated as stable source identity.
+
+Request idempotency remains separate from byte identity. A small `ingestion_file_requests` receipt row
+records checksum, force intent, and the returned decision even when a duplicate creates no job. Replaying
+the same key returns the original result; reusing it with different bytes or force intent returns the
+existing `idempotency_key_conflict`. The key and raw checksum are not exposed by the API.
+
+PostgreSQL uniqueness is the final concurrent-insert safeguard. The scoped fingerprint index permits
+one canonical document, and a partial job index permits one queued/running fingerprinted-file job per
+document. A losing transaction reloads the winner and returns the canonical active/duplicate decision
+instead of a server error. The partial job predicate excludes legacy jobs without `request_checksum`,
+so migration does not rewrite their lifecycle. Database work is limited to short lookup/insert/update
+transactions; hashing never holds a database transaction open.
+
+The upload endpoint preserves the existing queued execution model: it performs preflight and job
+creation but does not add a worker or execute parsing/embedding in the upload request. The existing run
+endpoint remains the execution boundary, and callers must invoke it only when `ingestion_required` is
+true. Forced or modified indexing continues to use the current single active chunk set and existing
+replacement persistence. A source file is stored before preflight and duplicate physical uploads are
+not automatically deleted, as storage cleanup and lifecycle policy are intentionally out of scope.
+Stronger coordination between source replacement and the final indexed representation is deferred to
+PR 9E. Observability, distributed claiming/leases, cleanup, and worker orchestration remain deferred to
+PRs 9F-9H.
+
 Document ingestion requests have a persistent job record under `document_ingestion_jobs`. A document
 must already exist before its job is created. `POST /ingestion/jobs/{job_id}/run` executes the job
 synchronously in the current API process through this explicit sequence:
@@ -222,7 +280,7 @@ This pipeline still does not add progress percentages, queues, workers, delayed 
 distributed claiming, manual retry endpoints, cancellation commands, or asynchronous execution.
 Durable source snapshots are required before finer website checkpoints are enabled. Transactional
 persistence strengthening, observability, distributed job claiming/leases, operational cleanup, and
-worker orchestration remain deferred to PRs 9D-9H.
+worker orchestration remain deferred to PRs 9E-9H.
 
 ## Production operations
 
