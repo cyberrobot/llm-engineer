@@ -27,14 +27,27 @@ class ChatService:
             raise ValueError("Chat message must not be empty")
 
         chunks = self._retrieval_service.retrieve(user_prompt) if self._retrieval_service else []
-        prompt = self._prompt_builder.build(user_prompt, chunks)
+        return self.generate(question=user_prompt, retrieved_context=chunks)
+
+    def generate(
+        self,
+        *,
+        question: str,
+        retrieved_context: list[KnowledgeChunk],
+    ) -> ChatResponse:
+        """Generate a grounded response from already-retrieved production context."""
+
+        user_prompt = question.strip()
+        if not user_prompt:
+            raise ValueError("Chat message must not be empty")
+        prompt = self._prompt_builder.build(user_prompt, retrieved_context)
         message = self._ai_provider.generate_response(
             system_prompt=prompt.system_prompt,
             user_prompt=prompt.user_prompt,
         )
         return ChatResponse(
             message=message,
-            sources=self._map_sources(chunks),
+            sources=self._map_sources(retrieved_context),
         )
 
     @staticmethod

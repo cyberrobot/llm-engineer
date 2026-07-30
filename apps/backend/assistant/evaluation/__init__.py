@@ -37,6 +37,7 @@ from assistant.evaluation.retrieval_evaluator import (
     evaluate_retrieval,
     summarise_retrieval_results,
 )
+from assistant.evaluation.runner import EvaluationRunner, EvaluationRunOptions
 
 __all__ = [
     "AnswerEvaluationError",
@@ -53,6 +54,8 @@ __all__ = [
     "EvaluationDatasetReadError",
     "EvaluationDatasetValidationError",
     "EvaluationRun",
+    "EvaluationRunner",
+    "EvaluationRunOptions",
     "EvaluationRunStatus",
     "EvaluationSummary",
     "RetrievalEvaluationResult",
