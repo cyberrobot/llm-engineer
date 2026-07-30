@@ -1,6 +1,9 @@
 import psycopg
 
 from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS, get_database_settings
+from infrastructure.database.migrations.file_integrity_deduplication import (
+    upgrade as upgrade_file_integrity_deduplication,
+)
 from infrastructure.database.migrations.ingestion_job_domain import (
     upgrade as upgrade_ingestion_job_domain,
 )
@@ -107,6 +110,7 @@ def init_db():
             upgrade_ingestion_job_domain(cur)
             upgrade_ingestion_pipeline_checkpoint(cur)
             upgrade_ingestion_retry_recovery(cur)
+            upgrade_file_integrity_deduplication(cur)
             cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS chunks (
                     id TEXT PRIMARY KEY,
