@@ -17,10 +17,13 @@ from assistant.evaluation import (
     EvaluationRun,
     EvaluationRunStatus,
     EvaluationSummary,
+    MetricRegressionThreshold,
     RetrievalEvaluationResult,
+    save_evaluation_report,
 )
 from assistant.evaluation.cli import (
     EvaluationCliExitCode,
+    build_regression_policy,
     build_run_options,
     exit_code_for_run,
     main,
@@ -496,6 +499,280 @@ def test_failed_partial_run_with_case_error_is_persisted_and_keeps_case_error_ex
 
     assert code == EvaluationCliExitCode.CASE_EXECUTION_ERROR
     assert json.loads(path.read_text(encoding="utf-8"))["status"] == "failed"
+
+
+def test_baseline_parser_maps_threshold_and_case_policy_options(capsys):
+    arguments = parse_arguments(
+        [
+            "--dataset",
+            "suite.json",
+            "--baseline",
+            "baseline.json",
+            "--max-precision-drop",
+            "0.01",
+            "--max-recall-drop",
+            "0.02",
+            "--max-hit-rate-drop",
+            "0.03",
+            "--max-mrr-drop",
+            "0.04",
+            "--max-answer-pass-rate-drop",
+            "0.05",
+            "--allow-new-failures",
+            "--allow-new-errors",
+            "--fail-on-removed-cases",
+            "--fail-on-added-cases",
+            "--require-same-dataset-version",
+            "--allow-different-retrieval-k",
+        ]
+    )
+    policy = build_regression_policy(arguments)
+
+    assert arguments.baseline == "baseline.json"
+    assert policy.metric_thresholds == {
+        "retrieval_precision_at_k": MetricRegressionThreshold(maximum_absolute_drop=0.01),
+        "retrieval_recall_at_k": MetricRegressionThreshold(maximum_absolute_drop=0.02),
+        "retrieval_hit_rate": MetricRegressionThreshold(maximum_absolute_drop=0.03),
+        "mean_reciprocal_rank": MetricRegressionThreshold(maximum_absolute_drop=0.04),
+        "answer_pass_rate": MetricRegressionThreshold(maximum_absolute_drop=0.05),
+    }
+    assert not policy.fail_on_new_failed_cases
+    assert not policy.fail_on_new_error_cases
+    assert policy.fail_on_removed_cases
+    assert policy.fail_on_added_cases
+    assert policy.require_same_dataset_version
+    assert not policy.require_same_retrieval_k
+
+    for invalid in ("-0.01", "1.01", "not-a-number"):
+        with pytest.raises(SystemExit) as rejected:
+            parse_arguments(
+                [
+                    "--dataset",
+                    "suite.json",
+                    "--baseline",
+                    "baseline.json",
+                    "--max-recall-drop",
+                    invalid,
+                ]
+            )
+        assert rejected.value.code == EvaluationCliExitCode.USAGE_ERROR
+
+    with pytest.raises(SystemExit) as meaningless:
+        parse_arguments(["--dataset", "suite.json", "--max-recall-drop", "0.1"])
+    assert meaningless.value.code == EvaluationCliExitCode.USAGE_ERROR
+    assert "requires --baseline" in capsys.readouterr().err
+
+
+def _runner_context_for(run):
+    class Runner:
+        def run_dataset(self, _dataset, *, options):
+            return run
+
+    @contextmanager
+    def runner_context():
+        yield Runner()
+
+    return runner_context
+
+
+def test_human_baseline_comparison_renders_metrics_cases_and_recovery(tmp_path):
+    baseline = _run(
+        summary=_summary(total=3, passed=2, failed=1),
+        results=[
+            _result("same", EvaluationCaseStatus.PASSED),
+            _result("regressed", EvaluationCaseStatus.PASSED),
+            _result("recovered", EvaluationCaseStatus.FAILED, answer_reasons=["old failure"]),
+        ],
+    ).model_copy(update={"id": "baseline-run"})
+    current = _run(
+        summary=_summary(total=4, passed=3, failed=1),
+        results=[
+            _result("same", EvaluationCaseStatus.PASSED),
+            _result("regressed", EvaluationCaseStatus.FAILED, answer_reasons=["new failure"]),
+            _result("recovered", EvaluationCaseStatus.PASSED),
+            _result("added", EvaluationCaseStatus.PASSED),
+        ],
+    ).model_copy(update={"id": "current-run"})
+    baseline_path = tmp_path / "baseline.json"
+    save_evaluation_report(baseline, baseline_path)
+    before = baseline_path.read_bytes()
+
+    stdout, stderr = StringIO(), StringIO()
+    code = run_cli(
+        parse_arguments(["--dataset", "suite.json", "--baseline", str(baseline_path)]),
+        stdout=stdout,
+        stderr=stderr,
+        load_dataset=lambda _path: object(),
+        runner_context_factory=_runner_context_for(current),
+    )
+
+    output = stdout.getvalue()
+    assert code == EvaluationCliExitCode.REGRESSION_DETECTED
+    assert "Baseline comparison" in output
+    assert "Baseline run: baseline-run" in output
+    assert "Current run:  current-run" in output
+    assert "Regression:   detected" in output
+    assert "Recall@K" in output
+    assert "percentage points" in output
+    assert "Newly failed: 1" in output
+    assert "Recovered: 1" in output
+    assert "regressed [passed -> failed]" in output
+    assert "recovered [failed -> passed]" in output
+    assert "short answer" not in output
+    assert stderr.getvalue() == ""
+    assert baseline_path.read_bytes() == before
+
+
+def test_metric_regression_exit_code_precedes_current_evaluation_failure(tmp_path):
+    baseline = _run(summary=_summary().model_copy(update={"retrieval_recall_at_k": 0.9}))
+    current = _run(
+        summary=_summary(total=1, passed=0, failed=1).model_copy(
+            update={"retrieval_recall_at_k": 0.8}
+        )
+    )
+    baseline_path = tmp_path / "baseline.json"
+    save_evaluation_report(baseline, baseline_path)
+
+    code = run_cli(
+        parse_arguments(
+            [
+                "--dataset",
+                "suite.json",
+                "--baseline",
+                str(baseline_path),
+                "--max-recall-drop",
+                "0.02",
+            ]
+        ),
+        stdout=StringIO(),
+        stderr=StringIO(),
+        load_dataset=lambda _path: object(),
+        runner_context_factory=_runner_context_for(current),
+    )
+
+    assert code == EvaluationCliExitCode.REGRESSION_DETECTED
+
+
+def test_baseline_json_mode_emits_one_envelope_and_preserves_no_baseline_contract(tmp_path):
+    baseline = _run().model_copy(update={"id": "baseline-run"})
+    current = _run().model_copy(update={"id": "current-run"})
+    baseline_path = tmp_path / "baseline.json"
+    save_evaluation_report(baseline, baseline_path)
+
+    stdout, stderr = StringIO(), StringIO()
+    code = run_cli(
+        parse_arguments(["--dataset", "suite.json", "--baseline", str(baseline_path), "--json"]),
+        stdout=stdout,
+        stderr=stderr,
+        load_dataset=lambda _path: object(),
+        runner_context_factory=_runner_context_for(current),
+    )
+    payload = json.loads(stdout.getvalue())
+
+    assert code == EvaluationCliExitCode.SUCCESS
+    assert payload["run"]["id"] == "current-run"
+    assert payload["comparison"]["baseline_run_id"] == "baseline-run"
+    assert "Evaluation completed" not in stdout.getvalue()
+    assert stderr.getvalue() == ""
+
+
+@pytest.mark.parametrize(
+    "baseline_kind",
+    ["missing", "invalid", "unsupported", "duplicate", "incompatible"],
+)
+def test_baseline_loading_and_compatibility_errors_use_exit_code_7_and_stderr(
+    tmp_path, baseline_kind
+):
+    baseline_path = tmp_path / "baseline.json"
+    if baseline_kind == "invalid":
+        baseline_path.write_text("not json", encoding="utf-8")
+    elif baseline_kind == "unsupported":
+        baseline_path.write_text('{"schema_version":"2.0"}', encoding="utf-8")
+    elif baseline_kind == "duplicate":
+        payload = _run(
+            results=[
+                _result("duplicate", EvaluationCaseStatus.PASSED),
+                _result("other", EvaluationCaseStatus.PASSED),
+            ]
+        ).model_dump(mode="json")
+        payload["results"][1]["case_id"] = "duplicate"
+        baseline_path.write_text(json.dumps(payload), encoding="utf-8")
+    elif baseline_kind == "incompatible":
+        save_evaluation_report(
+            _run().model_copy(update={"dataset_name": "other-dataset"}), baseline_path
+        )
+
+    stdout, stderr = StringIO(), StringIO()
+    code = run_cli(
+        parse_arguments(["--dataset", "suite.json", "--baseline", str(baseline_path)]),
+        stdout=stdout,
+        stderr=stderr,
+        load_dataset=lambda _path: object(),
+        runner_context_factory=_runner_context_for(_run()),
+    )
+
+    assert code == EvaluationCliExitCode.COMPARISON_ERROR
+    assert "Baseline comparison could not be performed" in stderr.getvalue()
+    assert "regression detected" not in stderr.getvalue().lower()
+    assert "Evaluation completed" in stdout.getvalue()
+
+
+def test_report_error_precedes_an_unreadable_requested_baseline(tmp_path):
+    report_path = tmp_path / "existing.json"
+    report_path.write_text("keep", encoding="utf-8")
+
+    code = run_cli(
+        parse_arguments(
+            [
+                "--dataset",
+                "suite.json",
+                "--baseline",
+                str(tmp_path / "missing-baseline.json"),
+                "--report",
+                str(report_path),
+            ]
+        ),
+        stdout=StringIO(),
+        stderr=StringIO(),
+        load_dataset=lambda _path: object(),
+        runner_context_factory=_runner_context_for(_run()),
+    )
+
+    assert code == EvaluationCliExitCode.REPORT_ERROR
+    assert report_path.read_text(encoding="utf-8") == "keep"
+
+
+def test_report_is_saved_before_comparison_and_baseline_is_unchanged(tmp_path):
+    baseline_path = tmp_path / "baseline.json"
+    report_path = tmp_path / "current.json"
+    save_evaluation_report(_run().model_copy(update={"id": "baseline"}), baseline_path)
+    baseline_before = baseline_path.read_bytes()
+    current = _run().model_copy(update={"id": "current"})
+
+    stdout, stderr = StringIO(), StringIO()
+    code = run_cli(
+        parse_arguments(
+            [
+                "--dataset",
+                "suite.json",
+                "--baseline",
+                str(baseline_path),
+                "--report",
+                str(report_path),
+                "--json",
+            ]
+        ),
+        stdout=stdout,
+        stderr=stderr,
+        load_dataset=lambda _path: object(),
+        runner_context_factory=_runner_context_for(current),
+    )
+
+    assert code == EvaluationCliExitCode.SUCCESS
+    assert json.loads(report_path.read_text(encoding="utf-8"))["id"] == "current"
+    assert baseline_path.read_bytes() == baseline_before
+    assert json.loads(stdout.getvalue())["comparison"]["compatible"] is True
+    assert f"Report saved to: {report_path}" in stderr.getvalue()
 
 
 def test_report_error_takes_precedence_and_does_not_claim_success(tmp_path):

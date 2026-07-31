@@ -323,10 +323,14 @@ Exit codes are stable:
 | 4 | The run completed with one or more case execution errors. |
 | 5 | Service bootstrap or run-level execution failed. |
 | 6 | A run was returned, but explicitly requested report persistence failed. |
+| 7 | The baseline could not be loaded or the runs were incompatible. |
+| 8 | A configured baseline regression gate failed. |
 
 Case execution errors take precedence over deterministic failures. Some skipped cases do not fail a
 run when all evaluated cases pass. A report error takes precedence over the evaluation outcome
-because an explicitly requested artifact was not produced.
+because an explicitly requested artifact was not produced. When baseline comparison is requested,
+the full precedence is usage (2), dataset (3), unusable run (5), report persistence (6), comparison
+error (7), regression (8), case execution error (4), deterministic failure (1), then success (0).
 
 Without a report flag, the CLI keeps each run in memory and creates no files or report directory.
 It performs no baseline comparison and intentionally does not modify the dataset or application
@@ -407,5 +411,106 @@ according to the application's data-classification requirements. Persistence nev
 environment variables, tokens, service objects, database URLs, HTTP headers, cookies, or raw stack
 traces.
 
-Report comparison, regression thresholds, trends, discovery, retention, signing, remote storage,
-and baseline semantics are deliberately outside this package boundary.
+## Baseline comparison and regression gates
+
+`compare_evaluation_runs` compares two terminal `EvaluationRun` objects without executing services,
+recalculating metrics, modifying either run, or writing files. `compare_evaluation_report_files` is
+a thin convenience wrapper that loads both inputs through `load_evaluation_report`. A baseline is
+always read-only: comparison never rewrites, upgrades, publishes, or promotes it, and this work does
+not add CI workflow wiring or automatic baseline management.
+
+The fixed quality-metric set is Precision@K, Recall@K, retrieval hit rate, mean reciprocal rank,
+and answer pass rate. All are explicitly higher-is-better. Stored comparison values retain their
+full float precision. A signed delta is `current - baseline`; an absolute drop is
+`max(baseline - current, 0)`. Aggregate decreases are reported without failing by default. An
+absolute threshold fails only when the drop is strictly greater than the configured allowance, so
+a drop exactly equal to the threshold passes; a central `1e-12` epsilon prevents binary float noise
+at that boundary. Programmatic relative thresholds use decimal ratios
+and calculate `(baseline - current) / abs(baseline)` only for a decrease. A zero baseline has a
+relative drop of `0.0`; when both absolute and relative thresholds are configured, exceeding either
+one fails the metric gate. The CLI intentionally exposes the smaller absolute-threshold surface;
+relative thresholds remain available through `EvaluationRegressionPolicy`.
+
+Missing values stay missing rather than becoming zero. A baseline `None` and current value is a
+newly evaluable metric. A baseline value and current `None` is a became-unevaluable condition and
+fails only when that metric has a configured threshold. Two `None` values are not comparable.
+
+Compatibility requires equal report schema versions, dataset names, and retrieval depths by
+default, as well as terminal run statuses, summaries, and unique case IDs. Dataset-version drift is
+allowed with a warning because added and removed cases often represent an intentional dataset
+revision; `--require-same-dataset-version` makes it an error. `--allow-different-retrieval-k`
+permits depth drift with a warning. Failed terminal runs remain comparable with warnings. Changes
+to complete-source recall or answer-evaluation semantics are also surfaced as warnings. Run IDs and
+timestamps need not match.
+
+Cases use `EvaluationCaseResult.case_id`, preserve current-run order for shared and added cases, and
+append removed cases in baseline order. Every pass/fail/error/skip transition is represented
+explicitly. Passed-to-failed and skipped-to-failed cases are newly failed; any shared non-error to
+error transition is newly errored. Failed/error/skipped to passed cases are recovered. Error to
+failed is marked as a partial improvement but is not recovered. Added failing and errored cases
+fail the default comparison gate because the current suite is unhealthy; added passing or skipped
+cases and all removed cases are reported without failing by default. `--fail-on-added-cases` and
+`--fail-on-removed-cases` make coverage drift strict. `--allow-new-failures` and
+`--allow-new-errors` disable the corresponding shared-case gate.
+
+Run a basic comparison:
+
+```bash
+python -m assistant.evaluation \
+  --dataset examples/evaluation/example-dataset.json \
+  --baseline evaluation-baselines/main.json
+```
+
+Configure maximum absolute metric drops as decimal ratios (for example, `0.02` is two percentage
+points for a ratio metric):
+
+```bash
+python -m assistant.evaluation \
+  --dataset examples/evaluation/example-dataset.json \
+  --baseline evaluation-baselines/main.json \
+  --max-recall-drop 0.02 \
+  --max-mrr-drop 0.01 \
+  --max-answer-pass-rate-drop 0.03 \
+  --fail-on-removed-cases
+```
+
+Human output adds one comparison section after the current run summary. With both `--json` and
+`--baseline`, standard output remains one valid document with `run` and `comparison` keys. Without
+`--baseline`, the established JSON contract remains the serialized `EvaluationRun` directly.
+Saving with `--report` or `--report-dir` persists only the current run; comparison output is not
+saved and the baseline is not touched.
+
+Programmatic absolute and relative thresholds can be combined:
+
+```python
+from assistant.evaluation import (
+    EvaluationRegressionPolicy,
+    MetricRegressionThreshold,
+    compare_evaluation_runs,
+    load_evaluation_report,
+)
+
+baseline = load_evaluation_report("evaluation-baselines/main.json")
+current = load_evaluation_report("evaluation-reports/current.json")
+policy = EvaluationRegressionPolicy(
+    metric_thresholds={
+        "retrieval_recall_at_k": MetricRegressionThreshold(
+            maximum_absolute_drop=0.02,
+            maximum_relative_drop=0.05,
+        ),
+        "answer_pass_rate": MetricRegressionThreshold(maximum_absolute_drop=0.03),
+    }
+)
+comparison = compare_evaluation_runs(
+    baseline=baseline,
+    current=current,
+    policy=policy,
+)
+print(comparison.regressed)
+print(comparison.newly_failed_case_ids)
+```
+
+Comparison detects dataset-version and case-set drift but cannot detect changed expectations under
+an unchanged case ID because persisted case results do not currently contain a case fingerprint.
+Trend history, statistical significance, baseline uploads/downloads, remote storage, dashboards,
+and automatic threshold tuning remain outside this package boundary.
