@@ -28,6 +28,11 @@ from assistant.evaluation.models import (
     EvaluationRun,
     EvaluationRunStatus,
 )
+from assistant.evaluation.reporting import (
+    EvaluationReportError,
+    save_evaluation_report,
+    save_evaluation_report_to_directory,
+)
 from assistant.evaluation.runner import EvaluationRunner, EvaluationRunOptions
 from infrastructure.ai.exceptions import AIConfigurationError
 
@@ -41,6 +46,7 @@ class EvaluationCliExitCode(IntEnum):
     DATASET_ERROR = 3
     CASE_EXECUTION_ERROR = 4
     RUN_ERROR = 5
+    REPORT_ERROR = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +62,9 @@ class CliArguments:
     skip_citation_validation: bool
     json: bool
     pretty: bool
+    report: str | None
+    report_dir: str | None
+    overwrite_report: bool
 
 
 DatasetLoader = Callable[[str | Path], EvaluationDataset]
@@ -81,7 +90,8 @@ def _parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Exit codes: 0 all evaluated cases passed; 1 evaluation failures or all skipped; "
-            "2 invalid usage; 3 dataset error; 4 case execution error; 5 run failure."
+            "2 invalid usage; 3 dataset error; 4 case execution error; 5 run failure; "
+            "6 requested report persistence failed."
         ),
     )
     parser.add_argument(
@@ -141,6 +151,22 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Indent JSON output; valid only together with --json.",
     )
+    report_destination = parser.add_mutually_exclusive_group()
+    report_destination.add_argument(
+        "--report",
+        metavar="PATH",
+        help="Save the complete run to exactly this report path.",
+    )
+    report_destination.add_argument(
+        "--report-dir",
+        metavar="PATH",
+        help="Create this directory and save a report with a generated filename.",
+    )
+    parser.add_argument(
+        "--overwrite-report",
+        action="store_true",
+        help="Replace an existing requested report; requires --report or --report-dir.",
+    )
     return parser
 
 
@@ -151,6 +177,8 @@ def parse_arguments(argv: Sequence[str] | None = None) -> CliArguments:
     namespace = parser.parse_args(argv)
     if namespace.pretty and not namespace.json:
         parser.error("--pretty requires --json")
+    if namespace.overwrite_report and not (namespace.report or namespace.report_dir):
+        parser.error("--overwrite-report requires --report or --report-dir")
     return CliArguments(**vars(namespace))
 
 
@@ -352,6 +380,26 @@ def run_cli(
         rendered = render_evaluation_summary(run)
         failures = render_case_failures(run)
         print(f"{rendered}\n\n{failures}" if failures else rendered, file=output_stream)
+
+    if arguments.report is not None or arguments.report_dir is not None:
+        try:
+            if arguments.report is not None:
+                report_path = save_evaluation_report(
+                    run,
+                    arguments.report,
+                    overwrite=arguments.overwrite_report,
+                )
+            else:
+                report_path = save_evaluation_report_to_directory(
+                    run,
+                    output_dir=arguments.report_dir or "",
+                    overwrite=arguments.overwrite_report,
+                )
+        except EvaluationReportError as exc:
+            print(f"Unable to save evaluation report: {exc}", file=error_stream)
+            return EvaluationCliExitCode.REPORT_ERROR
+        confirmation_stream = error_stream if arguments.json else output_stream
+        print(f"Report saved to: {report_path}", file=confirmation_stream)
     return exit_code
 
 
