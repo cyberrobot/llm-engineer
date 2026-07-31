@@ -1,20 +1,38 @@
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import psycopg
 import pytest
+from psycopg import sql
 
-from assistant.application.knowledge_persistence_service import KnowledgePersistenceService
+from assistant.application.knowledge_persistence_service import (
+    IngestionPersistenceConflictError,
+    KnowledgePersistenceService,
+)
 from assistant.domain.content_processing_result import ContentProcessingResult
+from assistant.domain.document_ingestion_job import DocumentIngestionJob
 from assistant.domain.knowledge_chunk import KnowledgeChunk
-from assistant.domain.knowledge_persistence import KnowledgeDocumentRecord, PersistedKnowledgeChunk
+from assistant.domain.knowledge_persistence import (
+    KnowledgeDocumentRecord,
+    PersistedKnowledgeChunk,
+    PersistenceMode,
+)
+from assistant.infrastructure.repositories.document_ingestion_job import (
+    PostgresDocumentIngestionJobRepository,
+)
 from assistant.infrastructure.repositories.knowledge_persistence import (
     PostgresKnowledgePersistenceRepository,
 )
 from assistant.infrastructure.vector_store.pgvector import PgVectorStore
 from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS
 from infrastructure.database.connection import get_connection, init_db
+from infrastructure.database.migrations.transactional_ingestion_persistence import (
+    downgrade as downgrade_transactional_persistence,
+)
+from infrastructure.database.migrations.transactional_ingestion_persistence import (
+    upgrade as upgrade_transactional_persistence,
+)
 
 
 class DeterministicEmbeddingProvider:
@@ -237,3 +255,229 @@ def test_concurrent_duplicate_writes_leave_one_document_and_one_chunk():
         assert counts == (1, 1)
     finally:
         delete_document(source_url)
+
+
+class FailBeforeCommitRepository(PostgresKnowledgePersistenceRepository):
+    @contextmanager
+    def transaction(self):
+        with super().transaction() as transaction:
+
+            class FailBeforeCommit:
+                def __getattr__(self, name):
+                    return getattr(transaction, name)
+
+                def record_committed_result(self, command, result):
+                    transaction.record_committed_result(command, result)
+                    raise RuntimeError("injected failure after representation activation")
+
+            yield FailBeforeCommit()
+
+
+def test_pipeline_persistence_rolls_back_reindex_and_replays_one_committed_result():
+    require_database()
+    init_db()
+    source_url = f"https://example.com/transaction-{uuid4()}"
+    document_id = str(uuid4())
+    provider = DeterministicEmbeddingProvider()
+
+    try:
+        with get_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO documents (id, doc_type, access_roles, status, source_url, title, content_hash)
+                VALUES (%s, 'website', '[\"user\"]'::jsonb, 'indexed', %s, 'Old', 'v1')
+                """,
+                (document_id, source_url),
+            )
+            connection.execute(
+                """
+                INSERT INTO chunks (id, doc_id, text, embedding, access_roles, sequence, content_hash)
+                VALUES (%s, %s, 'Old active knowledge', %s, '[\"user\"]'::jsonb, 0, 'v1-chunk-0')
+                """,
+                (
+                    str(uuid4()),
+                    document_id,
+                    [1.0] + [0.0] * (EMBEDDING_VECTOR_DIMENSIONS - 1),
+                ),
+            )
+        job = PostgresDocumentIngestionJobRepository().create(
+            DocumentIngestionJob.create(document_id)
+        )
+        failing_service = KnowledgePersistenceService(
+            provider,
+            FailBeforeCommitRepository(),
+            embedding_dimensions=EMBEDDING_VECTOR_DIMENSIONS,
+            embedding_batch_size=100,
+        )
+        prepared = failing_service.prepare(
+            processed(source_url, version="v2", texts=["New replacement knowledge"])
+        )
+        command = failing_service.create_command(
+            prepared,
+            ingestion_job_id=job.id,
+            document_id=document_id,
+            mode=PersistenceMode.reindex,
+        )
+        competing_job = PostgresDocumentIngestionJobRepository().create(
+            DocumentIngestionJob.create(document_id)
+        )
+        competing_prepared = failing_service.prepare(
+            processed(source_url, version="v3", texts=["Stale competing knowledge"]),
+            force_replace=True,
+        )
+        competing_command = failing_service.create_command(
+            competing_prepared,
+            ingestion_job_id=competing_job.id,
+            document_id=document_id,
+            mode=PersistenceMode.reindex,
+        )
+
+        with pytest.raises(Exception, match="could not be persisted"):
+            failing_service.persist_prepared(prepared, command=command)
+
+        with get_connection() as connection:
+            rolled_back = connection.execute(
+                """
+                SELECT documents.content_hash, chunks.text,
+                       (SELECT count(*) FROM ingestion_persistence_results
+                        WHERE ingestion_job_id = %s)
+                FROM documents JOIN chunks ON chunks.doc_id = documents.id
+                WHERE documents.id = %s
+                """,
+                (str(job.id), document_id),
+            ).fetchone()
+        assert rolled_back == ("v1", "Old active knowledge", 0)
+
+        healthy_service = KnowledgePersistenceService(
+            provider,
+            PostgresKnowledgePersistenceRepository(),
+            embedding_dimensions=EMBEDDING_VECTOR_DIMENSIONS,
+            embedding_batch_size=100,
+        )
+        committed = healthy_service.persist_prepared(prepared, command=command)
+        reconstructed = healthy_service.prepare(
+            processed(source_url, version="v2", texts=["New replacement knowledge"]),
+            force_replace=True,
+        )
+        replay_command = healthy_service.create_command(
+            reconstructed,
+            ingestion_job_id=job.id,
+            document_id=document_id,
+            mode=PersistenceMode.reindex,
+        )
+        assert replay_command.command_hash == command.command_hash
+        replayed = healthy_service.persist_prepared(reconstructed, command=replay_command)
+        with pytest.raises(IngestionPersistenceConflictError):
+            healthy_service.persist_prepared(competing_prepared, command=competing_command)
+
+        with get_connection() as connection:
+            final = connection.execute(
+                """
+                SELECT documents.content_hash, documents.last_ingestion_job_id,
+                       count(chunks.id), min(chunks.text),
+                       count(DISTINCT chunks.ingestion_job_id),
+                       (SELECT count(*) FROM ingestion_persistence_results
+                        WHERE ingestion_job_id IN (%s, %s))
+                FROM documents JOIN chunks ON chunks.doc_id = documents.id
+                WHERE documents.id = %s
+                GROUP BY documents.content_hash, documents.last_ingestion_job_id
+                """,
+                (str(job.id), str(competing_job.id), document_id),
+            ).fetchone()
+
+        assert replayed == committed
+        assert final == ("v2", str(job.id), 1, "New replacement knowledge", 1, 1)
+    finally:
+        if "job" in locals():
+            with suppress(Exception), get_connection() as connection:
+                connection.execute(
+                    "DELETE FROM ingestion_persistence_results WHERE ingestion_job_id = %s",
+                    (str(job.id),),
+                )
+                connection.execute(
+                    "DELETE FROM document_ingestion_jobs WHERE id = %s", (str(job.id),)
+                )
+                if "competing_job" in locals():
+                    connection.execute(
+                        "DELETE FROM document_ingestion_jobs WHERE id = %s",
+                        (str(competing_job.id),),
+                    )
+                connection.execute("DELETE FROM documents WHERE source_url = %s", (source_url,))
+        else:
+            delete_document(source_url)
+
+
+def test_transactional_persistence_migration_preserves_existing_index_and_is_reversible():
+    require_database()
+    schema = f"transactional_persistence_{uuid4().hex}"
+    connection = psycopg.connect(DATABASE_URL)
+    try:
+        connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+        connection.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+        connection.execute(
+            "CREATE TABLE documents (id TEXT PRIMARY KEY, source_url TEXT, content_hash TEXT)"
+        )
+        connection.execute(
+            """
+            CREATE TABLE document_ingestion_jobs (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL REFERENCES documents(id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE chunks (
+                id TEXT PRIMARY KEY,
+                doc_id TEXT NOT NULL REFERENCES documents(id),
+                text TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO documents VALUES ('legacy-document', 'https://example.com/legacy', 'v1')"
+        )
+        connection.execute(
+            "INSERT INTO chunks VALUES ('legacy-chunk', 'legacy-document', 'Legacy knowledge')"
+        )
+
+        upgrade_transactional_persistence(connection.cursor())
+        legacy = connection.execute(
+            """
+            SELECT documents.last_ingestion_job_id, chunks.ingestion_job_id, chunks.text
+            FROM documents JOIN chunks ON chunks.doc_id = documents.id
+            WHERE documents.id = 'legacy-document'
+            """
+        ).fetchone()
+        assert legacy == (None, None, "Legacy knowledge")
+
+        downgrade_transactional_persistence(connection.cursor())
+        downgraded_columns = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = %s AND table_name IN ('documents', 'chunks')
+                """,
+                (schema,),
+            ).fetchall()
+        }
+        assert "last_ingestion_job_id" not in downgraded_columns
+        assert "ingestion_job_id" not in downgraded_columns
+        assert connection.execute(
+            "SELECT text FROM chunks WHERE id = 'legacy-chunk'"
+        ).fetchone() == ("Legacy knowledge",)
+
+        upgrade_transactional_persistence(connection.cursor())
+        assert (
+            connection.execute("SELECT to_regclass('ingestion_persistence_results')").fetchone()[0]
+            is not None
+        )
+        connection.commit()
+    finally:
+        connection.rollback()
+        connection.execute(
+            sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+        )
+        connection.commit()
+        connection.close()

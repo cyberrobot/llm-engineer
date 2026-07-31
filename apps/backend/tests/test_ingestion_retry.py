@@ -10,6 +10,11 @@ from assistant.application.ingestion_retry import (
     IngestionFailureClassifier,
     IngestionRetryPolicy,
 )
+from assistant.application.knowledge_persistence_service import (
+    IngestionPersistenceConflictError,
+    IngestionPersistenceTransientError,
+    InvalidKnowledgeInputError,
+)
 from assistant.application.ports.website_loader import (
     InvalidWebsiteUrl,
     WebsiteHTTPStatusError,
@@ -55,6 +60,11 @@ from infrastructure.ai.exceptions import (
             FailureCategory.database_transient,
             "ingestion_database_transient_error",
         ),
+        (
+            IngestionPersistenceTransientError("private database detail"),
+            FailureCategory.database_transient,
+            "ingestion_persistence_transient_error",
+        ),
     ],
 )
 def test_classifier_maps_typed_transient_failures_without_leaking_messages(error, category, code):
@@ -88,6 +98,16 @@ def test_classifier_maps_typed_transient_failures_without_leaking_messages(error
             ValueError("private validation"),
             FailureCategory.validation,
             "ingestion_validation_error",
+        ),
+        (
+            InvalidKnowledgeInputError("private validation"),
+            FailureCategory.validation,
+            "invalid_ingestion_persistence_input",
+        ),
+        (
+            IngestionPersistenceConflictError("private constraint"),
+            FailureCategory.database_permanent,
+            "ingestion_persistence_conflict",
         ),
         (RuntimeError("private bug"), FailureCategory.unexpected, "unexpected_ingestion_error"),
     ],

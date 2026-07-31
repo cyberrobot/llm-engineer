@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Literal
@@ -69,10 +70,18 @@ class InMemoryKnowledgePersistenceRepository:
     def find_document_by_source_url(self, source_url: str) -> KnowledgeDocumentRecord | None:
         return self.documents.get(source_url)
 
+    @contextmanager
+    def transaction(self):
+        yield self
+
     def replace_document(
         self,
         document: KnowledgeDocumentRecord,
         chunks: list[PersistedKnowledgeChunk],
+        *,
+        ingestion_job_id=None,
+        expected_previous_content_hash=None,
+        force_replace=False,
     ) -> KnowledgeWriteResult:
         if self.error is not None:
             raise self.error
@@ -92,6 +101,15 @@ class InMemoryKnowledgePersistenceRepository:
             replace(item, access_roles=document.access_roles) for item in current
         ]
         return KnowledgeWriteResult("updated", document.id, len(current))
+
+    def lock_ingestion_job(self, ingestion_job_id, document_id):
+        raise AssertionError("Synchronous website ingestion does not persist a pipeline job result")
+
+    def find_committed_result(self, ingestion_job_id):
+        return None
+
+    def record_committed_result(self, command, result):
+        raise AssertionError("Synchronous website ingestion does not persist a pipeline job result")
 
 
 class FailingWebsiteLoader:
