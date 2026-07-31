@@ -5,6 +5,7 @@ from dataclasses import asdict
 from typing import Any, Literal, cast
 from uuid import UUID
 
+from assistant.domain.assistant import DocumentRetrievalState
 from assistant.domain.knowledge_persistence import (
     CommittedIngestionResult,
     KnowledgeDocumentRecord,
@@ -25,16 +26,19 @@ class PostgresKnowledgePersistenceRepository(KnowledgePersistenceRepository):
     def __init__(self, connection_factory: Callable[[], Any] = get_connection) -> None:
         self._connection_factory = connection_factory
 
-    def find_document_by_source_url(self, source_url: str) -> KnowledgeDocumentRecord | None:
+    def find_document_by_source_url(
+        self, source_url: str, *, assistant_id: UUID
+    ) -> KnowledgeDocumentRecord | None:
         with self._connection_factory() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, source_url, title, content_hash, access_roles
+                    SELECT id, source_url, title, content_hash, access_roles,
+                           assistant_id, retrieval_state
                     FROM documents
-                    WHERE source_url = %s
+                    WHERE source_url = %s AND assistant_id = %s
                     """,
-                    (source_url,),
+                    (source_url, str(assistant_id)),
                 )
                 row = cursor.fetchone()
         return self._map_document(row) if row else None
@@ -76,10 +80,12 @@ class PostgresKnowledgePersistenceRepository(KnowledgePersistenceRepository):
         roles = cast(list[str], row[4])
         return KnowledgeDocumentRecord(
             id=str(row[0]),
+            assistant_id=UUID(str(row[5])),
             source_url=str(row[1]),
             title=str(row[2]) if row[2] is not None else None,
             content_hash=str(row[3]),
             access_roles=tuple(roles),
+            retrieval_state=DocumentRetrievalState(row[6]),
         )
 
 
@@ -128,17 +134,18 @@ class PostgresKnowledgePersistenceTransaction(KnowledgePersistenceTransaction):
         cursor = self._cursor
         # Serialize writers for one source URL without holding locks during embedding generation.
         cursor.execute(
-            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (document.source_url,)
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"{document.assistant_id}:{document.source_url}",),
         )
         cursor.execute(
             """
                     SELECT id, source_url, title, content_hash, access_roles,
                            (SELECT count(*) FROM chunks WHERE doc_id = documents.id)
                     FROM documents
-                    WHERE source_url = %s
+                    WHERE source_url = %s AND assistant_id = %s
                     FOR UPDATE
                     """,
-            (document.source_url,),
+            (document.source_url, str(document.assistant_id)),
         )
         row = cursor.fetchone()
         previous_count = int(row[5]) if row else 0
@@ -170,7 +177,7 @@ class PostgresKnowledgePersistenceTransaction(KnowledgePersistenceTransaction):
                             access_roles = %s,
                             last_ingestion_job_id = %s,
                             updated_at = NOW()
-                        WHERE id = %s
+                        WHERE id = %s AND assistant_id = %s
                         """,
                 (
                     document.title,
@@ -178,6 +185,7 @@ class PostgresKnowledgePersistenceTransaction(KnowledgePersistenceTransaction):
                     json.dumps(document.access_roles),
                     job_id,
                     document_id,
+                    str(document.assistant_id),
                 ),
             )
             cursor.execute("DELETE FROM chunks WHERE doc_id = %s", (document_id,))
@@ -187,9 +195,9 @@ class PostgresKnowledgePersistenceTransaction(KnowledgePersistenceTransaction):
                 """
                         INSERT INTO documents (
                             id, doc_type, access_roles, status, source_url, title, content_hash,
-                            last_ingestion_job_id
+                            last_ingestion_job_id, assistant_id, retrieval_state
                         )
-                        VALUES (%s, 'website', %s, 'indexed', %s, %s, %s, %s)
+                        VALUES (%s, 'website', %s, 'indexed', %s, %s, %s, %s, %s, %s)
                         """,
                 (
                     document_id,
@@ -198,6 +206,8 @@ class PostgresKnowledgePersistenceTransaction(KnowledgePersistenceTransaction):
                     document.title,
                     document.content_hash,
                     job_id,
+                    str(document.assistant_id),
+                    document.retrieval_state.value,
                 ),
             )
 
@@ -205,9 +215,9 @@ class PostgresKnowledgePersistenceTransaction(KnowledgePersistenceTransaction):
             """
                     INSERT INTO chunks (
                         id, doc_id, text, embedding, access_roles,
-                        sequence, content_hash, heading_path, ingestion_job_id
+                        sequence, content_hash, heading_path, ingestion_job_id, assistant_id
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
             [
                 (
@@ -220,6 +230,7 @@ class PostgresKnowledgePersistenceTransaction(KnowledgePersistenceTransaction):
                     item.content_hash,
                     json.dumps(item.heading_path),
                     job_id,
+                    str(item.assistant_id),
                 )
                 for item in chunks
             ],
@@ -237,17 +248,17 @@ class PostgresKnowledgePersistenceTransaction(KnowledgePersistenceTransaction):
         cursor = self._cursor
         cursor.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-            (document.source_url,),
+            (f"{document.assistant_id}:{document.source_url}",),
         )
         cursor.execute(
             """
                     SELECT id, content_hash,
                            (SELECT count(*) FROM chunks WHERE doc_id = documents.id)
                     FROM documents
-                    WHERE source_url = %s
+                    WHERE source_url = %s AND assistant_id = %s
                     FOR UPDATE
                     """,
-            (document.source_url,),
+            (document.source_url, str(document.assistant_id)),
         )
         row = cursor.fetchone()
         if not row or str(row[1]) != document.content_hash:
@@ -258,17 +269,22 @@ class PostgresKnowledgePersistenceTransaction(KnowledgePersistenceTransaction):
             """
                     UPDATE documents
                     SET title = %s, access_roles = %s, updated_at = NOW()
-                    WHERE id = %s
+                    WHERE id = %s AND assistant_id = %s
                     """,
-            (document.title, json.dumps(document.access_roles), document_id),
+            (
+                document.title,
+                json.dumps(document.access_roles),
+                document_id,
+                str(document.assistant_id),
+            ),
         )
         cursor.execute(
             """
                     UPDATE chunks
                     SET access_roles = %s, updated_at = NOW()
-                    WHERE doc_id = %s
+                    WHERE doc_id = %s AND assistant_id = %s
                     """,
-            (json.dumps(document.access_roles), document_id),
+            (json.dumps(document.access_roles), document_id, str(document.assistant_id)),
         )
         return KnowledgeWriteResult(
             action="updated",

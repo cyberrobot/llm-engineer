@@ -88,8 +88,9 @@ ContentProcessingResult -> duplicate check -> batch embeddings
 ```
 
 Website documents are identified by their normalized source URL and retain the deterministic
-document and chunk hashes produced by content processing. A unique partial index on document source
-URL prevents duplicate website records without affecting existing uploaded documents. Unique
+document and chunk hashes produced by content processing. A unique partial index on assistant and
+document source URL prevents duplicate website records within one assistant without preventing the
+same source from belonging to another assistant. Unique
 document/sequence and document/chunk-hash indexes reinforce chunk idempotency. Source URL, title,
 heading path, access roles, and the fixed 1536-dimensional vector are stored alongside the existing
 retrieval fields.
@@ -578,3 +579,21 @@ ruff check .
 ruff format --check .
 python -m mypy .
 ```
+
+## Assistant-scoped knowledge
+
+Knowledge is partitioned by the persistent `Assistant` domain entity. The built-in initial
+assistant has the stable slug `redmoor`, active status, and public visibility. Status and
+visibility are independent persisted values; low-level retrieval does not interpret either as
+an authorization policy.
+
+The database bootstrap creates Redmoor idempotently and backfills existing documents and chunks
+to it without changing their identifiers or content. Every new document and chunk requires an
+assistant ID. Chunk writes are protected by a composite document/assistant foreign key, and
+assistant deletion is restricted while knowledge still references it.
+
+Documents also have an independent `retrieval_state` (`enabled` or `disabled`). Both pgvector and
+hybrid retrieval filter candidates inside SQL by assistant ID and include only enabled documents.
+Application ingestion and existing chat entry points explicitly bind to the built-in Redmoor ID;
+new internal persistence or retrieval callers must supply an assistant scope rather than querying
+the global knowledge base.

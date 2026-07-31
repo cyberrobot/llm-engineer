@@ -7,6 +7,7 @@ import pytest
 from psycopg import sql
 
 from assistant.application.ingestion_job_service import DocumentIngestionJobService
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.document_ingestion_job import DocumentIngestionJob, IngestionStep
 from assistant.infrastructure.repositories.document_ingestion_job import (
     PostgresDocumentIngestionJobRepository,
@@ -39,7 +40,9 @@ def require_database() -> None:
 def create_document(document_id: str) -> None:
     with get_connection() as connection:
         connection.execute(
-            "INSERT INTO documents (id, doc_type) VALUES (%s, 'test')", (document_id,)
+            """INSERT INTO documents (id, doc_type, assistant_id)
+               VALUES (%s, 'test', %s)""",
+            (document_id, str(REDMOOR_ASSISTANT_ID)),
         )
 
 

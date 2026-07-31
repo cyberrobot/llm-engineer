@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -13,6 +13,7 @@ from assistant.application.knowledge_persistence_service import (
     KnowledgePersistenceError,
     KnowledgePersistenceService,
 )
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.content_processing_result import ContentProcessingResult
 from assistant.domain.knowledge_chunk import KnowledgeChunk
 from assistant.domain.knowledge_persistence import (
@@ -106,7 +107,9 @@ class FakeKnowledgePersistenceRepository:
             command.ingestion_job_id, command.document_id, command.command_hash, result
         )
 
-    def find_document_by_source_url(self, source_url: str) -> KnowledgeDocumentRecord | None:
+    def find_document_by_source_url(
+        self, source_url: str, *, assistant_id=REDMOOR_ASSISTANT_ID
+    ) -> KnowledgeDocumentRecord | None:
         return self.documents.get(source_url)
 
     def replace_document(
@@ -173,6 +176,7 @@ def service(
         KnowledgePersistenceService(
             provider,
             repository,
+            assistant_id=REDMOOR_ASSISTANT_ID,
             embedding_dimensions=3,
             embedding_batch_size=batch_size,
         ),
@@ -306,6 +310,22 @@ def test_rejects_empty_access_roles_before_embedding_or_persistence():
         persistence.persist(result(chunk()), access_roles=())
 
     assert provider.calls == []
+    assert repository.writes == []
+
+
+def test_rejects_chunk_whose_assistant_differs_from_its_document():
+    persistence, _provider, repository = service()
+    prepared = persistence.prepare(result(chunk()))
+    prepared_document = prepared.documents[0]
+    mismatched_chunk = replace(prepared_document.chunks[0], assistant_id=uuid4())
+    mismatched = replace(
+        prepared,
+        documents=(replace(prepared_document, chunks=(mismatched_chunk,)),),
+    )
+
+    with pytest.raises(InvalidKnowledgeInputError, match="assistant association"):
+        persistence.persist_prepared(mismatched)
+
     assert repository.writes == []
 
 

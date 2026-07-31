@@ -10,6 +10,7 @@ from assistant.application.knowledge_persistence_service import (
     IngestionPersistenceConflictError,
     KnowledgePersistenceService,
 )
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.content_processing_result import ContentProcessingResult
 from assistant.domain.document_ingestion_job import DocumentIngestionJob
 from assistant.domain.knowledge_chunk import KnowledgeChunk
@@ -94,6 +95,7 @@ def test_processed_knowledge_is_idempotent_retrievable_and_replaces_stale_chunks
     service = KnowledgePersistenceService(
         provider,
         repository,
+        assistant_id=REDMOOR_ASSISTANT_ID,
         embedding_dimensions=EMBEDDING_VECTOR_DIMENSIONS,
         embedding_batch_size=100,
     )
@@ -114,6 +116,7 @@ def test_processed_knowledge_is_idempotent_retrievable_and_replaces_stale_chunks
 
         records = PgVectorStore().similarity_search(
             [1.0] + [0.0] * (EMBEDDING_VECTOR_DIMENSIONS - 1),
+            assistant_id=REDMOOR_ASSISTANT_ID,
             limit=50,
             min_score=0.99,
         )
@@ -173,6 +176,7 @@ def test_repository_rolls_back_document_when_chunk_insert_fails():
     repository = PostgresKnowledgePersistenceRepository()
     document = KnowledgeDocumentRecord(
         id=str(uuid4()),
+        assistant_id=REDMOOR_ASSISTANT_ID,
         source_url=source_url,
         title="Rollback guide",
         content_hash="rollback-v1",
@@ -182,6 +186,7 @@ def test_repository_rolls_back_document_when_chunk_insert_fails():
     chunks = [
         PersistedKnowledgeChunk(
             id=duplicate_id,
+            assistant_id=REDMOOR_ASSISTANT_ID,
             document_id=document.id,
             sequence=index,
             text=f"Chunk {index}",
@@ -220,6 +225,7 @@ def test_concurrent_duplicate_writes_leave_one_document_and_one_chunk():
         repository = PostgresKnowledgePersistenceRepository()
         document = KnowledgeDocumentRecord(
             id=str(uuid4()),
+            assistant_id=REDMOOR_ASSISTANT_ID,
             source_url=source_url,
             title="Concurrent guide",
             content_hash="concurrent-v1",
@@ -227,6 +233,7 @@ def test_concurrent_duplicate_writes_leave_one_document_and_one_chunk():
         )
         item = PersistedKnowledgeChunk(
             id=str(uuid5(NAMESPACE_URL, f"{source_url}\0chunk")),
+            assistant_id=REDMOOR_ASSISTANT_ID,
             document_id=document.id,
             sequence=0,
             text="Concurrent persistence knowledge",
@@ -284,20 +291,25 @@ def test_pipeline_persistence_rolls_back_reindex_and_replays_one_committed_resul
         with get_connection() as connection:
             connection.execute(
                 """
-                INSERT INTO documents (id, doc_type, access_roles, status, source_url, title, content_hash)
-                VALUES (%s, 'website', '[\"user\"]'::jsonb, 'indexed', %s, 'Old', 'v1')
+                INSERT INTO documents (
+                    id, doc_type, access_roles, status, source_url, title, content_hash, assistant_id
+                ) VALUES (%s, 'website', '[\"user\"]'::jsonb, 'indexed', %s, 'Old', 'v1', %s)
                 """,
-                (document_id, source_url),
+                (document_id, source_url, str(REDMOOR_ASSISTANT_ID)),
             )
             connection.execute(
                 """
-                INSERT INTO chunks (id, doc_id, text, embedding, access_roles, sequence, content_hash)
-                VALUES (%s, %s, 'Old active knowledge', %s, '[\"user\"]'::jsonb, 0, 'v1-chunk-0')
+                INSERT INTO chunks (
+                    id, doc_id, text, embedding, access_roles, sequence, content_hash, assistant_id
+                ) VALUES (
+                    %s, %s, 'Old active knowledge', %s, '[\"user\"]'::jsonb, 0, 'v1-chunk-0', %s
+                )
                 """,
                 (
                     str(uuid4()),
                     document_id,
                     [1.0] + [0.0] * (EMBEDDING_VECTOR_DIMENSIONS - 1),
+                    str(REDMOOR_ASSISTANT_ID),
                 ),
             )
         job = PostgresDocumentIngestionJobRepository().create(
@@ -306,6 +318,7 @@ def test_pipeline_persistence_rolls_back_reindex_and_replays_one_committed_resul
         failing_service = KnowledgePersistenceService(
             provider,
             FailBeforeCommitRepository(),
+            assistant_id=REDMOOR_ASSISTANT_ID,
             embedding_dimensions=EMBEDDING_VECTOR_DIMENSIONS,
             embedding_batch_size=100,
         )
@@ -351,6 +364,7 @@ def test_pipeline_persistence_rolls_back_reindex_and_replays_one_committed_resul
         healthy_service = KnowledgePersistenceService(
             provider,
             PostgresKnowledgePersistenceRepository(),
+            assistant_id=REDMOOR_ASSISTANT_ID,
             embedding_dimensions=EMBEDDING_VECTOR_DIMENSIONS,
             embedding_batch_size=100,
         )

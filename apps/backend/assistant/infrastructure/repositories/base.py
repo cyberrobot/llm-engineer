@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from uuid import UUID
 
 from assistant.domain import KnowledgeChunk
 
@@ -11,6 +12,7 @@ class KnowledgeRepository(ABC):
         self,
         query_embedding: list[float],
         *,
+        assistant_id: UUID,
         limit: int,
         min_score: float,
     ) -> list[KnowledgeChunk]:

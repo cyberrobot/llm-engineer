@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from assistant.domain import KnowledgeChunk
 from assistant.infrastructure.repositories import KnowledgeRepository
 from infrastructure.ai.providers import AIProvider
@@ -11,6 +13,7 @@ class RetrievalService:
         embedding_provider: AIProvider,
         knowledge_repository: KnowledgeRepository,
         *,
+        assistant_id: UUID,
         limit: int = 3,
         min_score: float = 0.7,
     ) -> None:
@@ -20,6 +23,7 @@ class RetrievalService:
             raise ValueError("Minimum similarity score must be between -1 and 1")
         self._embedding_provider = embedding_provider
         self._knowledge_repository = knowledge_repository
+        self._assistant_id = assistant_id
         self._limit = limit
         self._min_score = min_score
 
@@ -32,6 +36,7 @@ class RetrievalService:
             return []
         return self._knowledge_repository.find_relevant_chunks(
             embedding,
+            assistant_id=self._assistant_id,
             limit=self._limit,
             min_score=self._min_score,
         )

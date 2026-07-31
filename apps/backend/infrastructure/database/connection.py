@@ -1,6 +1,9 @@
 import psycopg
 
 from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS, get_database_settings
+from infrastructure.database.migrations.assistant_domain_scoping import (
+    upgrade as upgrade_assistant_domain_scoping,
+)
 from infrastructure.database.migrations.background_worker_execution import (
     upgrade as upgrade_background_worker_execution,
 )
@@ -138,6 +141,7 @@ def init_db():
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
+            upgrade_assistant_domain_scoping(cur)
             upgrade_transactional_ingestion_persistence(cur)
             upgrade_background_worker_execution(cur)
             upgrade_ingestion_observability(cur)
@@ -252,10 +256,6 @@ def init_db():
             cur.execute("""
                 ALTER TABLE chunks
                 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            """)
-            cur.execute("""
-                CREATE UNIQUE INDEX IF NOT EXISTS documents_source_url_unique_idx
-                ON documents(source_url) WHERE source_url IS NOT NULL
             """)
             cur.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS chunks_document_sequence_unique_idx

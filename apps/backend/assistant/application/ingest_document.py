@@ -1,5 +1,6 @@
 import uuid
 
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.infrastructure.storage import save_document_with_chunks
 from infrastructure.ai.embeddings import get_embeddings
 
@@ -21,7 +22,9 @@ def ingest_document(text: str, doc_type: str, access_roles: list[str]) -> dict:
         for chunk, embedding in zip(chunks, embeddings, strict=False)
     ]
 
-    save_document_with_chunks(doc_id, doc_type, access_roles, chunk_rows)
+    save_document_with_chunks(
+        doc_id, doc_type, access_roles, chunk_rows, assistant_id=REDMOOR_ASSISTANT_ID
+    )
 
     return {"doc_id": doc_id, "chunks_created": len(chunks)}
 

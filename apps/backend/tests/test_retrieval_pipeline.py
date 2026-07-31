@@ -1,7 +1,10 @@
+from uuid import uuid4
+
 from assistant.application.chat import ChatService
 from assistant.application.prompt_builder import SYSTEM_PROMPT, PromptBuilder
 from assistant.application.retrieval_service import RetrievalService
 from assistant.domain import KnowledgeChunk, KnowledgeDocument
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID, DocumentRetrievalState
 from assistant.infrastructure.repositories import VectorKnowledgeRepository
 from assistant.infrastructure.vector_store import (
     InMemoryVectorEntry,
@@ -64,7 +67,13 @@ def test_retrieval_ranks_similar_chunks_and_respects_threshold():
     repository = VectorKnowledgeRepository(store)
     provider = StubProvider([1.0, 0.0])
 
-    chunks = RetrievalService(provider, repository, limit=2, min_score=0.5).retrieve(" query ")
+    chunks = RetrievalService(
+        provider,
+        repository,
+        assistant_id=REDMOOR_ASSISTANT_ID,
+        limit=2,
+        min_score=0.5,
+    ).retrieve(" query ")
 
     assert provider.embedding_calls == ["query"]
     assert [chunk.id for chunk in chunks] == ["exact", "near"]
@@ -76,9 +85,46 @@ def test_retrieval_returns_empty_for_no_matching_knowledge():
         InMemoryVectorStore((entry("far", "doc", "Far source", (0.0, 1.0)),))
     )
 
-    chunks = RetrievalService(StubProvider(), repository, min_score=0.8).retrieve("question")
+    chunks = RetrievalService(
+        StubProvider(), repository, assistant_id=REDMOOR_ASSISTANT_ID, min_score=0.8
+    ).retrieve("question")
 
     assert chunks == []
+
+
+def test_retrieval_isolates_assistants_and_excludes_disabled_documents():
+    other_assistant = uuid4()
+    store = InMemoryVectorStore(
+        (
+            entry("redmoor", "redmoor-doc", "Redmoor", (1.0, 0.0)),
+            InMemoryVectorEntry(
+                record=entry("other", "other-doc", "Other", (1.0, 0.0)).record,
+                embedding=(1.0, 0.0),
+                assistant_id=other_assistant,
+            ),
+            InMemoryVectorEntry(
+                record=entry("disabled", "disabled-doc", "Disabled", (1.0, 0.0)).record,
+                embedding=(1.0, 0.0),
+                retrieval_state=DocumentRetrievalState.disabled,
+            ),
+        )
+    )
+
+    redmoor = RetrievalService(
+        StubProvider(),
+        VectorKnowledgeRepository(store),
+        assistant_id=REDMOOR_ASSISTANT_ID,
+        min_score=0.5,
+    ).retrieve("question")
+    other = RetrievalService(
+        StubProvider(),
+        VectorKnowledgeRepository(store),
+        assistant_id=other_assistant,
+        min_score=0.5,
+    ).retrieve("question")
+
+    assert [chunk.id for chunk in redmoor] == ["redmoor"]
+    assert [chunk.id for chunk in other] == ["other"]
 
 
 def test_prompt_builder_constructs_deterministic_grounded_prompt():
@@ -109,6 +155,7 @@ def test_chat_service_retrieves_builds_prompt_and_maps_unique_citations():
     retrieval = RetrievalService(
         provider,
         VectorKnowledgeRepository(store),
+        assistant_id=REDMOOR_ASSISTANT_ID,
         min_score=0.5,
     )
 
@@ -128,6 +175,7 @@ def test_chat_service_generates_from_supplied_context_without_retrieving_again()
     retrieval = RetrievalService(
         provider,
         VectorKnowledgeRepository(InMemoryVectorStore(())),
+        assistant_id=REDMOOR_ASSISTANT_ID,
     )
     supplied = [
         KnowledgeChunk(

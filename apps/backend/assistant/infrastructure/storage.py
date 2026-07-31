@@ -1,4 +1,5 @@
 import json
+from uuid import UUID
 
 from core.config import (
     CHUNKS_SEARCH_RESULTS_LIMIT,
@@ -8,21 +9,21 @@ from core.config import (
 from infrastructure.database.connection import get_connection
 
 
-def save_document_with_chunks(doc_id, doc_type, access_roles, chunks):
+def save_document_with_chunks(doc_id, doc_type, access_roles, chunks, *, assistant_id: UUID):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                  INSERT INTO documents (id, doc_type, access_roles)
-                  VALUES (%s, %s, %s)
+                  INSERT INTO documents (id, doc_type, access_roles, assistant_id)
+                  VALUES (%s, %s, %s, %s)
                 """,
-                (doc_id, doc_type, json.dumps(access_roles)),
+                (doc_id, doc_type, json.dumps(access_roles), str(assistant_id)),
             )
 
             cur.executemany(
                 """
-                INSERT INTO chunks (id, doc_id, text, embedding, access_roles)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO chunks (id, doc_id, text, embedding, access_roles, assistant_id)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 [
                     (
@@ -31,13 +32,16 @@ def save_document_with_chunks(doc_id, doc_type, access_roles, chunks):
                         chunk["text"],
                         chunk["embedding"],
                         json.dumps(chunk["access_roles"]),
+                        str(assistant_id),
                     )
                     for chunk in chunks
                 ],
             )
 
 
-def create_uploaded_document(doc_id, doc_type, access_roles, upload_path, original_filename):
+def create_uploaded_document(
+    doc_id, doc_type, access_roles, upload_path, original_filename, *, assistant_id: UUID
+):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -48,9 +52,10 @@ def create_uploaded_document(doc_id, doc_type, access_roles, upload_path, origin
                     access_roles,
                     status,
                     upload_path,
-                    original_filename
+                    original_filename,
+                    assistant_id
                 )
-                VALUES (%s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     doc_id,
@@ -59,6 +64,7 @@ def create_uploaded_document(doc_id, doc_type, access_roles, upload_path, origin
                     "uploaded",
                     upload_path,
                     original_filename,
+                    str(assistant_id),
                 ),
             )
 
@@ -82,6 +88,7 @@ def create_ingestion_job(job_id, document_id, stage, status, progress):
 
 
 def search_chunks_by_embedding(
+    assistant_id: UUID,
     query_embedding: list[float],
     query: str,
     access_role: str,
@@ -94,10 +101,16 @@ def search_chunks_by_embedding(
             cur.execute(
                 """
                 WITH vector_candidates AS (
-                  SELECT id, doc_id, text, embedding <=> %s::vector AS distance, access_roles, text_search
+                  SELECT chunks.id, chunks.doc_id, chunks.text,
+                         chunks.embedding <=> %s::vector AS distance,
+                         chunks.access_roles, chunks.text_search
                   FROM chunks
-                  WHERE access_roles ? %s
-                  ORDER BY embedding <=> %s::vector
+                  JOIN documents ON documents.id = chunks.doc_id
+                  WHERE chunks.assistant_id = %s
+                    AND documents.assistant_id = %s
+                    AND documents.retrieval_state = 'enabled'
+                    AND chunks.access_roles ? %s
+                  ORDER BY chunks.embedding <=> %s::vector
                   LIMIT 50
                 )
                 SELECT id, doc_id, text, distance, access_roles, ts_rank(text_search, plainto_tsquery('english', %s)) AS keyword_match,
@@ -108,6 +121,8 @@ def search_chunks_by_embedding(
             """,
                 (
                     query_embedding,
+                    str(assistant_id),
+                    str(assistant_id),
                     access_role,
                     query_embedding,
                     query,
@@ -132,14 +147,16 @@ def search_chunks_by_embedding(
             ]
 
 
-def list_all_chunks():
+def list_all_chunks(*, assistant_id: UUID):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT id, doc_id, text, access_roles
                 FROM chunks
+                WHERE assistant_id = %s
             """,
+                (str(assistant_id),),
             )
             rows = cur.fetchall()
             return [

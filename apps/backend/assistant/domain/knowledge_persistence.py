@@ -4,19 +4,24 @@ from enum import Enum
 from typing import Literal, Protocol
 from uuid import UUID
 
+from assistant.domain.assistant import DocumentRetrievalState
+
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeDocumentRecord:
     id: str
+    assistant_id: UUID
     source_url: str
     title: str | None
     content_hash: str
     access_roles: tuple[str, ...]
+    retrieval_state: DocumentRetrievalState = DocumentRetrievalState.enabled
 
 
 @dataclass(frozen=True, slots=True)
 class PersistedKnowledgeChunk:
     id: str
+    assistant_id: UUID
     document_id: str
     sequence: int
     text: str
@@ -91,7 +96,9 @@ class KnowledgePersistenceTransaction(Protocol):
 class KnowledgePersistenceRepository(Protocol):
     """Atomic document-level write boundary for processed knowledge."""
 
-    def find_document_by_source_url(self, source_url: str) -> KnowledgeDocumentRecord | None:
+    def find_document_by_source_url(
+        self, source_url: str, *, assistant_id: UUID
+    ) -> KnowledgeDocumentRecord | None:
         """Return the current website document identity, if present."""
 
     def transaction(self) -> AbstractContextManager[KnowledgePersistenceTransaction]:

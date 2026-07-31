@@ -16,6 +16,7 @@ from assistant.application.content_processing_service import ContentProcessingSe
 from assistant.application.ingestion_service import IngestionService
 from assistant.application.knowledge_persistence_service import KnowledgePersistenceService
 from assistant.application.retrieval_service import RetrievalService
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.knowledge_persistence import (
     KnowledgeDocumentRecord,
     KnowledgeWriteResult,
@@ -67,7 +68,9 @@ class InMemoryKnowledgePersistenceRepository:
         self.chunks: dict[str, list[PersistedKnowledgeChunk]] = {}
         self.error: Exception | None = None
 
-    def find_document_by_source_url(self, source_url: str) -> KnowledgeDocumentRecord | None:
+    def find_document_by_source_url(
+        self, source_url: str, *, assistant_id=REDMOOR_ASSISTANT_ID
+    ) -> KnowledgeDocumentRecord | None:
         return self.documents.get(source_url)
 
     @contextmanager
@@ -152,6 +155,7 @@ def persistence_service(
     return KnowledgePersistenceService(
         provider,
         repository,
+        assistant_id=REDMOOR_ASSISTANT_ID,
         embedding_dimensions=3,
         embedding_batch_size=100,
     )
@@ -226,6 +230,7 @@ def test_post_ingestion_loads_processes_persists_and_exposes_retrievable_knowled
     retrieved = RetrievalService(
         provider,
         VectorKnowledgeRepository(InMemoryVectorStore(entries)),
+        assistant_id=REDMOOR_ASSISTANT_ID,
         min_score=0.99,
     ).retrieve("What does Northstar Digital do?")
 
@@ -284,6 +289,7 @@ def test_database_backed_ingestion_is_immediately_retrievable_and_idempotent():
         KnowledgePersistenceService(
             provider,
             PostgresKnowledgePersistenceRepository(),
+            assistant_id=REDMOOR_ASSISTANT_ID,
             embedding_dimensions=EMBEDDING_VECTOR_DIMENSIONS,
             embedding_batch_size=100,
         ),
@@ -322,6 +328,7 @@ def test_database_backed_ingestion_is_immediately_retrievable_and_idempotent():
         retrieved = RetrievalService(
             provider,
             VectorKnowledgeRepository(PgVectorStore()),
+            assistant_id=REDMOOR_ASSISTANT_ID,
             limit=1000,
             min_score=0.99,
         ).retrieve("What does Northstar Digital do?")

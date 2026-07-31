@@ -1,3 +1,4 @@
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.infrastructure.storage import (
     create_ingestion_job as create_ingestion_job_record,
 )
@@ -21,6 +22,7 @@ def record_uploaded_document(
         access_roles,
         upload_path,
         original_filename,
+        assistant_id=REDMOOR_ASSISTANT_ID,
     )
     create_ingestion_job_record(
         job_id,
@@ -32,4 +34,4 @@ def record_uploaded_document(
 
 
 def get_chunks() -> list[dict]:
-    return list_all_chunks()
+    return list_all_chunks(assistant_id=REDMOOR_ASSISTANT_ID)
