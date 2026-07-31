@@ -1,6 +1,8 @@
 import math
 from dataclasses import dataclass
+from uuid import UUID
 
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID, DocumentRetrievalState
 from assistant.infrastructure.vector_store.base import VectorRecord, VectorStore
 
 
@@ -8,6 +10,8 @@ from assistant.infrastructure.vector_store.base import VectorRecord, VectorStore
 class InMemoryVectorEntry:
     record: VectorRecord
     embedding: tuple[float, ...]
+    assistant_id: UUID = REDMOOR_ASSISTANT_ID
+    retrieval_state: DocumentRetrievalState = DocumentRetrievalState.enabled
 
 
 class InMemoryVectorStore(VectorStore):
@@ -20,11 +24,17 @@ class InMemoryVectorStore(VectorStore):
         self,
         embedding: list[float],
         *,
+        assistant_id: UUID,
         limit: int,
         min_score: float,
     ) -> list[VectorRecord]:
         ranked: list[VectorRecord] = []
         for entry in self._entries:
+            if (
+                entry.assistant_id != assistant_id
+                or entry.retrieval_state is DocumentRetrievalState.disabled
+            ):
+                continue
             score = self._cosine_similarity(embedding, entry.embedding)
             if score >= min_score:
                 ranked.append(

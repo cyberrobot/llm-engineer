@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from typing import Any
+from uuid import UUID
 
 from assistant.infrastructure.vector_store.base import VectorRecord, VectorStore
 from infrastructure.database.connection import get_connection
@@ -15,6 +16,7 @@ class PgVectorStore(VectorStore):
         self,
         embedding: list[float],
         *,
+        assistant_id: UUID,
         limit: int,
         min_score: float,
     ) -> list[VectorRecord]:
@@ -33,11 +35,22 @@ class PgVectorStore(VectorStore):
                         COALESCE(documents.source_url, documents.upload_path)
                     FROM chunks
                     JOIN documents ON documents.id = chunks.doc_id
-                    WHERE 1 - (chunks.embedding <=> %s::vector) >= %s
+                    WHERE chunks.assistant_id = %s
+                      AND documents.assistant_id = %s
+                      AND documents.retrieval_state = 'enabled'
+                      AND 1 - (chunks.embedding <=> %s::vector) >= %s
                     ORDER BY chunks.embedding <=> %s::vector
                     LIMIT %s
                     """,
-                    (embedding, embedding, min_score, embedding, limit),
+                    (
+                        embedding,
+                        str(assistant_id),
+                        str(assistant_id),
+                        embedding,
+                        min_score,
+                        embedding,
+                        limit,
+                    ),
                 )
                 rows = cursor.fetchall()
 

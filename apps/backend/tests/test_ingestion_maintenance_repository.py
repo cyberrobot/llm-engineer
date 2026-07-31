@@ -6,6 +6,7 @@ from pathlib import Path
 import psycopg
 import pytest
 
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.maintenance.ingestion import IngestionMaintenanceSettings, MaintenanceCategory
 from assistant.maintenance.repository import PostgresIngestionMaintenanceRepository
 from core.config import DATABASE_URL
@@ -293,7 +294,9 @@ def test_postgres_terminal_cleanup_preserves_recent_job_and_converges():
         with get_connection() as connection:
             connection.execute("DELETE FROM documents WHERE id = %s", (document_id,))
             connection.execute(
-                "INSERT INTO documents (id, doc_type) VALUES (%s, 'test')", (document_id,)
+                """INSERT INTO documents (id, doc_type, assistant_id)
+                   VALUES (%s, 'test', %s)""",
+                (document_id, str(REDMOOR_ASSISTANT_ID)),
             )
             for job_id, completed_at in (
                 (old_job, NOW - timedelta(days=181)),
@@ -361,7 +364,9 @@ def test_postgres_terminal_cleanup_rolls_back_entire_batch_after_delete_failure(
         with get_connection() as connection:
             connection.execute("DELETE FROM documents WHERE id = %s", (document_id,))
             connection.execute(
-                "INSERT INTO documents (id, doc_type) VALUES (%s, 'test')", (document_id,)
+                """INSERT INTO documents (id, doc_type, assistant_id)
+                   VALUES (%s, 'test', %s)""",
+                (document_id, str(REDMOOR_ASSISTANT_ID)),
             )
             completed_at = NOW - timedelta(days=181)
             for job_id in (first_job, failing_job):

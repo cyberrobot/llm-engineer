@@ -10,6 +10,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 import psycopg
 
 from assistant.application.ports.embedding_provider import EmbeddingProvider
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.content_processing_result import ContentProcessingResult
 from assistant.domain.knowledge_chunk import KnowledgeChunk
 from assistant.domain.knowledge_persistence import (
@@ -69,6 +70,7 @@ class KnowledgePersistenceService:
         embedding_provider: EmbeddingProvider,
         repository: KnowledgePersistenceRepository,
         *,
+        assistant_id: UUID,
         embedding_dimensions: int,
         embedding_batch_size: int,
         metrics: IngestionOperationalMetrics = ingestion_operational_metrics,
@@ -79,6 +81,7 @@ class KnowledgePersistenceService:
             raise ValueError("Embedding batch size must be at least one")
         self._embedding_provider = embedding_provider
         self._repository = repository
+        self._assistant_id = assistant_id
         self._embedding_dimensions = embedding_dimensions
         self._embedding_batch_size = embedding_batch_size
         self._metrics = metrics
@@ -111,6 +114,7 @@ class KnowledgePersistenceService:
         logger.info(
             "Knowledge embedding preparation started",
             extra={
+                "assistant_id": str(self._assistant_id),
                 "documents_received": len(grouped_chunks),
                 "chunks_received": len(processing_result.chunks),
             },
@@ -127,7 +131,9 @@ class KnowledgePersistenceService:
                 first = ordered_chunks[0]
                 database_started_at = monotonic()
                 try:
-                    existing = self._repository.find_document_by_source_url(source_url)
+                    existing = self._repository.find_document_by_source_url(
+                        source_url, assistant_id=self._assistant_id
+                    )
                 finally:
                     database_duration_ms += max(0, int((monotonic() - database_started_at) * 1_000))
                 if (
@@ -137,6 +143,7 @@ class KnowledgePersistenceService:
                 ):
                     document = KnowledgeDocumentRecord(
                         id=existing.id,
+                        assistant_id=self._assistant_id,
                         source_url=source_url,
                         title=first.title,
                         content_hash=first.document_content_hash,
@@ -165,9 +172,10 @@ class KnowledgePersistenceService:
                         0, int((monotonic() - embedding_started_at) * 1_000)
                     )
                 embeddings_generated += len(embeddings)
-                document_id = existing.id if existing else str(uuid5(NAMESPACE_URL, source_url))
+                document_id = existing.id if existing else self._document_id(source_url)
                 document = KnowledgeDocumentRecord(
                     id=document_id,
+                    assistant_id=self._assistant_id,
                     source_url=source_url,
                     title=first.title,
                     content_hash=first.document_content_hash,
@@ -175,7 +183,8 @@ class KnowledgePersistenceService:
                 )
                 persisted_chunks = tuple(
                     PersistedKnowledgeChunk(
-                        id=str(item.id),
+                        id=self._chunk_id(str(item.id)),
+                        assistant_id=self._assistant_id,
                         document_id=document_id,
                         sequence=item.sequence,
                         text=item.text,
@@ -418,6 +427,7 @@ class KnowledgePersistenceService:
             "documents": [
                 {
                     "id": item.document.id,
+                    "assistant_id": str(item.document.assistant_id),
                     "source_url": item.document.source_url,
                     "title": item.document.title,
                     "content_hash": item.document.content_hash,
@@ -465,6 +475,11 @@ class KnowledgePersistenceService:
                 chunk_ids.add(chunk.id)
                 if chunk.document_id != item.document.id or not chunk.text.strip():
                     raise InvalidKnowledgeInputError("Prepared chunk association is invalid.")
+                if (
+                    item.document.assistant_id != self._assistant_id
+                    or chunk.assistant_id != item.document.assistant_id
+                ):
+                    raise InvalidKnowledgeInputError("Prepared assistant association is invalid.")
                 if len(chunk.embedding) != self._embedding_dimensions:
                     raise InvalidKnowledgeInputError("Prepared embedding dimensions are invalid.")
 
@@ -509,6 +524,9 @@ class KnowledgePersistenceService:
     ) -> dict[str, object]:
         return {
             "ingestion_job_id": str(command.ingestion_job_id) if command else None,
+            "assistant_id": (
+                str(prepared.documents[0].document.assistant_id) if prepared.documents else None
+            ),
             "document_id": command.document_id if command else None,
             "persistence_mode": command.mode.value if command else None,
             "chunk_count": prepared.chunks_received,
@@ -582,6 +600,19 @@ class KnowledgePersistenceService:
         if not roles:
             raise InvalidKnowledgeInputError("At least one access role is required.")
         return roles
+
+    def _document_id(self, source_url: str) -> str:
+        identity = (
+            source_url
+            if self._assistant_id == REDMOOR_ASSISTANT_ID
+            else f"{self._assistant_id}\0{source_url}"
+        )
+        return str(uuid5(NAMESPACE_URL, identity))
+
+    def _chunk_id(self, chunk_id: str) -> str:
+        if self._assistant_id == REDMOOR_ASSISTANT_ID:
+            return chunk_id
+        return str(uuid5(NAMESPACE_URL, f"{self._assistant_id}\0{chunk_id}"))
 
     @staticmethod
     def _log_failure(

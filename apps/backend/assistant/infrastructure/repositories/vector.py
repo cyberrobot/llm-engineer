@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from assistant.domain import KnowledgeChunk, KnowledgeDocument
 from assistant.infrastructure.repositories.base import KnowledgeRepository
 from assistant.infrastructure.vector_store import VectorStore
@@ -13,11 +15,13 @@ class VectorKnowledgeRepository(KnowledgeRepository):
         self,
         query_embedding: list[float],
         *,
+        assistant_id: UUID,
         limit: int,
         min_score: float,
     ) -> list[KnowledgeChunk]:
         records = self._vector_store.similarity_search(
             query_embedding,
+            assistant_id=assistant_id,
             limit=limit,
             min_score=min_score,
         )

@@ -14,6 +14,7 @@ from assistant.application.file_ingestion import (
     FileIngestionUnavailable,
     IdempotentFileRequestConflict,
 )
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.document_ingestion_job import DocumentIngestionJob
 from assistant.domain.file_fingerprint import ContentStatus, FileFingerprint
 from assistant.domain.ingestion_status import IngestionStatus
@@ -268,11 +269,12 @@ class PostgresFileIngestionRepository:
             match = connection.execute(
                 """
                 SELECT id FROM documents
-                WHERE access_roles = %s::jsonb AND checksum_algorithm = %s
+                WHERE assistant_id = %s AND access_roles = %s::jsonb AND checksum_algorithm = %s
                   AND checksum = %s AND file_size_bytes = %s
                 ORDER BY created_at, id LIMIT 1
                 """,
                 (
+                    str(REDMOOR_ASSISTANT_ID),
                     json.dumps(request.access_roles),
                     request.fingerprint.algorithm,
                     request.fingerprint.checksum,
@@ -286,7 +288,9 @@ class PostgresFileIngestionRepository:
 
             document_id = request.document_id or str(uuid4())
             existing = connection.execute(
-                "SELECT access_roles FROM documents WHERE id = %s FOR UPDATE", (document_id,)
+                """SELECT access_roles FROM documents
+                   WHERE id = %s AND assistant_id = %s FOR UPDATE""",
+                (document_id, str(REDMOOR_ASSISTANT_ID)),
             ).fetchone()
             content_status = ContentStatus.new_content
             values = (
@@ -306,10 +310,10 @@ class PostgresFileIngestionRepository:
                     INSERT INTO documents (
                         id, doc_type, access_roles, status, upload_path, original_filename,
                         mime_type, checksum_algorithm, checksum, file_size_bytes,
-                        checksum_calculated_at
-                    ) VALUES (%s, %s, %s::jsonb, 'uploaded', %s, %s, %s, %s, %s, %s, %s)
+                        checksum_calculated_at, assistant_id
+                    ) VALUES (%s, %s, %s::jsonb, 'uploaded', %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (document_id, *values),
+                    (document_id, *values, str(REDMOOR_ASSISTANT_ID)),
                 )
             else:
                 if tuple(existing[0]) != request.access_roles:
@@ -323,9 +327,9 @@ class PostgresFileIngestionRepository:
                         upload_path = %s, original_filename = %s, mime_type = %s,
                         checksum_algorithm = %s, checksum = %s, file_size_bytes = %s,
                         checksum_calculated_at = %s, updated_at = NOW()
-                    WHERE id = %s
+                    WHERE id = %s AND assistant_id = %s
                     """,
-                    (*values, document_id),
+                    (*values, document_id, str(REDMOOR_ASSISTANT_ID)),
                 )
             result = self._insert_job(connection, document_id, request, content_status)
             self._record_request(connection, request, result)

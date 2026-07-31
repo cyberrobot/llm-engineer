@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from uuid import UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +23,7 @@ class VectorStore(ABC):
         self,
         embedding: list[float],
         *,
+        assistant_id: UUID,
         limit: int,
         min_score: float,
     ) -> list[VectorRecord]:

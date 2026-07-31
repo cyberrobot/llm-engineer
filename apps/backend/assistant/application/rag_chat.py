@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from assistant.application.rag_search import rag_search
 from assistant.application.retrieval import filter_chunks_by_source_ids
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.evaluation import calculate_evaluation_metrics, evaluate_answer
 from assistant.infrastructure.audit import get_latest_audit_log_for_query, log_rag_event
 from assistant.infrastructure.llm import ask_rag, estimate_tokens
@@ -58,7 +59,7 @@ def get_cached_response(query: str, user_role: str, start_time: float) -> Option
 def retrieve_context(
     query: str, user_role: str, start_time: float
 ) -> tuple[list[dict], list[dict], float]:
-    rag_search_output = rag_search(query, user_role)
+    rag_search_output = rag_search(REDMOOR_ASSISTANT_ID, query, user_role)
     retrieval_time = (time.perf_counter() - start_time) * 1000
 
     return (

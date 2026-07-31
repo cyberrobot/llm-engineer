@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from assistant.application.ingest_document import ingest_document
 from assistant.application.uploads import record_uploaded_document
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 
 
 def test_batches_embeddings_and_persists_chunks():
@@ -53,6 +54,7 @@ def test_batches_embeddings_and_persists_chunks():
         "policy",
         access_roles,
         expected_rows,
+        assistant_id=REDMOOR_ASSISTANT_ID,
     )
 
 
@@ -76,6 +78,7 @@ def test_record_uploaded_document_persists_document_and_ingestion_job():
         ["user", "admin"],
         "uploads/doc-id.pdf",
         "policy.pdf",
+        assistant_id=REDMOOR_ASSISTANT_ID,
     )
     create_job.assert_called_once_with(
         "job-id",

@@ -31,6 +31,7 @@ from assistant.application.ports.text_cleaner import TextCleaner
 from assistant.application.ports.website_loader import WebsiteLoader
 from assistant.application.prompt_builder import PromptBuilder
 from assistant.application.retrieval_service import RetrievalService
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.document_ingestion_job import IngestionStep
 from assistant.infrastructure.ingestion.html_content_extractor import HtmlContentExtractor
 from assistant.infrastructure.ingestion.normalising_text_cleaner import NormalisingTextCleaner
@@ -91,7 +92,7 @@ def get_retrieval_service(
     ai_provider: Annotated[AIProvider, Depends(get_ai_provider)],
     repository: Annotated[KnowledgeRepository, Depends(get_knowledge_repository)],
 ) -> RetrievalService:
-    return RetrievalService(ai_provider, repository)
+    return RetrievalService(ai_provider, repository, assistant_id=REDMOOR_ASSISTANT_ID)
 
 
 def get_chat_service(
@@ -195,6 +196,7 @@ def get_knowledge_persistence_service(
     return KnowledgePersistenceService(
         embedding_provider,
         repository,
+        assistant_id=REDMOOR_ASSISTANT_ID,
         embedding_dimensions=settings.embedding_dimensions,
         embedding_batch_size=settings.embedding_batch_size,
     )
