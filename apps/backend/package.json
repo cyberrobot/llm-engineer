@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "python -m uvicorn main:app --reload",
+    "worker": "python -m assistant.workers.ingestion",
     "test": "python -m pytest"
   }
 }
