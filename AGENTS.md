@@ -1,693 +1,221 @@
-Testing Instructions
+# Global Engineering Rules
 
-Core Principle
+## Core Principles
 
-Tests must verify externally observable behaviour and business rules, not merely mirror the current implementation.
+- Inspect and understand the repository before changing it.
+- Prefer the smallest complete, backward-compatible change that satisfies the requirement.
+- Reuse proven libraries and existing project abstractions before creating new ones.
+- Keep each change independently reviewable, testable, deliverable, and limited to its stated scope.
+- Verify externally observable behaviour and business rules, not implementation details or coverage numbers.
+- Never claim a command or scenario passed unless it was actually run successfully.
 
-A test suite is only valuable if it would fail when realistic defects are introduced.
+## Repository Inspection and Scope
 
-Do not write tests solely to increase coverage or make the current implementation appear correct.
+Before implementation:
 
-Required Development Process
+1. Inspect the relevant domain models, services, repositories, factories, utilities, configuration, dependencies, conventions, and tests.
+2. Identify expected behaviour, invariants, failure modes, security boundaries, callers, stored data, and public contracts.
+3. Confirm prerequisite branches or earlier pull requests are present. If repository state contradicts task assumptions, stop and report the mismatch instead of recreating missing work.
+4. Follow existing structure and naming unless a documented reason justifies a change.
 
-For every feature change or bug fix:
+Assume each pull request begins on a fresh feature branch. Implement only its owned scope and make dependencies on earlier work explicit. Avoid unrelated refactoring, renaming, formatting, dependency upgrades, migrations, or architecture changes. In parallel worktrees, minimise overlap in shared bootstrap, exports, migrations, and dependency-injection files.
 
-1. Inspect the existing implementation and relevant tests.
-2. Identify the expected behaviour, invariants, failure modes, and security boundaries.
-3. Add or update tests before changing production code where practical.
-4. Run the new tests and confirm they fail for the expected reason.
-5. Implement the smallest production change required.
-6. Run the targeted tests.
-7. Run the broader relevant test suite.
-8. Run type checking and linting.
-9. Review whether the tests would catch realistic implementation defects.
+## Design and Reuse
 
-Do not weaken tests to make an implementation pass.
+### Reuse order
 
-Do not change expected behaviour merely to match the current implementation.
+Prefer, in order:
 
-Test Behaviour, Not Implementation Details
+1. The standard library.
+2. Existing project libraries and utilities.
+3. Existing services, repositories, factories, ports, adapters, serializers, validators, configuration, logging, clocks, ID generators, filesystem helpers, and dependency-injection wiring.
+4. When the existing stack is unsuitable, either a small local implementation for simple, non-specialised behaviour or a mature, maintained, licence-compatible library for specialised capability.
 
-Prefer testing through public interfaces such as:
+Do not introduce parallel implementations or multiple libraries for the same capability. A new dependency must provide a clear benefit, avoid duplicating the existing stack, and be documented.
 
-- API endpoints
-- exported functions
-- public service methods
-- rendered user interactions
-- database state
-- persisted files
-- observable side effects
+### Composition and boundaries
 
-Avoid testing:
+Compose or extend stable components before adding a framework, base class, service layer, or generic abstraction. Add an abstraction only for multiple concrete uses with a clear shared contract and a net reduction in complexity.
 
-- private functions directly
-- internal variable values
-- exact internal call order
-- internal component structure
-- implementation-specific helper methods
-- whether a mock was called without verifying the resulting behaviour
+Keep responsibilities separated:
 
-Refactoring internal code should not break tests when externally observable behaviour remains unchanged.
+- Domain code owns business rules and must not depend on transport, CLI parsing, database sessions, application startup, dependency-injection containers, or provider clients.
+- Orchestration coordinates components without reimplementing their rules.
+- Persistence stores and retrieves data without making business decisions.
+- Presentation formats outcomes without calculating them.
+- Integration adapters contain provider-specific types and map them to application-owned models.
+- Lower-level modules must not import higher-level entry points. Avoid circular imports and startup-dependent package exports.
 
-Mocking Rules
+Keep functions and classes focused. Extract shared code when it represents the same rule, not merely similar syntax. Prefer explicit code and business-oriented names over clever or speculative abstractions. Comments should explain constraints and non-obvious decisions, not restate code. Remove dead code, temporary debugging, commented-out implementations, and unused compatibility layers.
 
-Do not mock the unit under test.
+## Domain Models and Validation
 
-Avoid mocking internal application layers when a realistic integration test can exercise them.
+- Model important business concepts explicitly and validate them so invalid states are difficult to construct.
+- Use stable string values for persisted or externally exposed enums, safe factories for mutable defaults, and clear distinctions among identifiers, schema versions, content versions, statuses, and timestamps.
+- Keep domain models serializable and free of clients, repositories, sessions, credentials, environment settings, containers, and other runtime services.
+- Validate external input at the owning boundary. Reject malformed, unsupported, contradictory, ambiguous, extra, or out-of-range input clearly; do not silently coerce it or ignore unsupported fields.
+- Preserve useful structured validation details. Keep each rule in one authoritative location unless separate layers enforce genuinely different invariants.
+- Validate identifiers before database, filesystem, shell, or provider operations.
 
-Use real implementations where practical for:
+## Determinism, Idempotency, and Concurrency
 
-- request validation
-- authentication and authorisation middleware
-- route handlers
-- service logic
-- repositories
-- serializers
-- database queries
-- database constraints
-- transactions
-- migrations
-- file validation
-- state management
-- application components
+Identical inputs should produce equivalent outputs unless nondeterminism is required. Preserve meaningful ordering and keep generated ordering, filenames, reason codes, and serialization stable. Inject clocks, IDs, randomness, and external services when tests need control. Avoid locale- or environment-dependent output, memory addresses, and unnecessary current timestamps. Do not mutate caller-owned models or collections unless the public API promises mutation.
 
-Mock only true external boundaries, such as:
+Document idempotency for ingestion, orchestration, persistence, retries, recovery, and externally triggered work. Repeated operations with the same key or business identity must not duplicate effects. Reuse existing completed or active work where appropriate, and never create a new business identity merely because an operation is retried. Protect critical guarantees with transactions, constraints, or established locking rather than only in-memory checks. Keep read-only transformations free of persistence and unrelated side effects.
 
-- email providers
-- SMS providers
-- payment providers
-- malware scanning services
-- cloud object storage
-- third-party APIs
-- operating-system integrations that cannot run in the test environment
+Default to sequential execution. Add concurrency only for a demonstrated need, bound it, preserve deterministic output order, protect shared state, and respect cancellation and cleanup. Do not introduce workers, queues, multiprocessing, or orchestration frameworks without an explicit requirement. Account for races and duplicate execution whenever concurrent workers can process the same entity.
 
-Mocks must behave realistically, including expected failures.
+## Persistence and Files
 
-Do not over-specify mocks in a way that causes tests to pass only because the mock reproduces the implementation.
+- Keep storage behind established repository or data-access boundaries.
+- Use transactions for changes that must succeed or fail together; verify rollback and avoid holding transactions open across slow external calls.
+- Enforce critical uniqueness and integrity at the database level, and avoid unsafe read-modify-write sequences.
+- Make create, update, upsert, and no-op semantics explicit. Never silently delete or overwrite data.
+- Add migrations only when required, run them in tests, and keep them compatible with concurrently deployed application versions where applicable.
+- Use established model serialization, stable enum values, timezone-explicit timestamps, and UTF-8 text. Never serialize runtime services, credentials, or arbitrary object state.
+- Protect existing files from accidental overwrite. Use atomic writes when partial files would be harmful, create temporary files in the destination directory when atomic rename is required, and clean up artifacts after success, failure, or cancellation.
+- Keep filenames safe, deterministic, and free of secrets or sensitive content.
 
-Database Testing
+## External Services, Configuration, and Resources
 
-Integration tests should use a real disposable test database where practical.
+- Access providers through existing adapters; do not call provider SDKs directly from controllers, CLI commands, or domain code.
+- Apply project-standard timeouts and map provider responses into application-owned types.
+- Reuse the central configuration system instead of scattering environment reads. Validate configuration at startup or the owning boundary, document new settings, and do not change existing meanings without a migration plan.
+- Keep secrets out of source, fixtures, logs, reports, errors, and generated files. Do not add undocumented environment-controlled behaviour.
+- Manage database pools, sessions, clients, files, streams, and connections with context managers or lifecycle hooks. Reuse managed resources instead of creating one per item, avoid unmanaged global mutable resources, and clean up on every exit path.
+- Do not bypass production authorisation, filtering, validation, or safety rules for tests, evaluation, administration, recovery, or background work without an explicit privileged policy.
 
-Tests involving persistence must verify:
+## Errors, Failure Isolation, and Retries
 
-- the API or function result
-- the final database state
-- the absence of unintended records
-- ownership and access restrictions
-- transaction behaviour
-- rollback after failure
-- database constraints
-- state after reloading from the database
+- Distinguish validation errors, domain failures, infrastructure failures, and programming defects. Use focused exception types when existing ones are insufficient.
+- Fail early when work cannot continue safely. Preserve causes through exception chaining and include useful, non-sensitive context such as entity IDs, field paths, file paths, and operation names.
+- Never expose secrets, tokens, raw provider payloads, stack traces, or sensitive data in user-facing errors.
+- Do not catch `BaseException` or convert cancellation, keyboard interruption, or process termination into ordinary failures.
+- Isolate failures at the smallest meaningful unit unless atomicity is required. Preserve structured item-level failures, distinguish them from operation-level failure, expose partial success, and make stop-on-error behaviour explicit. Never silently discard failed work.
+- Reuse established retry libraries and policies. Retry only plausibly transient failures, with bounded attempts and backoff, after ensuring duplicate side effects are prevented. Never retry validation, authorisation, unsupported-operation, or deterministic domain failures. Preserve the original failure after exhaustion and avoid compounded retries across layers.
 
-Do not rely only on repository method assertions.
+## Security and Observability
 
-Run database migrations against the test database rather than manually recreating an approximate schema.
+- Enforce authorisation at the established service or policy boundary, including ownership, role, and tenant rules; frontend visibility and authentication alone are insufficient.
+- Use least privilege. Do not construct shell commands from untrusted input or use `eval`, `exec`, unsafe deserialization, or user-controlled dynamic imports.
+- Use existing logging and observability systems. Record meaningful operation boundaries, safe identifiers, statuses, durations, correlations, and failure categories with structured fields.
+- Do not log credentials, tokens, cookies, connection strings, prompts, full documents, provider payloads, or other sensitive content. Avoid duplicate stack traces and noisy per-item success logs.
+- Logs and metrics describe behaviour; they must not be the only record of important business state or alter the operation.
 
-Tests must not depend on execution order or shared mutable state.
+## Public Contracts and Compatibility
 
-Each test must create or reset its own required data.
+Treat existing public behaviour as a contract, including APIs, exports, serialized data, persisted formats, schemas, configuration and environment keys, CLI arguments and exit codes, events, integrations, and user workflows.
 
-Required Test Coverage
+- Prefer additive fields, compatible defaults, optional features, adapters, and deprecation periods. Omitted options must retain existing behaviour.
+- Keep exports deliberate and minimal; do not expose private helpers.
+- Before changing a contract, identify consumers and stored data, add contract coverage, define a migration path, and make transition state observable.
+- If compatibility cannot be preserved, document the reason, affected consumers, migration and rollout steps, rollback strategy, and removal criteria before implementation.
+- For substantial changes, establish a tested baseline, separate mechanical refactoring from behavioural changes, migrate incrementally, keep each step deployable and reversible, and remove legacy code only after consumers have moved.
+- A rewrite requires explicit scope, approval, parity criteria, migration tests, rollout safeguards, and evidence that incremental change is riskier or costlier.
 
-Cover the following where applicable:
+## Testing
 
-Happy paths
+### Test observable behaviour
 
-Verify expected behaviour for valid requests and normal user journeys.
+Tests must fail for realistic defects and verify results through public interfaces: endpoints, exported functions, public service methods, rendered interactions, persisted state, files, and observable side effects. Refactoring internals without changing behaviour should not break tests.
 
-Invalid input
+Do not test private helpers, internal variables or structure, exact internal call order, or a mock call without verifying its outcome. Never write tests merely to increase coverage or endorse the current implementation.
 
-Test:
+### Development process
 
-- missing required fields
-- malformed values
-- incorrect types
-- invalid formats
-- unsupported values
-- values outside allowed limits
-- empty values
-- unexpected additional fields
+For every feature or bug fix, where practical:
 
-Authentication and authorisation
+1. Add or update behaviour-focused tests before production code.
+2. Run the new test and confirm it fails for the expected reason.
+3. Implement the smallest production change.
+4. Run targeted tests, the broader affected suite, integration checks, type checking, formatting, and linting using repository commands.
+5. Review whether the suite catches plausible mutations such as removed validation or ownership filters, reversed comparisons, skipped transactions, duplicate creation, omitted constraints, hard-coded results, ignored provider failure, unintended field resets, and invalid state transitions.
 
-Test:
+Every bug fix needs a clearly named regression test that reproduces the defect and fails before the fix, unless automated testing is genuinely impossible and the reason is documented. Never weaken expected behaviour or assertions to accommodate an implementation.
 
-- unauthenticated access
-- expired or invalid credentials
-- insufficient permissions
-- access to another user’s data
-- access to deleted, archived, or unavailable resources
-- privilege escalation attempts
+### Test doubles and infrastructure
 
-Never assume authentication automatically guarantees ownership.
+Do not mock the unit under test or internal application layers when realistic integration is practical. Use real validation, middleware, routes, services, repositories, serializers, queries, constraints, transactions, migrations, and state management.
 
-Boundary conditions
+Mock only true external boundaries such as email, SMS, payments, malware scanning, cloud storage, third-party APIs, or unavailable operating-system integrations. Mocks must model realistic success and failure without reproducing implementation details. Unit and integration tests must not call live providers, production databases, or uncontrolled networks.
 
-Test:
+Use disposable databases and run real migrations for persistence tests. Use temporary directories, deterministic fixtures, fixed clocks and IDs, and realistic fictional data. Tests must be independent of execution order, shared mutable state, current production state, uncontrolled time, and unseeded randomness. Clean up files, records, timers, and mocks.
 
-- minimum values
-- maximum values
-- values immediately below and above limits
-- empty collections
-- single-item collections
-- large collections
-- null or undefined values where relevant
+### Required coverage where applicable
 
-Duplicate and repeated requests
+Cover:
 
-Test:
+- Happy paths and precise user-visible or persisted outcomes.
+- Missing, empty, malformed, mistyped, unsupported, extra, contradictory, and out-of-range input.
+- Authentication, invalid or expired credentials, roles, ownership, tenant boundaries, deleted or unavailable resources, privilege escalation, and confirmation that denied actions have no side effects.
+- Minimum, maximum, just-outside-boundary, null, empty, single-item, and large collection cases.
+- Duplicate submissions, retries, stale requests, idempotency, concurrent creation or updates, deletion races, and database enforcement.
+- Domain, database, storage, network, timeout, malformed-provider-response, partial-completion, retry-exhaustion, cancellation, rollback, and cleanup failures.
+- Persistence after reload, record counts, absence of unintended records, immutable and omitted fields, valid state transitions, and incomplete-operation consistency.
+- Input immutability, ordering, backward compatibility, and resource cleanup where contractual.
 
-- duplicate submissions
-- repeated button presses
-- retried API requests
-- idempotency where required
-- duplicate records
-- repeated updates
-- stale client requests
+Security-sensitive flows must directly test server-side validation, ownership and organisation isolation, unguessable access boundaries, safe errors, audit events, path traversal, upload size and signature validation, and storage/database reconciliation where relevant. A successful status alone is insufficient.
 
-Failure paths
+### Assertions, UI, and end-to-end tests
 
-Test realistic failures such as:
+Use precise assertions for status or result type, response fields, persisted values, ownership, counts, transitions, timestamps, immutable fields, events, side effects, and user-visible output. Avoid truthiness-only checks, “no exception” checks, mock-call-only checks, status-only checks, or broad snapshots. Snapshots may supplement but never replace semantic assertions. Avoid brittle complete exception-string or log assertions when structured data is available.
 
-- database failure
-- storage failure
-- network failure
-- external service timeout
-- malformed external response
-- partial completion
-- transaction rollback
-- interrupted upload
-- retry exhaustion
+UI tests should query by accessible role, label, name, or visible text and simulate real keyboard and pointer interactions. Verify loading, empty, validation, error, disabled, retry, navigation, persistence, duplicate-click, accessibility, and submission states. Do not query implementation-specific structure or mock away the application layer.
 
-Concurrency
+Use a small number of end-to-end tests for critical journeys such as authentication, incident creation and editing, draft recovery, attachments, access controls, state transitions, deletion and recovery, exports, and failure recovery. Verify final user-visible and persisted outcomes.
 
-Where race conditions are possible, test concurrent operations such as:
+Test names must state the scenario, action, and expected outcome. Factories should provide valid defaults with focused overrides; avoid large irrelevant fixtures or fixed IDs that can collide.
 
-- two requests creating the same resource
-- two requests updating the same record
-- two requests attempting to create a unique active record
-- deletion while another operation is in progress
-- duplicate file uploads
-- stale updates overwriting newer changes
-
-Do not rely solely on application-level checks when a database constraint is appropriate.
-
-Persistence
-
-For flows involving drafts, forms, edits, uploads, or saved progress, verify that:
-
-- data remains correct after reload
-- editing does not create duplicate records
-- omitted update fields are not unintentionally reset
-- immutable fields remain unchanged
-- state transitions are valid
-- incomplete operations do not leave inconsistent state
-
-Regression Tests
-
-Every bug fix must include a regression test that:
-
-- reproduces the original defect
-- fails before the fix
-- passes after the fix
-- verifies the underlying behaviour rather than the specific implementation
-
-Name regression tests clearly so the protected behaviour is obvious.
-
-Do not fix a bug without adding a test unless testing is genuinely impossible. Document the reason if no automated test can be added.
-
-Security-Sensitive Tests
-
-Security controls must be tested directly.
-
-Where applicable, verify:
-
-- users can access only their own records
-- organisation boundaries are enforced
-- server-side validation cannot be bypassed
-- deleted resources cannot still be retrieved
-- identifiers cannot be guessed to access other records
-- sensitive data is not exposed in error responses
-- audit events are recorded correctly
-- unauthorised actions produce no side effects
-- file metadata cannot bypass content validation
-- filenames cannot cause path traversal
-- upload limits are enforced
-- content type and file signatures are validated
-- database records are not created when file storage fails
-- stored files are removed or reconciled when database writes fail
-
-A successful status code alone is not sufficient evidence that a security rule works.
-
-Assertion Quality
-
-Use precise, business-relevant assertions.
-
-Prefer assertions that verify:
-
-- exact status or result type
-- relevant response fields
-- persisted values
-- ownership
-- record counts
-- state transitions
-- timestamps where important
-- unchanged immutable values
-- emitted events
-- absence of unintended side effects
-- user-visible output
-
-Avoid assertions that only verify:
-
-- truthiness
-- that no exception occurred
-- object existence
-- a mock being called
-- a response status without checking state
-- broad snapshots without meaningful semantic assertions
-
-Snapshots may supplement explicit assertions but must not replace them.
-
-Mutation-Oriented Review
-
-Before completing a task, consider realistic defects that could be introduced into the production code.
-
-Examples:
-
-- remove an ownership filter
-- reverse a comparison operator
-- remove validation
-- skip a transaction
-- create a new record instead of updating an existing one
-- omit a database constraint
-- return hard-coded data
-- ignore an external service failure
-- reset fields not included in an update
-- permit an invalid state transition
-
-Confirm that at least one test would fail for each relevant defect.
-
-Strengthen the tests when a plausible bug could be introduced without causing a failure.
-
-Frontend and UI Tests
-
-Frontend tests should prioritise user behaviour.
-
-Prefer queries based on:
-
-- accessible role
-- label
-- visible text
-- accessible name
-- user-facing state
-
-Avoid querying by:
-
-- CSS class
-- internal component name
-- implementation-specific test IDs when an accessible query is available
-- DOM structure that users do not depend on
-
-Simulate realistic user interactions rather than calling component handlers directly.
-
-Verify:
-
-- loading states
-- empty states
-- validation messages
-- error states
-- disabled states
-- retries
-- navigation
-- persisted form state
-- duplicate click handling
-- keyboard interaction
-- accessibility behaviour
-- successful and failed submissions
-
-Do not mock the entire application layer in a way that makes the UI test meaningless.
-
-End-to-End Tests
-
-Add end-to-end tests for critical user journeys and high-risk behaviour.
-
-End-to-end tests should cover a small number of valuable flows rather than duplicating every unit or integration test.
-
-Prioritise:
-
-- authentication
-- incident creation and editing
-- draft recovery
-- evidence and attachment handling
-- ownership and access restrictions
-- critical state transitions
-- deletion and recovery behaviour
-- export or download flows
-- failure recovery
-
-End-to-end tests must verify the final user-visible and persisted outcome.
-
-Test Data
-
-Use realistic but fictional test data.
-
-Do not use:
-
-- production data
-- real access tokens
-- real credentials
-- real personal information
-- fixed IDs that may collide across tests
-
-Create reusable test factories where they improve clarity.
-
-Factories should produce valid defaults while allowing individual fields to be overridden.
-
-Avoid large fixtures containing irrelevant data.
-
-Test Isolation
-
-Tests must be deterministic and independently executable.
-
-Do not depend on:
-
-- test execution order
-- another test creating data
-- real network access
-- current production state
-- uncontrolled system time
-- random behaviour without a fixed seed
-- shared mutable mocks
-
-Freeze or control time where time-dependent behaviour is being tested.
-
-Clean up temporary files, database records, timers, and mocks after tests.
-
-Test Naming
-
-Test names must describe:
-
-- the scenario
-- the action
-- the expected outcome
-
-Prefer:
-
-rejects access when a user requests another user's incident
-
-Avoid:
-
-works correctly
-
-A reader should understand the protected behaviour without reading the implementation.
-
-Prohibited Actions
+### Prohibited test practices
 
 Never:
 
-- delete an existing test solely because it fails after a change
-- skip or disable a failing test without documenting a valid reason
-- loosen an assertion merely to make the test pass
-- replace a meaningful assertion with a snapshot
-- mock away the behaviour being tested
-- alter production code exclusively for test convenience when a better test setup is possible
-- commit focused tests such as .only
-- leave skipped tests without an explanation
-- hide test failures
-- claim tests passed without running them
+- Delete a test solely because a change breaks it.
+- Skip or disable a failure without a documented valid reason, or commit focused tests such as `.only`.
+- Loosen a meaningful assertion, replace it with a snapshot, hide failures, or mock away the behaviour under test.
+- Change production code solely for test convenience when realistic setup is possible.
+- Change expected behaviour merely to match the current implementation.
 
-If an existing test appears incorrect, explain why and update it only when the intended behaviour has been confirmed.
+If a test appears wrong, confirm intended behaviour and explain the correction.
 
-Required Commands
+## Verification and Documentation
 
-Before completing a task, run the relevant project commands for:
+Run the repository-defined commands relevant to the change:
 
-- targeted tests
-- integration tests
-- the broader relevant test suite
-- type checking
-- linting
+- Targeted and broader affected tests, plus integration or end-to-end suites where applicable.
+- Type checking, linting, and formatting checks.
+- Database migrations and persistence checks when storage changes.
+- Manual verification of changed public entry points where practical.
 
-Use the commands defined by the repository.
+If a command cannot run, report the exact command, reason, observed error, and remaining risk. Do not declare completion while relevant checks fail.
 
-Do not claim a command succeeded unless it was actually run successfully.
+Update documentation for public APIs, configuration, operations, persisted formats, exit codes, side effects, failure and retry behaviour, idempotency, compatibility, recovery, and migration procedures. Keep examples accurate, never describe planned behaviour as implemented, and record justified deviations.
 
-If a command cannot be run, report:
+## Completion Report
 
-- the command
-- the reason
-- the observed error
-- the remaining risk
+For implementation work, report:
 
-Completion Report
+1. Branch and files changed.
+2. Behaviour and tests added or updated, including the initial expected failure where practical.
+3. Production changes and important design or reuse decisions.
+4. Migrations, configuration, dependencies, and public-interface changes.
+5. Commands actually run and their final results.
+6. Known limitations, unverified behaviour, repository mismatches, deviations, and remaining risks.
 
-When completing an implementation task, report:
+Completion requires defined behaviour, meaningful regression coverage, passing relevant tests, type checks, and linting, verified security and persistence boundaries where applicable, and explicit disclosure of remaining limitations.
 
-1. Behaviour covered
-2. Tests added or updated
-3. Initial failing test result
-4. Production changes made
-5. Commands run
-6. Final test results
-7. Remaining gaps or risks
+## GitHub Branches and Pull Requests
 
-Do not state that the implementation is complete while relevant tests are failing.
+Create a new branch only after fetching the latest remote state. Base it on current `origin/main` with `git switch --no-track -c <branch> origin/main`; never use a stale local branch or configure a feature branch to track the default branch. On first push, use `git push --set-upstream origin <branch>` and verify it tracks the same-named remote branch.
 
-Definition of Done
+Sandboxed `gh auth status` may not see host keychain credentials. Before requesting login, run `gh auth status` and `gh repo view --json nameWithOwner,defaultBranchRef` with the necessary host permission. Ask for `gh auth login` only if those checks fail outside the sandbox.
 
-A change is complete only when:
+When commit, push, and pull-request creation are requested:
 
-- expected behaviour is defined
-- relevant tests exist
-- new tests were shown to fail before the fix where practical
-- the implementation passes the tests
-- regression risks are covered
-- security and ownership boundaries are tested
-- persistence and unintended side effects are verified
-- targeted and broader tests pass
-- type checking passes
-- linting passes
-- remaining limitations are explicitly documented
-
-GitHub Authentication and Pull Requests
-
-GitHub authentication checks run inside a restricted execution environment may not be able to
-read credentials stored in the host keychain. A failed sandboxed `gh auth status` does not
-necessarily mean the user is logged out.
-
-When creating a new branch, always fetch the latest remote state first and create the branch from
-the up-to-date `origin/main`, not from a potentially stale local `main` or the current branch. Use
-`git switch --no-track -c <branch-name> origin/main` so the new feature branch does not inherit
-`origin/main` as its upstream. Never configure a feature branch to track the remote default branch.
-On its first push, publish it with `git push --set-upstream origin <branch-name>` and verify that the
-local branch now tracks the same-named remote feature branch. This avoids a plain push being rejected
-by Git's `simple` push mode and prevents accidental pushes to `main`.
-
-Before asking the user to authenticate again:
-
-1. Re-run `gh auth status` outside the restricted environment with the required approval.
-2. Confirm repository access with `gh repo view --json nameWithOwner,defaultBranchRef` in the same
-   environment.
-3. Ask the user to run `gh auth login` only if the host-level authentication check also fails.
-
-When the user requests commit, push, and pull-request creation:
-
-1. Inspect `git status -sb` and the diff before staging.
-2. Stage only files that belong to the requested change. Do not include unrelated or untracked
-   files without confirmation.
+1. Inspect `git status -sb` and the diff.
+2. Stage only in-scope files; leave unrelated work untouched unless the user confirms inclusion.
 3. Commit with a concise description of the complete change.
-4. Push the current feature branch to a same-named remote branch with upstream tracking. If its
-   upstream is currently the default branch, correct it with
-   `git push --set-upstream origin <branch-name>`; never resolve the mismatch by pushing the feature
-   commit to the default branch.
-5. Create a draft pull request against the repository's default branch unless the user explicitly
-   requests a ready-for-review pull request or a different base branch.
-6. Use a Markdown body with real newlines that describes the change, its impact, and the validation
-   commands that actually passed.
-7. Verify and report the branch, commit, base branch, PR URL, draft status, and any files deliberately
-   left uncommitted.
-
-# Library Reuse
-
-## Guiding Principle
-
-Prefer mature, well-maintained, existing libraries over custom implementations whenever they are suitable for the problem.
-
-The goal is to minimise maintenance burden, reduce bugs, improve reliability, and keep the codebase focused on business logic rather than reimplementing solved problems.
-
----
-
-## Before Writing Code
-
-Before implementing any new functionality, always:
-
-1. Inspect the existing project dependencies.
-2. Inspect the existing codebase for reusable utilities or abstractions.
-3. Reuse existing libraries where they already solve the problem.
-4. Extend existing implementations instead of creating parallel ones.
-5. Introduce a new dependency only when there is a clear technical benefit that cannot reasonably be achieved using the current stack.
-
-Avoid creating duplicate functionality.
-
----
-
-## Preferred Order
-
-Always follow this order of preference:
-
-1. Python Standard Library
-2. Existing project libraries
-3. Existing project utilities
-4. Well-maintained third-party libraries
-5. Custom implementation (only if necessary)
-
-Custom code should be the last resort, not the default.
-
----
-
-## Do Not Reinvent Existing Solutions
-
-Avoid writing custom implementations for capabilities that are already well solved by established libraries.
-
-Examples include:
-
-- HTML parsing
-- HTTP clients
-- URL parsing and validation
-- Configuration management
-- Logging
-- Dependency injection
-- Database access
-- Migrations
-- Tokenisation
-- Text splitting
-- Retry strategies
-- Date and time handling
-- Hashing
-- Validation
-- Serialization
-- UUID generation
-- Markdown parsing
-- Sitemap parsing
-- Robots.txt parsing
-
-Use existing libraries whenever they satisfy the project's requirements.
-
----
-
-## Reuse Existing Project Libraries
-
-Before introducing a new dependency, inspect the project's existing dependencies.
-
-For example:
-
-- If BeautifulSoup or Selectolax is already installed, reuse it.
-- If HTTPX is already used, continue using HTTPX.
-- If Pydantic already performs validation, do not introduce another validation library.
-- If SQLAlchemy is used, do not introduce another ORM.
-- If Alembic is used, continue using Alembic migrations.
-- If a tokenizer already exists in the project, reuse it rather than creating another implementation.
-
-Avoid multiple libraries solving the same problem.
-
----
-
-## New Dependencies
-
-A new dependency may be introduced only if:
-
-- the existing stack cannot reasonably solve the problem
-- the library is mature and actively maintained
-- it has a permissive licence compatible with the project
-- it provides a clear improvement over writing custom code
-- it does not duplicate existing functionality
-
-Document the reason for introducing any new dependency.
-
----
-
-## Extend Existing Abstractions
-
-When adding new functionality:
-
-- extend existing services
-- extend existing repositories
-- extend existing ports/interfaces
-- extend existing configuration
-- extend existing dependency injection
-
-Do not create parallel abstractions simply because they are convenient.
-
----
-
-## Consistency
-
-When multiple libraries could solve the problem equally well, prefer the one already used by the project.
-
-Consistency across the codebase is more valuable than using the newest or most popular library.
-
----
-
-## Goal
-
-Spend engineering effort solving business problems, not rebuilding infrastructure that already exists.
-
-Every custom implementation increases long-term maintenance cost. Prefer proven libraries and existing project abstractions whenever they meet the project's needs.
-
-# Change Strategy and Compatibility
-
-## Preserve Backwards Compatibility
-
-Treat existing public behaviour as a contract. Unless a breaking change is explicitly required and approved, changes must preserve compatibility for:
-
-- public APIs and exported interfaces
-- persisted data and database schemas
-- configuration keys and environment variables
-- command-line arguments and exit behaviour
-- events, message formats, and integration boundaries
-- user-visible workflows that existing callers may depend on
-
-Prefer additive changes, compatible defaults, optional fields, adapters, and deprecation periods over removing or changing existing behaviour in place.
-
-Before changing a contract:
-
-1. Identify current callers, consumers, stored data, and documented behaviour.
-2. Add regression or contract tests for the behaviour that must remain supported.
-3. Design a migration path for consumers and persisted data.
-4. Make the transition observable through clear errors, logging, or deprecation notices where appropriate.
-5. Remove legacy behaviour only after the agreed compatibility window and migration criteria have been satisfied.
-
-If compatibility cannot be preserved, document the reason, affected consumers, migration steps, rollout plan, and rollback strategy before implementation. Do not introduce an accidental breaking change as a side effect of refactoring.
-
-## Favour Composition Over New Abstractions
-
-Build new behaviour by composing existing, stable components before introducing another framework, base class, service layer, or generic abstraction.
-
-Prefer:
-
-- configuring or combining existing services
-- small focused functions and collaborators
-- adapters around established interfaces
-- dependency injection through existing project mechanisms
-- extending an existing abstraction when it already owns the responsibility
-
-Avoid speculative abstractions designed for hypothetical future use. Create a new abstraction only when there are multiple concrete use cases, the shared contract is clear, and composition through existing code would otherwise create meaningful duplication or coupling.
-
-New abstractions must have a single clear responsibility, fit existing architectural boundaries, and reduce total complexity. They must not merely relocate complexity or duplicate an existing project concept under a new name.
-
-## Make Incremental Changes
-
-Prefer the smallest coherent change that delivers the required behaviour. Extend and improve working code in reviewable steps instead of rewriting it wholesale.
-
-For substantial changes:
-
-1. Establish current behaviour with tests and observable baselines.
-2. Separate mechanical refactoring from behaviour changes where practical.
-3. Introduce new behaviour behind compatible interfaces or controlled rollout mechanisms when risk warrants it.
-4. Migrate callers and data in bounded, reversible steps.
-5. Remove obsolete code only after the replacement is proven and all consumers have moved.
-
-Keep each step deployable, testable, and easy to review. Preserve a rollback path and avoid combining unrelated cleanup with a feature or bug fix.
-
-A rewrite is justified only when incremental change is demonstrably more risky or costly, the existing design cannot meet confirmed requirements, and the rewrite has explicit scope, parity criteria, migration tests, rollout safeguards, and approval. Working code is evidence: do not discard it without first understanding the behaviour and edge cases it already handles.
+4. Push the feature branch to the same-named remote branch with upstream tracking; never push it to the default branch.
+5. Open a draft pull request against the repository default branch unless the user requests another base or ready-for-review status.
+6. Use a Markdown body with real newlines describing the change, impact, and checks that actually passed.
+7. Verify and report branch, commit, base, URL, draft status, and deliberately uncommitted files.
