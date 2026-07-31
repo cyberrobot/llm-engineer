@@ -47,6 +47,14 @@ from assistant.infrastructure.repositories import (
     PostgresKnowledgePersistenceRepository,
     VectorKnowledgeRepository,
 )
+from assistant.infrastructure.repositories.ingestion_observability import (
+    EmptyIngestionOperationalStatusRepository,
+    IngestionOperationalStatusRepository,
+    IngestionStepExecutionRepository,
+    InMemoryIngestionStepExecutionRepository,
+    PostgresIngestionOperationalStatusRepository,
+    PostgresIngestionStepExecutionRepository,
+)
 from assistant.infrastructure.seed_knowledge import SEED_VECTOR_ENTRIES
 from assistant.infrastructure.vector_store import InMemoryVectorStore, PgVectorStore, VectorStore
 from core.config import (
@@ -114,6 +122,20 @@ def get_document_ingestion_job_service(
     ],
 ) -> DocumentIngestionJobService:
     return DocumentIngestionJobService(repository)
+
+
+@lru_cache
+def get_ingestion_step_execution_repository() -> IngestionStepExecutionRepository:
+    if DATABASE_URL:
+        return PostgresIngestionStepExecutionRepository()
+    return InMemoryIngestionStepExecutionRepository()
+
+
+@lru_cache
+def get_ingestion_operational_status_repository() -> IngestionOperationalStatusRepository:
+    if DATABASE_URL:
+        return PostgresIngestionOperationalStatusRepository()
+    return EmptyIngestionOperationalStatusRepository()
 
 
 @lru_cache
@@ -247,6 +269,10 @@ def get_ingestion_pipeline_runner(
     classifier: Annotated[IngestionFailureClassifier, Depends(get_ingestion_failure_classifier)],
     retry_policy: Annotated[IngestionRetryPolicy, Depends(get_ingestion_retry_policy)],
     sleeper: Annotated[Callable[[float], None], Depends(get_ingestion_retry_sleeper)],
+    step_executions: Annotated[
+        IngestionStepExecutionRepository,
+        Depends(get_ingestion_step_execution_repository),
+    ],
 ) -> IngestionPipelineRunner:
     return build_ingestion_pipeline_runner(
         repository,
@@ -257,6 +283,7 @@ def get_ingestion_pipeline_runner(
         classifier,
         retry_policy,
         sleeper,
+        step_executions,
     )
 
 
@@ -269,6 +296,7 @@ def build_ingestion_pipeline_runner(
     classifier: IngestionFailureClassifier,
     retry_policy: IngestionRetryPolicy,
     sleeper: Callable[[float], None],
+    step_executions: IngestionStepExecutionRepository | None = None,
 ) -> IngestionPipelineRunner:
     return IngestionPipelineRunner(
         repository,
@@ -282,4 +310,5 @@ def build_ingestion_pipeline_runner(
         classifier=classifier,
         retry_policy=retry_policy,
         sleeper=sleeper,
+        step_executions=step_executions,
     )

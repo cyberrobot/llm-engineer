@@ -5,6 +5,7 @@ from typing import Protocol
 from uuid import UUID
 
 from assistant.domain.file_fingerprint import ContentStatus, FileFingerprint
+from core.metrics import IngestionOperationalMetrics, ingestion_operational_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +52,14 @@ class FileIngestionRepository(Protocol):
 
 
 class FileIngestionService:
-    def __init__(self, repository: FileIngestionRepository) -> None:
+    def __init__(
+        self,
+        repository: FileIngestionRepository,
+        *,
+        metrics: IngestionOperationalMetrics = ingestion_operational_metrics,
+    ) -> None:
         self._repository = repository
+        self._metrics = metrics
 
     def submit(self, request: FileIngestionRequest) -> FileIngestionResult:
         key = request.idempotency_key.strip() if request.idempotency_key is not None else None
@@ -89,6 +96,17 @@ class FileIngestionService:
             },
         )
         if result.content_status is ContentStatus.duplicate_content:
+            self._metric(
+                "duplicate",
+                (
+                    "active_duplicate"
+                    if result.ingestion_in_progress
+                    else "failed_ingestion_recovery"
+                    if result.ingestion_required
+                    else "completed_duplicate"
+                ),
+                pipeline_skipped=not result.ingestion_required,
+            )
             event = (
                 "active_ingestion_reused"
                 if result.ingestion_in_progress
@@ -102,4 +120,12 @@ class FileIngestionService:
                         "ingestion_job_id": str(result.ingestion_job_id),
                     },
                 )
+        elif result.content_status is ContentStatus.forced_reindex:
+            self._metric("forced_reindex")
         return result
+
+    def _metric(self, method: str, *args: object, **kwargs: object) -> None:
+        try:
+            getattr(self._metrics, method)(*args, **kwargs)
+        except Exception:
+            logger.warning("ingestion_telemetry_export_failed", extra={"reason": method})

@@ -10,6 +10,7 @@ from uuid import UUID
 
 from assistant.domain.document_ingestion_job import DocumentIngestionJob
 from assistant.domain.ingestion_status import IngestionStatus
+from core.metrics import IngestionOperationalMetrics, ingestion_operational_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,11 @@ class IngestionWorkerRepository:
     def renew_lease(
         self, claim: IngestionJobClaim, lease_duration: timedelta, now: datetime
     ) -> bool:
+        raise NotImplementedError
+
+    def claim_job(
+        self, job_id: UUID, worker_id: str, lease_duration: timedelta, now: datetime
+    ) -> IngestionJobClaim | None:
         raise NotImplementedError
 
 
@@ -101,6 +107,8 @@ class InMemoryIngestionWorkerRepository(IngestionWorkerRepository):
         recovered = owned.job.status is IngestionStatus.running
         if not recovered:
             owned.job.mark_running(at=now)
+        elif owned.job.current_step is not None:
+            owned.job.begin_step_attempt(at=now)
         owned.worker_id = worker_id
         owned.claim_version += 1
         owned.claimed_at = now
@@ -165,6 +173,7 @@ class IngestionWorker:
         now: Callable[[], datetime],
         concurrency: int = 1,
         shutdown_grace_seconds: float = 30,
+        metrics: IngestionOperationalMetrics = ingestion_operational_metrics,
     ) -> None:
         self._repository = repository
         self._execute = execute
@@ -175,6 +184,7 @@ class IngestionWorker:
         self._now = now
         self._concurrency = concurrency
         self._shutdown_grace_seconds = shutdown_grace_seconds
+        self._metrics = metrics
 
     def run(self, stop: Event) -> None:
         logger.info("ingestion_worker_started", extra={"worker_id": self._worker_id})
@@ -204,6 +214,7 @@ class IngestionWorker:
                             "lease_expires_at": claim.lease_expires_at,
                         },
                     )
+                    self._metric("job_recovered" if claim.recovered else "job_claimed")
                     done = Event()
                     thread = Thread(
                         target=self._execute_and_signal,
@@ -233,8 +244,11 @@ class IngestionWorker:
             logger.info("ingestion_worker_stopped", extra={"worker_id": self._worker_id})
 
     def _execute_and_signal(self, claim: IngestionJobClaim, done: Event) -> None:
+        started = monotonic()
         try:
-            self._execute(claim)
+            result = self._execute(claim)
+            if result is WorkerExecutionResult.ownership_lost:
+                self._metric("lease_lost")
         except Exception:
             logger.exception(
                 "ingestion_job_execution_interrupted",
@@ -245,4 +259,11 @@ class IngestionWorker:
                 },
             )
         finally:
+            self._metric("worker_executed", max(0, monotonic() - started))
             done.set()
+
+    def _metric(self, method: str, *args: object) -> None:
+        try:
+            getattr(self._metrics, method)(*args)
+        except Exception:
+            logger.warning("ingestion_telemetry_export_failed", extra={"reason": method})
