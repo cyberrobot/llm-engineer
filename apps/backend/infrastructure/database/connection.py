@@ -10,6 +10,9 @@ from infrastructure.database.migrations.file_integrity_deduplication import (
 from infrastructure.database.migrations.ingestion_job_domain import (
     upgrade as upgrade_ingestion_job_domain,
 )
+from infrastructure.database.migrations.ingestion_observability import (
+    upgrade as upgrade_ingestion_observability,
+)
 from infrastructure.database.migrations.ingestion_pipeline_checkpoint import (
     upgrade as upgrade_ingestion_pipeline_checkpoint,
 )
@@ -134,6 +137,7 @@ def init_db():
             """)
             upgrade_transactional_ingestion_persistence(cur)
             upgrade_background_worker_execution(cur)
+            upgrade_ingestion_observability(cur)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS audit_logs (
                     id BIGSERIAL PRIMARY KEY,

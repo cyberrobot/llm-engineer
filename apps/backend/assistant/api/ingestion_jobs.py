@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -6,7 +7,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from assistant.api.dependencies import (
     get_document_ingestion_job_service,
     get_ingestion_pipeline_runner,
+    get_ingestion_step_execution_repository,
 )
+from assistant.api.ingest import require_ingest_api_key
 from assistant.application.ingestion_job_service import (
     DocumentIngestionJobService,
     DocumentNotFound,
@@ -16,15 +19,31 @@ from assistant.application.ingestion_job_service import (
     InvalidIdempotencyKey,
 )
 from assistant.application.ingestion_pipeline import IngestionPipelineRunner
+from assistant.domain.document_ingestion_job import IngestionStep
 from assistant.domain.ingestion_status import IngestionStatus
+from assistant.infrastructure.repositories.ingestion_observability import (
+    IngestionStepExecutionRepository,
+)
 from assistant.schemas.document_ingestion_job import (
     CreateIngestionJobRequest,
     DocumentIngestionJobListResponse,
     DocumentIngestionJobResponse,
     IngestionPipelineResultResponse,
+    IngestionStepExecutionResponse,
 )
 
-router = APIRouter(prefix="/ingestion/jobs", tags=["ingestion jobs"])
+
+def require_ingestion_jobs_api_key(
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> None:
+    require_ingest_api_key(x_api_key)
+
+
+router = APIRouter(
+    prefix="/ingestion/jobs",
+    tags=["ingestion jobs"],
+    dependencies=[Depends(require_ingestion_jobs_api_key)],
+)
 
 
 def _error(status_code: int, code: str, message: str) -> HTTPException:
@@ -57,15 +76,23 @@ def list_ingestion_jobs(
     offset: Annotated[int, Query(ge=0)] = 0,
     status_filter: Annotated[IngestionStatus | None, Query(alias="status")] = None,
     document_id: Annotated[UUID | None, Query()] = None,
+    created_from: Annotated[datetime | None, Query()] = None,
+    created_to: Annotated[datetime | None, Query()] = None,
+    failed_step: Annotated[IngestionStep | None, Query()] = None,
 ) -> DocumentIngestionJobListResponse:
     if status_filter is IngestionStatus.pending:
         raise _error(422, "invalid_ingestion_status", "Invalid ingestion status filter.")
+    if created_from is not None and created_to is not None and created_from > created_to:
+        raise _error(422, "invalid_created_range", "created_from must not follow created_to.")
     try:
         page = service.list(
             limit=limit,
             offset=offset,
             status=status_filter,
             document_id=str(document_id) if document_id else None,
+            created_from=created_from,
+            created_to=created_to,
+            failed_step=failed_step,
         )
     except IngestionJobUnavailable as exc:
         raise _error(503, "ingestion_job_unavailable", str(exc)) from exc
@@ -89,6 +116,27 @@ def get_ingestion_job(
     except IngestionJobUnavailable as exc:
         raise _error(503, "ingestion_job_unavailable", str(exc)) from exc
     return DocumentIngestionJobResponse.from_job(job)
+
+
+@router.get("/{job_id}/steps", response_model=list[IngestionStepExecutionResponse])
+def list_ingestion_job_steps(
+    job_id: UUID,
+    service: Annotated[DocumentIngestionJobService, Depends(get_document_ingestion_job_service)],
+    repository: Annotated[
+        IngestionStepExecutionRepository,
+        Depends(get_ingestion_step_execution_repository),
+    ],
+) -> list[IngestionStepExecutionResponse]:
+    try:
+        service.get(job_id)
+    except IngestionJobNotFound as exc:
+        raise _error(404, "ingestion_job_not_found", "Ingestion job not found.") from exc
+    except IngestionJobUnavailable as exc:
+        raise _error(503, "ingestion_job_unavailable", str(exc)) from exc
+    return [
+        IngestionStepExecutionResponse.from_execution(execution)
+        for execution in repository.list_for_job(job_id)
+    ]
 
 
 @router.post("/{job_id}/run", response_model=IngestionPipelineResultResponse)

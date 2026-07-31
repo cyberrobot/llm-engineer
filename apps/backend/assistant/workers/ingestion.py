@@ -13,6 +13,7 @@ from assistant.api.dependencies import (
     get_ingestion_pipeline_definition,
     get_ingestion_retry_policy,
     get_ingestion_retry_sleeper,
+    get_ingestion_step_execution_repository,
     get_knowledge_persistence_repository,
     get_knowledge_persistence_service,
     get_text_chunker,
@@ -73,6 +74,8 @@ class PipelineClaimExecutor:
             },
         )
         try:
+            if claim.recovered:
+                get_ingestion_step_execution_repository().interrupt_running_attempts(claim.job_id)
             runner = _build_runner(FencedPostgresDocumentIngestionJobRepository(claim))
             result = runner.run(claim.job_id)
             if ownership_lost.is_set():
@@ -136,7 +139,7 @@ class PipelineClaimExecutor:
             if not renewed:
                 ownership_lost.set()
                 return
-            logger.info(
+            logger.debug(
                 "ingestion_job_heartbeat_succeeded",
                 extra={
                     "worker_id": claim.worker_id,
@@ -165,6 +168,7 @@ def _build_runner(repository):
         get_ingestion_failure_classifier(),
         get_ingestion_retry_policy(),
         get_ingestion_retry_sleeper(),
+        get_ingestion_step_execution_repository(),
     )
 
 

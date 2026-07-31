@@ -9,6 +9,7 @@ from api.openapi import API_CONTRACT_VERSION, create_openapi_schema
 from api.router import api_router
 from assistant.api.dependencies import get_ai_provider, get_website_loader
 from core.config import validate_startup_configuration
+from core.correlation import RequestCorrelationMiddleware
 from core.exceptions import register_exception_handlers
 from core.logging import configure_logging
 from infrastructure.database.connection import init_db
@@ -56,6 +57,7 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
+app.add_middleware(RequestCorrelationMiddleware)
 
 app.state.limiter = limiter
 register_exception_handlers(app)

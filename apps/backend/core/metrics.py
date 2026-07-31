@@ -1,4 +1,6 @@
-from prometheus_client import REGISTRY, CollectorRegistry, Counter, Histogram
+from prometheus_client import REGISTRY, CollectorRegistry, Counter, Gauge, Histogram
+
+from assistant.domain.document_ingestion_job import IngestionStep
 
 
 class IngestionMetrics:
@@ -96,3 +98,170 @@ class IngestionMetrics:
 
 
 ingestion_metrics = IngestionMetrics()
+
+
+class IngestionOperationalMetrics:
+    """Job/worker metrics whose labels are deliberately bounded enumerations."""
+
+    def __init__(self, *, registry: CollectorRegistry = REGISTRY) -> None:
+        self.jobs_created = Counter(
+            "ingestion_jobs_created_total", "Durably created ingestion jobs.", registry=registry
+        )
+        self.jobs_completed = Counter(
+            "ingestion_jobs_completed_total", "Durably completed ingestion jobs.", registry=registry
+        )
+        self.jobs_failed = Counter(
+            "ingestion_jobs_failed_total", "Durably failed ingestion jobs.", registry=registry
+        )
+        self.jobs_recovered = Counter(
+            "ingestion_jobs_recovered_total", "Recovered expired job leases.", registry=registry
+        )
+        self.jobs_claimed = Counter(
+            "ingestion_jobs_claimed_total", "Worker job claims.", registry=registry
+        )
+        self.step_attempts = Counter(
+            "ingestion_step_attempts_total",
+            "Ingestion step attempts.",
+            ("step",),
+            registry=registry,
+        )
+        self.step_retries = Counter(
+            "ingestion_step_retries_total",
+            "Scheduled ingestion retries.",
+            ("step", "failure_category"),
+            registry=registry,
+        )
+        self.lease_losses = Counter(
+            "worker_lease_losses_total", "Worker lease ownership losses.", registry=registry
+        )
+        self.persistence_rollbacks = Counter(
+            "ingestion_persistence_rollbacks_total",
+            "Rolled-back ingestion persistence transactions.",
+            registry=registry,
+        )
+        self.duplicates = Counter(
+            "ingestion_duplicates_total",
+            "Deduplicated ingestion submissions.",
+            ("content_status",),
+            registry=registry,
+        )
+        self.pipeline_skipped = Counter(
+            "ingestion_pipeline_skipped_total",
+            "Ingestion pipelines skipped after preflight.",
+            ("content_status",),
+            registry=registry,
+        )
+        self.forced_reindexes = Counter(
+            "ingestion_forced_reindex_total",
+            "Forced ingestion re-index submissions.",
+            registry=registry,
+        )
+        self.queued = Gauge(
+            "ingestion_jobs_queued", "Queued jobs from authoritative storage.", registry=registry
+        )
+        self.running = Gauge(
+            "ingestion_jobs_running", "Running jobs from authoritative storage.", registry=registry
+        )
+        self.recoverable = Gauge(
+            "ingestion_recoverable_jobs",
+            "Running jobs with an expired lease.",
+            registry=registry,
+        )
+        self.oldest_queued_age = Gauge(
+            "ingestion_oldest_queued_age_seconds",
+            "Age of the oldest queued ingestion job.",
+            registry=registry,
+        )
+        self.workers_active = Gauge(
+            "ingestion_workers_active",
+            "Workers inferred from active unexpired job leases.",
+            registry=registry,
+        )
+        self.queue_wait = Histogram(
+            "ingestion_queue_wait_seconds", "Queue wait duration.", registry=registry
+        )
+        self.job_processing = Histogram(
+            "ingestion_job_processing_duration_seconds",
+            "Background job processing duration.",
+            registry=registry,
+        )
+        self.total_duration = Histogram(
+            "ingestion_total_duration_seconds",
+            "Total queued-to-terminal duration.",
+            registry=registry,
+        )
+        self.step_duration = Histogram(
+            "ingestion_step_duration_seconds",
+            "Ingestion step attempt duration.",
+            ("step",),
+            registry=registry,
+        )
+        self.worker_execution = Histogram(
+            "worker_job_execution_duration_seconds",
+            "Worker claim execution duration.",
+            registry=registry,
+        )
+
+    def job_created(self) -> None:
+        self.jobs_created.inc()
+
+    def job_completed(
+        self, *, queue_wait_seconds: float, processing_seconds: float, total_seconds: float
+    ) -> None:
+        self.jobs_completed.inc()
+        self.queue_wait.observe(max(0, queue_wait_seconds))
+        self.job_processing.observe(max(0, processing_seconds))
+        self.total_duration.observe(max(0, total_seconds))
+
+    def job_failed(self) -> None:
+        self.jobs_failed.inc()
+
+    def job_recovered(self) -> None:
+        self.jobs_recovered.inc()
+
+    def job_claimed(self) -> None:
+        self.jobs_claimed.inc()
+
+    def worker_executed(self, duration_seconds: float) -> None:
+        self.worker_execution.observe(max(0, duration_seconds))
+
+    def lease_lost(self) -> None:
+        self.lease_losses.inc()
+
+    def persistence_rolled_back(self) -> None:
+        self.persistence_rollbacks.inc()
+
+    def duplicate(self, content_status: str, *, pipeline_skipped: bool) -> None:
+        self.duplicates.labels(content_status=content_status).inc()
+        if pipeline_skipped:
+            self.pipeline_skipped.labels(content_status=content_status).inc()
+
+    def forced_reindex(self) -> None:
+        self.forced_reindexes.inc()
+
+    def step_attempt_started(self, step: IngestionStep) -> None:
+        self.step_attempts.labels(step=step.value).inc()
+
+    def step_attempt_completed(self, step: IngestionStep, duration_seconds: float) -> None:
+        self.step_duration.labels(step=step.value).observe(max(0, duration_seconds))
+
+    def step_retry(self, step: IngestionStep, failure_category: str) -> None:
+        self.step_retries.labels(step=step.value, failure_category=failure_category).inc()
+
+    def observe_status(
+        self,
+        *,
+        queued: int,
+        running: int,
+        recoverable: int,
+        oldest_queued_age: float,
+        workers_active: int = 0,
+    ) -> None:
+        self.queued.set(max(0, queued))
+        self.running.set(max(0, running))
+        self.recoverable.set(max(0, recoverable))
+        self.oldest_queued_age.set(max(0, oldest_queued_age))
+        self.workers_active.set(max(0, workers_active))
+
+
+ingestion_operational_metrics = IngestionOperationalMetrics()
