@@ -1,0 +1,238 @@
+.root {
+  width: 100%;
+  max-width: 48rem;
+  overflow: hidden;
+  border: 1px solid #dddcd5;
+  border-radius: 0.75rem;
+  background: #ffffff;
+  color: #1a2a23;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  letter-spacing: normal;
+  box-sizing: border-box;
+  container-type: inline-size;
+}
+
+.header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #dddcd5;
+  background: #f8f5ee;
+  box-sizing: border-box;
+}
+
+.title,
+.messageContent,
+.suggestionsLabel {
+  margin: 0;
+}
+
+.title {
+  color: #123d2d;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.conversation {
+  min-height: 18rem;
+  max-height: 32rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 1.5rem;
+  background: #fbfaf7;
+  scrollbar-gutter: stable;
+  box-sizing: border-box;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.message {
+  min-width: 0;
+  max-width: 88%;
+  box-sizing: border-box;
+}
+
+.assistant {
+  align-self: flex-start;
+}
+
+.user {
+  align-self: flex-end;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem 0.75rem 0.2rem 0.75rem;
+  background: #123d2d;
+  color: #ffffff;
+}
+
+.messageRole {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: #5d665f;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.user .messageRole {
+  color: #e9e5d9;
+}
+
+.messageContent {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.suggestions {
+  margin-top: 1.5rem;
+}
+
+.suggestionsLabel {
+  margin-bottom: 0.5rem;
+  color: #5d665f;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.suggestionList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.suggestion {
+  min-height: 2.75rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid #a9ab91;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #123d2d;
+  font: inherit;
+  font-size: 0.875rem;
+  line-height: 1.35;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.suggestion:hover:not(:disabled) {
+  border-color: #123d2d;
+  background: #f8f5ee;
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-top: 1px solid #dddcd5;
+  background: #ffffff;
+  box-sizing: border-box;
+}
+
+.input {
+  width: 100%;
+  min-height: 2.75rem;
+  max-height: 8rem;
+  padding: 0.65rem 0.75rem;
+  resize: vertical;
+  border: 1px solid #8b895f;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #1a2a23;
+  font: inherit;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.input::placeholder {
+  color: #5d665f;
+  opacity: 1;
+}
+
+.submit {
+  min-width: 5rem;
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  border: 1px solid #123d2d;
+  border-radius: 0.5rem;
+  background: #123d2d;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.submit:hover:not(:disabled) {
+  border-color: #0d3024;
+  background: #0d3024;
+}
+
+.input:focus-visible,
+.submit:focus-visible,
+.suggestion:focus-visible {
+  outline: 2px solid #123d2d;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px #c6a95d;
+}
+
+.input:disabled,
+.submit:disabled,
+.suggestion:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@container (max-width: 26.25rem) {
+  .header {
+    padding: 0.875rem 1rem;
+  }
+
+  .conversation {
+    min-height: 16rem;
+    padding: 1rem;
+  }
+
+  .message {
+    max-width: 94%;
+  }
+
+  .suggestionList {
+    flex-direction: column;
+  }
+
+  .suggestion {
+    width: 100%;
+  }
+
+  .composer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .submit {
+    width: 100%;
+  }
+}
