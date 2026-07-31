@@ -16,6 +16,11 @@ from assistant.schemas import (
     SourceReference,
     StartIngestionRequest,
 )
+from operations.api.models import (
+    AdministrativeErrorResponse,
+    OperationsResponseMetadata,
+    OperationsRootResponse,
+)
 
 API_CONTRACT_VERSION = "1.0.0"
 
@@ -28,6 +33,9 @@ CONTRACT_MODELS: tuple[type[BaseModel], ...] = (
     KnowledgeStatusResponse,
     SourceReference,
     StartIngestionRequest,
+    AdministrativeErrorResponse,
+    OperationsResponseMetadata,
+    OperationsRootResponse,
 )
 
 
