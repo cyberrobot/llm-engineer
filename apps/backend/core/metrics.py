@@ -1,3 +1,5 @@
+from typing import Any
+
 from prometheus_client import REGISTRY, CollectorRegistry, Counter, Gauge, Histogram
 
 from assistant.domain.document_ingestion_job import IngestionStep
@@ -265,3 +267,86 @@ class IngestionOperationalMetrics:
 
 
 ingestion_operational_metrics = IngestionOperationalMetrics()
+
+
+class IngestionMaintenanceMetrics:
+    """Maintenance telemetry with category, outcome, and reason-only labels."""
+
+    def __init__(self, *, registry: CollectorRegistry = REGISTRY) -> None:
+        self.runs = Counter(
+            "ingestion_maintenance_runs_total",
+            "Ingestion maintenance runs.",
+            ("maintenance_category", "result"),
+            registry=registry,
+        )
+        self.records_deleted = Counter(
+            "ingestion_maintenance_records_deleted_total",
+            "Records deleted by ingestion maintenance.",
+            ("maintenance_category",),
+            registry=registry,
+        )
+        self.records_archived = Counter(
+            "ingestion_maintenance_records_archived_total",
+            "Records archived by ingestion maintenance.",
+            ("maintenance_category",),
+            registry=registry,
+        )
+        self.records_repaired = Counter(
+            "ingestion_maintenance_records_repaired_total",
+            "Records repaired by ingestion maintenance.",
+            ("maintenance_category",),
+            registry=registry,
+        )
+        self.records_skipped = Counter(
+            "ingestion_maintenance_records_skipped_total",
+            "Records skipped by ingestion maintenance.",
+            ("maintenance_category",),
+            registry=registry,
+        )
+        self.errors = Counter(
+            "ingestion_maintenance_errors_total",
+            "Safe ingestion maintenance error codes.",
+            ("maintenance_category", "reason_code"),
+            registry=registry,
+        )
+        self.manual_review = Counter(
+            "ingestion_maintenance_manual_review_total",
+            "Maintenance findings requiring manual review.",
+            ("maintenance_category", "reason_code"),
+            registry=registry,
+        )
+        self.run_duration = Histogram(
+            "ingestion_maintenance_run_duration_seconds",
+            "Maintenance run duration.",
+            ("maintenance_category",),
+            registry=registry,
+        )
+        self.batch_duration = Histogram(
+            "ingestion_maintenance_batch_duration_seconds",
+            "Maintenance batch duration.",
+            ("maintenance_category",),
+            registry=registry,
+        )
+
+    def record_batch(self, category: str, duration_seconds: float) -> None:
+        self.batch_duration.labels(maintenance_category=category).observe(max(0, duration_seconds))
+
+    def record_result(self, result: Any, *, outcome: str) -> None:
+        category = result.maintenance_category.value
+        self.runs.labels(maintenance_category=category, result=outcome).inc()
+        self.records_deleted.labels(maintenance_category=category).inc(result.records_deleted)
+        self.records_archived.labels(maintenance_category=category).inc(result.records_archived)
+        self.records_repaired.labels(maintenance_category=category).inc(result.records_repaired)
+        self.records_skipped.labels(maintenance_category=category).inc(result.records_skipped)
+        self.run_duration.labels(maintenance_category=category).observe(
+            max(0, result.duration_ms) / 1_000
+        )
+        for error in result.errors:
+            self.errors.labels(maintenance_category=category, reason_code=error.code).inc()
+        for finding in result.findings:
+            self.manual_review.labels(
+                maintenance_category=category, reason_code=finding.reason_code
+            ).inc()
+
+
+ingestion_maintenance_metrics = IngestionMaintenanceMetrics()

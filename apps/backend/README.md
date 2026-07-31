@@ -2,6 +2,10 @@
 
 FastAPI backend for the AI Discovery Assistant.
 
+Operational ingestion retention, reconciliation, dry-run commands, scheduling guidance, and
+failure recovery are documented in the
+[ingestion maintenance runbook](docs/ingestion-maintenance-runbook.md).
+
 ## Run locally
 
 Install dependencies from `requirements.txt`, copy `.env.example` to `.env`, and run:

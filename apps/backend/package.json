@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "python -m uvicorn main:app --reload",
     "worker": "python -m assistant.workers.ingestion",
+    "maintenance": "python -m assistant.maintenance.ingestion",
     "test": "python -m pytest"
   }
 }
