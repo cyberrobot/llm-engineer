@@ -99,7 +99,10 @@ docker build -t ai-discovery-assistant-backend apps/backend
 ## API endpoints
 
 - `GET /health`
+- `GET /health/live`
+- `GET /health/ready`
 - `GET /assistant/health`
+- `GET /admin/operations/health` (requires the administrative `X-API-Key`)
 - `POST /rag-chat`
 - `POST /ingest`
 - `GET /audit-logs`

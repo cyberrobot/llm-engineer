@@ -18,9 +18,11 @@ from assistant.schemas import (
 )
 from operations.api.models import (
     AdministrativeErrorResponse,
+    OperationsHealthResponse,
     OperationsResponseMetadata,
     OperationsRootResponse,
 )
+from operations.domain.health import DependencyHealthResult, HealthDiagnostic
 
 API_CONTRACT_VERSION = "1.0.0"
 
@@ -36,6 +38,9 @@ CONTRACT_MODELS: tuple[type[BaseModel], ...] = (
     AdministrativeErrorResponse,
     OperationsResponseMetadata,
     OperationsRootResponse,
+    DependencyHealthResult,
+    HealthDiagnostic,
+    OperationsHealthResponse,
 )
 
 

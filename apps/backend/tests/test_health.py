@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi.testclient import TestClient
@@ -43,20 +44,39 @@ def test_health_routes_preserve_existing_health_and_expose_assistant_health(monk
     assert health_response_schema == {"$ref": "#/components/schemas/HealthResponse"}
 
 
-def test_liveness_stays_healthy_when_readiness_dependency_fails(monkeypatch):
-    from core.health import DependencyHealthError
+def test_liveness_stays_healthy_when_readiness_dependency_fails():
+    from api.routes.health import get_health_service
     from main import app
+    from operations.application.health import HealthService
+    from operations.domain.health import DependencyHealthResult, HealthErrorCode, HealthStatus
 
-    def unavailable():
-        raise DependencyHealthError("Service dependencies are unavailable.")
+    class UnavailableCheck:
+        name = "postgres"
+        required = True
 
-    monkeypatch.setattr("api.routes.health.validate_dependency_health", unavailable)
+        async def check(self):
+            return DependencyHealthResult(
+                name=self.name,
+                status=HealthStatus.unhealthy,
+                required=self.required,
+                latency_ms=1,
+                code=HealthErrorCode.dependency_unavailable,
+                checked_at=datetime.now(timezone.utc),
+            )
+
+    app.dependency_overrides[get_health_service] = lambda: HealthService(
+        [UnavailableCheck()], timeout_seconds=1
+    )
     client = TestClient(app)
 
-    assert client.get("/health/live").status_code == 200
-    readiness = client.get("/health/ready")
-    assert readiness.status_code == 503
-    assert readiness.json()["detail"] == "Service dependencies are unavailable."
+    try:
+        assert client.get("/health/live").status_code == 200
+        readiness = client.get("/health/ready")
+        assert readiness.status_code == 503
+        assert readiness.json() == {"status": "not_ready"}
+        assert "postgres" not in readiness.text
+    finally:
+        app.dependency_overrides.pop(get_health_service, None)
 
 
 def test_metrics_endpoint_exports_prometheus_without_sensitive_identifiers(monkeypatch):

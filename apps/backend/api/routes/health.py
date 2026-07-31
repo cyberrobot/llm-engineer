@@ -1,32 +1,81 @@
-from fastapi import APIRouter, HTTPException, Response
+import logging
+from typing import Annotated, Literal
+
+from fastapi import APIRouter, Depends, Response, status
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from pydantic import BaseModel, ConfigDict
 
-from core.health import DependencyHealthError, validate_dependency_health
+from operations.api.health_dependencies import get_health_service
+from operations.application.health import HealthService
 
-router = APIRouter()
+logger = logging.getLogger(__name__)
 
-
-@router.get("/health")
-def health_check():
-    try:
-        validate_dependency_health()
-    except DependencyHealthError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"status": "healthy"}
+router = APIRouter(tags=["Health"])
 
 
-@router.get("/health/live")
-def liveness_check():
-    return {"status": "alive"}
+class LivenessResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["alive"] = "alive"
 
 
-@router.get("/health/ready")
-def readiness_check():
-    try:
-        validate_dependency_health()
-    except DependencyHealthError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"status": "ready"}
+class ReadinessResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["ready", "not_ready"]
+
+
+class LegacyHealthResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["healthy", "unhealthy"]
+
+
+@router.get(
+    "/health/live",
+    response_model=LivenessResponse,
+    summary="Check process liveness",
+    description="Public infrastructure probe with no external dependency access.",
+)
+async def liveness() -> LivenessResponse:
+    return LivenessResponse()
+
+
+@router.get(
+    "/health/ready",
+    response_model=ReadinessResponse,
+    responses={503: {"model": ReadinessResponse, "description": "A required dependency failed"}},
+    summary="Check application readiness",
+    description="Public probe with a deliberately minimal response and no dependency details.",
+)
+async def readiness(
+    response: Response,
+    health_service: Annotated[HealthService, Depends(get_health_service)],
+) -> ReadinessResponse:
+    diagnostic = await health_service.diagnose()
+    if not diagnostic.ready:
+        logger.warning(
+            "readiness_check_failed",
+            extra={"health_status": diagnostic.status.value},
+        )
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return ReadinessResponse(status="not_ready")
+    return ReadinessResponse(status="ready")
+
+
+@router.get(
+    "/health",
+    response_model=LegacyHealthResponse,
+    responses={503: {"model": LegacyHealthResponse, "description": "Application is not ready"}},
+    summary="Check application health (compatibility route)",
+    description="Backward-compatible readiness-style route. New probes should use /health/ready.",
+)
+async def health_check(
+    response: Response,
+    health_service: Annotated[HealthService, Depends(get_health_service)],
+) -> LegacyHealthResponse:
+    diagnostic = await health_service.diagnose()
+    if not diagnostic.ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return LegacyHealthResponse(status="unhealthy")
+    return LegacyHealthResponse(status="healthy")
 
 
 @router.get("/metrics", include_in_schema=False)

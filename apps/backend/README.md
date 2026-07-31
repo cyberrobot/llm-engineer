@@ -407,10 +407,9 @@ after observing real crawl sizes and provider latency.
 
 ### Administrative operations API foundation
 
-`GET /admin/operations` is the protected root of the operations administration API. It returns only
-service availability metadata and an empty capability list; health diagnostics, configuration
-visibility, metrics, audit-log browsing, cache administration, privileged actions, and dashboard
-aggregation are not implemented by this foundation.
+`GET /admin/operations` is the protected root of the operations administration API. It advertises
+the read-only `health` capability. Configuration visibility, metrics, audit-log browsing, cache
+administration, privileged actions, and dashboard aggregation are not implemented.
 
 Administrative routes use the API's existing opaque `X-API-Key` authentication convention. Set
 `ADMIN_API_KEY` to enable an administrative caller. When that value is absent or blank, the route
@@ -444,18 +443,42 @@ document replacement in one transaction.
 
 ### Health checks
 
-`GET /health` and `GET /assistant/health` keep their existing successful response contracts. With
-`APP_ENV=production`, both act as readiness checks and return `503` with a generic message when a
-required dependency is unavailable. They validate configuration, upload-storage writability,
-database connectivity, and availability of PostgreSQL's `vector` extension. Embedding readiness is
-validated without making a billable provider request: the configured provider, API credential,
-model, timeout, and retry settings are checked at startup and health-check time.
+The public probes intentionally have separate contracts:
 
-`GET /health/live` is process liveness and never fails because the queue is slow or a dependency is
-temporarily unavailable. `GET /health/ready` is the explicit dependency-readiness probe and uses the
-same safe checks. The worker's readiness command remains
-`python -m assistant.workers.ingestion --health-check`. Queue backlog is an operational signal, not
-a reason to restart a healthy API or worker.
+- `GET /health/live` always returns `200 {"status":"alive"}` after FastAPI startup has completed.
+  It performs no database, Redis, filesystem, or OpenAI work and is suitable for process/container
+  restart decisions.
+- `GET /health/ready` returns `200 {"status":"ready"}` when all required checks pass and
+  `503 {"status":"not_ready"}` otherwise. It never names a failed dependency.
+- `GET /health` remains a backward-compatible readiness-style route, returning the established
+  `200 {"status":"healthy"}` success payload or a minimal `503` failure payload. New deployments
+  should use the explicitly named probes.
+- `GET /assistant/health` retains its existing assistant-specific production validation contract.
+
+`GET /admin/operations/health` requires administrative read access and returns `generated_at`, the
+aggregate status, and safe per-check status, required/optional classification, latency, timestamp,
+and stable error code. A completed diagnostic request returns HTTP `200` even if the aggregate is
+`degraded` or `unhealthy`; those values describe dependencies, not failure of the diagnostic API.
+Missing or invalid credentials return `401`, while an authenticated principal without
+`operations:read` receives `403`. Raw exceptions, hostnames, connection strings, and credentials are
+never returned.
+
+PostgreSQL is registered as required when `DATABASE_URL` is configured. Redis is registered as an
+optional cache check unless `DISABLE_CACHE=true`, so its failure degrades detailed diagnostics but
+does not make readiness fail. OpenAI is a configuration-only optional diagnostic: it verifies that a
+credential is configured without constructing a client or making a completion, embedding, or other
+remote request. Independent checks run concurrently and each is bounded by
+`HEALTH_CHECK_TIMEOUT_SECONDS` (default `2`, valid range greater than zero through `10` seconds).
+No health result caching is used. Uvicorn completes the FastAPI lifespan startup—including validated
+configuration and configured database initialization—before serving routes, which is the readiness
+initialization guarantee.
+
+For a platform with separate probe settings, use `/health/live` for liveness and `/health/ready` for
+traffic readiness. Railway exposes a single health-check path, so configure `/health/ready`; this
+prevents a deployment with an unavailable required PostgreSQL dependency from receiving traffic.
+
+The worker's readiness command remains `python -m assistant.workers.ingestion --health-check`.
+Queue backlog is an operational signal, not a reason to restart a healthy API or worker.
 
 ### Ingestion progress and APIs
 
