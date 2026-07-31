@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 from threading import RLock
 from typing import Any
 from uuid import UUID
@@ -69,6 +70,9 @@ class DocumentIngestionJobRepository(ABC):
         offset: int,
         status: IngestionStatus | None = None,
         document_id: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        failed_step: IngestionStep | None = None,
     ) -> IngestionJobPage: ...
 
 
@@ -144,6 +148,9 @@ class InMemoryDocumentIngestionJobRepository(DocumentIngestionJobRepository):
         offset: int,
         status: IngestionStatus | None = None,
         document_id: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        failed_step: IngestionStep | None = None,
     ) -> IngestionJobPage:
         with self._lock:
             jobs = [
@@ -151,6 +158,12 @@ class InMemoryDocumentIngestionJobRepository(DocumentIngestionJobRepository):
                 for job in self._jobs.values()
                 if (status is None or job.status is status)
                 and (document_id is None or job.document_id == document_id)
+                and (created_from is None or job.created_at >= created_from)
+                and (created_to is None or job.created_at <= created_to)
+                and (
+                    failed_step is None
+                    or (job.status is IngestionStatus.failed and job.current_step is failed_step)
+                )
             ]
             jobs.sort(key=lambda job: (job.created_at, str(job.id)), reverse=True)
             return IngestionJobPage(items=deepcopy(jobs[offset : offset + limit]), total=len(jobs))
@@ -289,6 +302,9 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
         offset: int,
         status: IngestionStatus | None = None,
         document_id: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        failed_step: IngestionStep | None = None,
     ) -> IngestionJobPage:
         clauses: list[str] = []
         parameters: list[Any] = []
@@ -298,6 +314,15 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
         if document_id is not None:
             clauses.append("document_id = %s")
             parameters.append(document_id)
+        if created_from is not None:
+            clauses.append("created_at >= %s")
+            parameters.append(created_from)
+        if created_to is not None:
+            clauses.append("created_at <= %s")
+            parameters.append(created_to)
+        if failed_step is not None:
+            clauses.append("status = 'failed' AND current_step = %s")
+            parameters.append(failed_step.value)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         try:
             with self._connection_factory() as connection:

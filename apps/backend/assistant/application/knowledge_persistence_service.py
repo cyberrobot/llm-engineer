@@ -24,6 +24,7 @@ from assistant.domain.knowledge_persistence import (
     PreparedKnowledge,
     PreparedKnowledgeDocument,
 )
+from core.metrics import IngestionOperationalMetrics, ingestion_operational_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ class KnowledgePersistenceService:
         *,
         embedding_dimensions: int,
         embedding_batch_size: int,
+        metrics: IngestionOperationalMetrics = ingestion_operational_metrics,
     ) -> None:
         if embedding_dimensions < 1:
             raise ValueError("Embedding dimensions must be at least one")
@@ -79,6 +81,7 @@ class KnowledgePersistenceService:
         self._repository = repository
         self._embedding_dimensions = embedding_dimensions
         self._embedding_batch_size = embedding_batch_size
+        self._metrics = metrics
 
     def persist(
         self,
@@ -316,6 +319,7 @@ class KnowledgePersistenceService:
                 if command is not None:
                     transaction.record_committed_result(command, outcome)
         except KnowledgePersistenceError as exc:
+            self._metric("persistence_rolled_back")
             if isinstance(
                 exc,
                 (IngestionPersistenceConflictError, IngestionPersistenceConsistencyError),
@@ -330,6 +334,7 @@ class KnowledgePersistenceService:
             )
             raise
         except Exception as exc:
+            self._metric("persistence_rolled_back")
             self._log_failure(
                 operation_started_at,
                 len(prepared.documents),
@@ -382,6 +387,12 @@ class KnowledgePersistenceService:
             },
         )
         return outcome
+
+    def _metric(self, method: str, *args: object) -> None:
+        try:
+            getattr(self._metrics, method)(*args)
+        except Exception:
+            logger.warning("ingestion_telemetry_export_failed", extra={"reason": method})
 
     def create_command(
         self,

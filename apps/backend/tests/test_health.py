@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi.testclient import TestClient
 
 from assistant.schemas import HealthResponse
@@ -18,6 +20,9 @@ def test_health_routes_preserve_existing_health_and_expose_assistant_health(monk
     assert assistant_response.status_code == 200
     assert HealthResponse.model_validate(assistant_response.json()) == HealthResponse(status="ok")
 
+    assert client.get("/health/live").json() == {"status": "alive"}
+    assert client.get("/health/ready").json() == {"status": "ready"}
+
     openapi = app.openapi()
     registered_paths = set(openapi["paths"])
     assert {
@@ -36,6 +41,46 @@ def test_health_routes_preserve_existing_health_and_expose_assistant_health(monk
         "content"
     ]["application/json"]["schema"]
     assert health_response_schema == {"$ref": "#/components/schemas/HealthResponse"}
+
+
+def test_liveness_stays_healthy_when_readiness_dependency_fails(monkeypatch):
+    from core.health import DependencyHealthError
+    from main import app
+
+    def unavailable():
+        raise DependencyHealthError("Service dependencies are unavailable.")
+
+    monkeypatch.setattr("api.routes.health.validate_dependency_health", unavailable)
+    client = TestClient(app)
+
+    assert client.get("/health/live").status_code == 200
+    readiness = client.get("/health/ready")
+    assert readiness.status_code == 503
+    assert readiness.json()["detail"] == "Service dependencies are unavailable."
+
+
+def test_metrics_endpoint_exports_prometheus_without_sensitive_identifiers(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    from main import app
+
+    response = TestClient(app).get("/metrics")
+
+    assert response.status_code == 200
+    assert "ingestion_jobs_created_total" in response.text
+    assert "document_id=" not in response.text
+    assert "worker_id=" not in response.text
+
+
+def test_requests_receive_a_stable_valid_correlation_identifier(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    from main import app
+
+    supplied = "2aab3ef7-d57f-4f6f-8dda-25916ae2ce8c"
+    response = TestClient(app).get("/health/live", headers={"X-Request-ID": supplied})
+    generated = TestClient(app).get("/health/live", headers={"X-Request-ID": "not-a-uuid"})
+
+    assert response.headers["X-Request-ID"] == supplied
+    UUID(generated.headers["X-Request-ID"])
 
 
 def test_openapi_includes_versioned_assistant_contracts(monkeypatch):

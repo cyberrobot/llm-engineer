@@ -389,9 +389,8 @@ Worker settings and defaults:
 - `INGESTION_WORKER_SHUTDOWN_GRACE_SECONDS=30`
 - `INGESTION_WORKER_ID` optional; otherwise hostname, PID, and a startup UUID form the identity
 
-PR 9G remains responsible for deeper metrics, dashboards, and alerting. PR 9H remains responsible
-for cleanup/retention operations. Queue priorities, scheduled jobs, replay UI, progress streaming,
-and automatic scaling are intentionally not included.
+PR 9H remains responsible for cleanup and retention operations. Queue priorities, scheduled jobs,
+replay UI, progress streaming, and automatic scaling are intentionally not included.
 
 ## Production operations
 
@@ -448,8 +447,49 @@ database connectivity, and availability of PostgreSQL's `vector` extension. Embe
 validated without making a billable provider request: the configured provider, API credential,
 model, timeout, and retry settings are checked at startup and health-check time.
 
-Use a process-level liveness probe when a deployment needs to distinguish liveness from readiness;
-these existing endpoints intentionally report dependency readiness in production.
+`GET /health/live` is process liveness and never fails because the queue is slow or a dependency is
+temporarily unavailable. `GET /health/ready` is the explicit dependency-readiness probe and uses the
+same safe checks. The worker's readiness command remains
+`python -m assistant.workers.ingestion --health-check`. Queue backlog is an operational signal, not
+a reason to restart a healthy API or worker.
+
+### Ingestion progress and APIs
+
+The `document_ingestion_jobs` row remains authoritative. `GET /ingestion/jobs/{id}` adds
+`queued_at`, completed and total step counts, `progress_percent`, queue-wait, processing and total
+durations, and a safe structured failure. The ordered pipeline is PARSE, CHUNK, EMBED, PERSIST.
+Progress is `round(completed_step_count / total_step_count * 100)`, capped to 0–100; queued jobs are
+0 and completed jobs are always 100. A running step does not add partial credit, retries do not add
+progress, and failed jobs retain their last committed checkpoint. Production currently checkpoints
+PERSIST because earlier website inputs are transient, so API progress is intentionally coarse rather
+than claiming unrecoverable intermediate state.
+
+Durations are derived on read and clamped at zero: queue wait is `started_at - queued_at`, processing
+is terminal `completed_at - started_at` or active `now - started_at`, and total is terminal
+`completed_at - queued_at` or active `now - queued_at`. They are milliseconds and no real-time value
+is repeatedly persisted.
+
+`GET /ingestion/jobs` is bounded to 100 records and supports offset pagination plus `status`,
+`document_id`, `created_from`, `created_to`, and `failed_step`; ordering is `created_at DESC, id DESC`.
+`GET /ingestion/jobs/{id}/steps` returns safe attempt history. These routes require `X-API-Key` using
+`INGEST_API_KEY`/`ADMIN_API_KEY`. The repository has no end-user/tenant identity model, so this is an
+admin boundary, not per-user ownership. `GET /internal/ingestion/status` uses the same key and reports
+queued/running/recoverable counts, oldest queued age, and workers inferred from active unexpired
+leases. It does not claim to count idle workers.
+
+Each logical step attempt has a unique `(ingestion_job_id, step, attempt_number)`. The first attempt
+is 1 and a retry or recovered execution gets the next number. Terminal results cannot overwrite one
+another. Recovery marks an unfinished history row `interrupted` without inventing a completion time,
+then starts a new attempt. Start and terminal records add two small database writes per executed
+attempt. Final duration uses the process monotonic clock; UTC wall timestamps provide chronology.
+
+```text
+QUEUED -> PARSE running -> PARSE completed -> CHUNK running -> CHUNK completed
+-> EMBED retrying -> EMBED completed -> PERSIST completed -> COMPLETED
+
+durable lifecycle transition -> structured event -> metrics update
+-> logs -> API reflects committed state
+```
 
 ### Logging
 
@@ -458,12 +498,18 @@ include the ingestion job ID, stage, page/document/chunk counts, embedding count
 processing, persistence, embedding, and total durations. Logs use an explicit field allow-list and
 never serialize HTML, cleaned document or chunk text, vectors, provider payloads, credentials, or
 exception messages. Exception type and stage remain available for diagnosis without exposing
-internal details to API clients.
+internal details to API clients. Every JSON record has an `event`; request work also has a validated
+or generated `request_id`, returned as `X-Request-ID`. Worker activity uses `ingestion_job_id`/`job_id`,
+`document_id`, safe `worker_id`, and `claim_version` for correlation. Step events include
+`ingestion_step_attempt_started`, `ingestion_step_attempt_completed`,
+`ingestion_step_attempt_failed`, `ingestion_step_retry_scheduled`, and retry exhaustion/success.
+Successful heartbeats are DEBUG to bound log volume. Full checksums, filenames, document/chunk text,
+embeddings, raw provider bodies, credentials, and exception messages are not allow-listed.
 
 ### Metrics
 
 The application registers these low-cardinality instruments in the standard `prometheus_client`
-default registry for collection by the deployment's existing Python/ASGI Prometheus exporter:
+default registry, exposed at `GET /metrics`:
 
 - histograms: `ingestion_duration_seconds`,
   `ingestion_website_loading_duration_seconds`, `ingestion_processing_duration_seconds`,
@@ -472,11 +518,41 @@ default registry for collection by the deployment's existing Python/ASGI Prometh
   `ingestion_pages_processed_total`, `ingestion_pages_skipped_total`,
   `ingestion_documents_persisted_total`, `ingestion_chunks_persisted_total`, and
   `ingestion_embeddings_generated_total`
+- job/worker counters: `ingestion_jobs_created_total`, `ingestion_jobs_claimed_total`,
+  `ingestion_jobs_completed_total`, `ingestion_jobs_failed_total`,
+  `ingestion_jobs_recovered_total`, `ingestion_step_attempts_total`,
+  `ingestion_step_retries_total`, `ingestion_persistence_rollbacks_total`,
+  `ingestion_duplicates_total`, `ingestion_pipeline_skipped_total`,
+  `ingestion_forced_reindex_total`, and `worker_lease_losses_total`
+- database-derived gauges refreshed by the internal status query: `ingestion_jobs_queued`,
+  `ingestion_jobs_running`, `ingestion_recoverable_jobs`, and
+  `ingestion_oldest_queued_age_seconds`, plus `ingestion_workers_active` inferred from live leases
+- job/worker histograms: `ingestion_queue_wait_seconds`,
+  `ingestion_job_processing_duration_seconds`, `ingestion_total_duration_seconds`,
+  `ingestion_step_duration_seconds`, and `worker_job_execution_duration_seconds`
 
-No metrics route is added here because API endpoint expansion is outside this hardening change.
-Deployments should expose the default registry through their existing metrics sidecar or ASGI
-instrumentation. Metric labels deliberately exclude URLs, job IDs, content, and other unbounded or
-sensitive values.
+Labels are limited to bounded `step` and `failure_category` values (plus Prometheus histogram bucket
+labels). They deliberately exclude URLs, job/document/worker IDs, filenames, checksums, tenant data,
+content, and exception messages. Counters are emitted after authoritative state writes. As with most
+in-process Prometheus counters, a process crash between commit and increment can under-count; gauges
+are derived from database state and remain authoritative for current queue state. Export failures
+are non-fatal and do not consume ingestion retries.
+
+No OpenTelemetry dependency or established trace exporter exists, so PR 9G does not introduce a
+second tracing stack. Logs, durable attempt history, metrics, and request/job correlation provide the
+current observability path.
+
+### Dashboard and alert recommendations
+
+A minimal dashboard should graph queued/running jobs, oldest queued age, completion/failure rate,
+queue wait and total duration, duration by step, retries by step/failure category, recoveries, lease
+losses, persistence rollbacks, and deduplicated/skipped submissions. Persistence and deduplication
+retain their existing metrics/logs; they are not relabelled with job IDs.
+
+Configure environment-specific alerts for: oldest queued age above the service objective; queued
+work with no recent claims; elevated terminal failure rate; recovery or lease-loss spikes; retry
+exhaustion; p95 total duration; and persistence rollback rate. Backlog and latency alerts must not be
+wired to liveness restarts. Thresholds belong in deployment monitoring configuration, not code.
 
 ### Troubleshooting and limitations
 
@@ -486,7 +562,9 @@ sensitive values.
 - A failed ingestion remains safe to retry. Unchanged content does not regenerate embeddings or
   duplicate documents, chunks, or vectors. A concurrent writer is serialized per source URL.
 - Website crawling is synchronous, same-origin, non-JavaScript, and bounded by the configured page
-  and response limits. Queues, scheduling, distributed workers, and dashboards remain out of scope.
+  and response limits. Traces, a dashboard UI, alert delivery, streaming progress, worker registry,
+  queue scheduling, cancellation, cleanup, and retention remain out of scope. Cleanup/retention and
+  reconciliation of old observability history are intentionally deferred to PR 9H.
 
 ## Validate
 

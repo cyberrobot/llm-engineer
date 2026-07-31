@@ -86,10 +86,15 @@ def test_expired_claim_is_recovered_once_and_stale_worker_cannot_complete():
     worker_repository = PostgresIngestionWorkerRepository()
 
     try:
-        first = worker_repository.claim_next("worker-a", timedelta(seconds=1), NOW)
+        job = PostgresDocumentIngestionJobRepository().list(
+            limit=1, offset=0, document_id=document_id
+        )
+        assert len(job.items) == 1
+        job_id = job.items[0].id
+        first = worker_repository.claim_job(job_id, "worker-a", timedelta(seconds=1), NOW)
         assert first
-        second = worker_repository.claim_next(
-            "worker-b", timedelta(seconds=60), NOW + timedelta(seconds=2)
+        second = worker_repository.claim_job(
+            job_id, "worker-b", timedelta(seconds=60), NOW + timedelta(seconds=2)
         )
         assert second
         assert second.job_id == first.job_id
@@ -104,8 +109,8 @@ def test_expired_claim_is_recovered_once_and_stale_worker_cannot_complete():
             stale_repository.update(stale)
 
         assert (
-            worker_repository.claim_next(
-                "worker-c", timedelta(seconds=60), NOW + timedelta(seconds=3)
+            worker_repository.claim_job(
+                job_id, "worker-c", timedelta(seconds=60), NOW + timedelta(seconds=3)
             )
             is None
         )
