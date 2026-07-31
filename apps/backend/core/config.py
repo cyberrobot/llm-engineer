@@ -1,6 +1,8 @@
 import os
+import socket
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from dotenv import load_dotenv
 
@@ -124,6 +126,38 @@ class IngestionRetrySettings:
             )
 
 
+@dataclass(frozen=True)
+class IngestionWorkerSettings:
+    enabled: bool
+    poll_interval_seconds: float
+    lease_seconds: float
+    heartbeat_interval_seconds: float
+    concurrency: int
+    shutdown_grace_seconds: float
+    worker_id: str
+
+    def __post_init__(self) -> None:
+        if self.poll_interval_seconds <= 0:
+            raise ValueError("INGESTION_WORKER_POLL_INTERVAL_SECONDS must be greater than zero")
+        if self.lease_seconds <= 0:
+            raise ValueError("INGESTION_WORKER_LEASE_SECONDS must be greater than zero")
+        if self.heartbeat_interval_seconds <= 0:
+            raise ValueError(
+                "INGESTION_WORKER_HEARTBEAT_INTERVAL_SECONDS must be greater than zero"
+            )
+        if self.heartbeat_interval_seconds >= self.lease_seconds:
+            raise ValueError(
+                "INGESTION_WORKER_HEARTBEAT_INTERVAL_SECONDS must be shorter than "
+                "INGESTION_WORKER_LEASE_SECONDS"
+            )
+        if self.concurrency < 1:
+            raise ValueError("INGESTION_WORKER_CONCURRENCY must be at least 1")
+        if self.shutdown_grace_seconds < 0:
+            raise ValueError("INGESTION_WORKER_SHUTDOWN_GRACE_SECONDS must not be negative")
+        if not self.worker_id.strip():
+            raise ValueError("INGESTION_WORKER_ID must not be empty")
+
+
 def get_ai_settings() -> AISettings:
     """Read AI configuration from the environment at the composition boundary."""
     timeout = _env_float("AI_REQUEST_TIMEOUT", 30)
@@ -233,6 +267,24 @@ def get_ingestion_retry_settings() -> IngestionRetrySettings:
     )
 
 
+def get_ingestion_worker_settings() -> IngestionWorkerSettings:
+    configured_id = os.getenv("INGESTION_WORKER_ID")
+    worker_id = (
+        configured_id.strip()
+        if configured_id is not None
+        else f"{socket.gethostname()}-{os.getpid()}-{uuid4().hex[:12]}"
+    )
+    return IngestionWorkerSettings(
+        enabled=_env_bool("INGESTION_WORKER_ENABLED", True),
+        poll_interval_seconds=_env_float("INGESTION_WORKER_POLL_INTERVAL_SECONDS", 1),
+        lease_seconds=_env_float("INGESTION_WORKER_LEASE_SECONDS", 60),
+        heartbeat_interval_seconds=_env_float("INGESTION_WORKER_HEARTBEAT_INTERVAL_SECONDS", 20),
+        concurrency=_env_int("INGESTION_WORKER_CONCURRENCY", 1),
+        shutdown_grace_seconds=_env_float("INGESTION_WORKER_SHUTDOWN_GRACE_SECONDS", 30),
+        worker_id=worker_id,
+    )
+
+
 def get_openai_api_key() -> str | None:
     return os.getenv("OPENAI_API_KEY")
 
@@ -262,6 +314,7 @@ def validate_startup_configuration() -> None:
     get_website_loader_settings()
     get_content_processing_settings()
     get_ingestion_retry_settings()
+    get_ingestion_worker_settings()
     get_database_settings()
     if get_max_upload_bytes() <= 0:
         raise ValueError("MAX_UPLOAD_MB must be greater than zero")

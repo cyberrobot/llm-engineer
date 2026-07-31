@@ -248,6 +248,28 @@ def get_ingestion_pipeline_runner(
     retry_policy: Annotated[IngestionRetryPolicy, Depends(get_ingestion_retry_policy)],
     sleeper: Annotated[Callable[[float], None], Depends(get_ingestion_retry_sleeper)],
 ) -> IngestionPipelineRunner:
+    return build_ingestion_pipeline_runner(
+        repository,
+        definition,
+        website_loader,
+        content_processing_service,
+        knowledge_persistence_service,
+        classifier,
+        retry_policy,
+        sleeper,
+    )
+
+
+def build_ingestion_pipeline_runner(
+    repository: DocumentIngestionJobRepository,
+    definition: IngestionPipelineDefinition,
+    website_loader: WebsiteLoader,
+    content_processing_service: ContentProcessingService,
+    knowledge_persistence_service: KnowledgePersistenceService,
+    classifier: IngestionFailureClassifier,
+    retry_policy: IngestionRetryPolicy,
+    sleeper: Callable[[float], None],
+) -> IngestionPipelineRunner:
     return IngestionPipelineRunner(
         repository,
         definition,
