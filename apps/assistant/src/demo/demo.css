@@ -1,0 +1,99 @@
+:root {
+  color: #1a2a23;
+  background: #f0efe9;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+}
+
+body {
+  margin: 0;
+}
+
+.demoPage {
+  display: grid;
+  gap: 4rem;
+  width: min(100% - 2rem, 72rem);
+  margin: 0 auto;
+  padding: 4rem 0 6rem;
+  box-sizing: border-box;
+}
+
+.demoIntro {
+  max-width: 46rem;
+}
+
+.demoIntro h1,
+.demoSectionHeading h2,
+.demoIntro p,
+.demoSectionHeading p,
+.demoSectionHeading span {
+  margin: 0;
+}
+
+.demoIntro h1 {
+  margin: 0.35rem 0 1rem;
+  color: #123d2d;
+  font-family: Georgia, serif;
+  font-size: clamp(2rem, 6vw, 4rem);
+  font-weight: 500;
+  line-height: 1.05;
+}
+
+.demoEyebrow,
+.demoSectionHeading p {
+  color: #8b895f;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.demoIntro > p:last-child,
+.demoSectionHeading span {
+  color: #5d665f;
+  line-height: 1.6;
+}
+
+.demoSection {
+  display: grid;
+  grid-template-columns: minmax(12rem, 18rem) minmax(0, 48rem);
+  gap: 2rem;
+  align-items: start;
+}
+
+.demoSectionHeading {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.demoSectionHeading h2 {
+  color: #123d2d;
+  font-size: 1.25rem;
+}
+
+.demoSectionHeading span {
+  font-size: 0.875rem;
+}
+
+.demoResult {
+  min-height: 1.5rem;
+  color: #123d2d;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.demoNarrow {
+  width: 20rem;
+  max-width: 100%;
+}
+
+@media (max-width: 48rem) {
+  .demoPage {
+    padding-top: 2rem;
+  }
+
+  .demoSection {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+}
