@@ -3,6 +3,8 @@ import logging
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 
+from core.correlation import request_id_context
+
 STRUCTURED_FIELDS = {
     "attempt_number",
     "chunks_created",
@@ -33,6 +35,7 @@ STRUCTURED_FIELDS = {
     "lease_expires_at",
     "document_id",
     "failure_code",
+    "failure_category",
     "page_url",
     "pages_loaded",
     "pages_skipped",
@@ -42,12 +45,14 @@ STRUCTURED_FIELDS = {
     "provider",
     "maximum_attempts",
     "reason",
+    "request_id",
     "root_url",
     "source_url",
     "stage",
     "status_code",
     "success",
     "retryable",
+    "retry_count",
     "security_scope_id",
     "step",
     "total_duration_ms",
@@ -64,6 +69,7 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
+            "event": record.getMessage(),
         }
         for field in STRUCTURED_FIELDS:
             if hasattr(record, field):
@@ -74,9 +80,17 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str, separators=(",", ":"))
 
 
+class CorrelationFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "request_id"):
+            record.request_id = request_id_context.get()
+        return True
+
+
 def configure_logging() -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
+    handler.addFilter(CorrelationFilter())
     logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)

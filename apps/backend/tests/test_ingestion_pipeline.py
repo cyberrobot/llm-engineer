@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import psycopg
@@ -19,6 +20,9 @@ from assistant.domain.document_ingestion_job import DocumentIngestionJob, Ingest
 from assistant.domain.ingestion_status import IngestionStatus
 from assistant.infrastructure.repositories.document_ingestion_job import (
     InMemoryDocumentIngestionJobRepository,
+)
+from assistant.infrastructure.repositories.ingestion_observability import (
+    InMemoryIngestionStepExecutionRepository,
 )
 from core.config import IngestionRetrySettings
 from infrastructure.ai.exceptions import AIRateLimitError, AITimeoutError
@@ -208,7 +212,7 @@ def test_unexpected_exception_becomes_safe_typed_failure_without_leaking_details
     assert stored.status is IngestionStatus.failed
     assert stored.last_completed_step is None
     assert "provider token secret" not in (stored.failure_message or "")
-    assert "provider token secret" in caplog.text
+    assert "provider token secret" not in caplog.text
 
 
 @pytest.mark.parametrize("terminal", ["completed", "failed", "cancelled"])
@@ -358,6 +362,71 @@ def test_retry_exhaustion_fails_safely_without_advancing_or_running_later_steps(
     assert stored.last_completed_step is None
     assert stored.retry_count == 2
     assert stored.failure_code == "ingestion_rate_limited"
+
+
+def test_pipeline_persists_step_attempt_timing_and_retry_history():
+    document_id = str(uuid4())
+    repository = RecordingRepository(document_id)
+    created = repository.create(DocumentIngestionJob.create(document_id))
+    executions = InMemoryIngestionStepExecutionRepository()
+    calls: list[IngestionStep] = []
+    embed = SequencedStep(
+        IngestionStep.embed,
+        calls,
+        [AITimeoutError(), IngestionStepResult.success()],
+    )
+    wall_times = iter(
+        datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc) + timedelta(seconds=value)
+        for value in range(20)
+    )
+    monotonic_times = iter(float(value) for value in range(20))
+    runner = IngestionPipelineRunner(
+        repository,
+        pipeline(calls, embed=embed),  # type: ignore[arg-type]
+        classifier=IngestionFailureClassifier(),
+        retry_policy=IngestionRetryPolicy(IngestionRetrySettings(2, 0, 1, 0, False)),
+        sleeper=lambda _delay: None,
+        step_executions=executions,
+        now=lambda: next(wall_times),
+        monotonic_clock=lambda: next(monotonic_times),
+    )
+
+    result = runner.run(created.id)
+
+    assert result.succeeded
+    history = executions.list_for_job(created.id)
+    assert [(item.step, item.attempt_number, item.status.value) for item in history] == [
+        (IngestionStep.parse, 1, "completed"),
+        (IngestionStep.chunk, 1, "completed"),
+        (IngestionStep.embed, 1, "failed"),
+        (IngestionStep.embed, 2, "completed"),
+        (IngestionStep.persist, 1, "completed"),
+    ]
+    assert all(item.duration_ms == 1_000 for item in history)
+    assert history[2].failure_code == "ingestion_timeout"
+    assert history[2].retryable is True
+
+
+def test_metrics_exporter_failure_does_not_change_successful_ingestion():
+    class FailingMetrics:
+        def __getattr__(self, _name):
+            def fail(*_args, **_kwargs):
+                raise RuntimeError("metrics backend unavailable")
+
+            return fail
+
+    document_id = str(uuid4())
+    repository = RecordingRepository(document_id)
+    created = repository.create(DocumentIngestionJob.create(document_id))
+
+    result = IngestionPipelineRunner(
+        repository,
+        pipeline([]),
+        metrics=FailingMetrics(),  # type: ignore[arg-type]
+    ).run(created.id)
+
+    assert result.succeeded
+    assert stored_job(repository, created.id).status is IngestionStatus.completed
 
 
 def test_new_runner_retains_scheduled_attempt_and_completed_checkpoint_after_interruption():

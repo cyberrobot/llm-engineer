@@ -25,14 +25,36 @@ class PostgresIngestionWorkerRepository(IngestionWorkerRepository):
     def claim_next(
         self, worker_id: str, lease_duration: timedelta, now: datetime
     ) -> IngestionJobClaim | None:
+        return self._claim(worker_id, lease_duration, now, job_id=None)
+
+    def claim_job(
+        self,
+        job_id: UUID,
+        worker_id: str,
+        lease_duration: timedelta,
+        now: datetime,
+    ) -> IngestionJobClaim | None:
+        return self._claim(worker_id, lease_duration, now, job_id=job_id)
+
+    def _claim(
+        self,
+        worker_id: str,
+        lease_duration: timedelta,
+        now: datetime,
+        *,
+        job_id: UUID | None,
+    ) -> IngestionJobClaim | None:
+        target_clause = "AND jobs.id = %s" if job_id is not None else ""
+        parameters = (str(job_id), now) if job_id is not None else (now,)
         try:
             with self._connection_factory() as connection:
                 row = connection.execute(
-                    """
+                    f"""
                     SELECT jobs.id, jobs.document_id, jobs.status
                     FROM document_ingestion_jobs AS jobs
                     JOIN documents ON documents.id = jobs.document_id
                     WHERE documents.source_url IS NOT NULL
+                      {target_clause}
                       AND (
                            jobs.status = 'queued'
                        OR (
@@ -47,7 +69,7 @@ class PostgresIngestionWorkerRepository(IngestionWorkerRepository):
                     FOR UPDATE OF jobs SKIP LOCKED
                     LIMIT 1
                     """,
-                    (now,),
+                    parameters,
                 ).fetchone()
                 if row is None:
                     return None
@@ -58,6 +80,11 @@ class PostgresIngestionWorkerRepository(IngestionWorkerRepository):
                     UPDATE document_ingestion_jobs
                     SET status = 'running',
                         started_at = COALESCE(started_at, %s),
+                        current_step_attempt_count = CASE
+                            WHEN %s AND current_step IS NOT NULL
+                            THEN current_step_attempt_count + 1
+                            ELSE current_step_attempt_count
+                        END,
                         worker_id = %s,
                         claimed_at = %s,
                         lease_expires_at = %s,
@@ -69,6 +96,7 @@ class PostgresIngestionWorkerRepository(IngestionWorkerRepository):
                     """,
                     (
                         now,
+                        recovered,
                         worker_id,
                         now,
                         lease_expires_at,
