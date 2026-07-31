@@ -10,6 +10,11 @@ from assistant.infrastructure.repositories.ingestion_job import (
     InMemoryIngestionJobRepository,
     PostgresIngestionJobRepository,
 )
+from assistant.infrastructure.repositories.ingestion_worker import (
+    FencedPostgresDocumentIngestionJobRepository,
+    IngestionOwnershipLost,
+    PostgresIngestionWorkerRepository,
+)
 from assistant.infrastructure.repositories.knowledge_persistence import (
     PostgresKnowledgePersistenceRepository,
 )
@@ -23,6 +28,9 @@ __all__ = [
     "InMemoryIngestionJobRepository",
     "KnowledgeRepository",
     "PostgresIngestionJobRepository",
+    "PostgresIngestionWorkerRepository",
+    "FencedPostgresDocumentIngestionJobRepository",
+    "IngestionOwnershipLost",
     "PostgresDocumentIngestionJobRepository",
     "PostgresKnowledgePersistenceRepository",
     "VectorKnowledgeRepository",

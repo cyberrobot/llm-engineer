@@ -37,7 +37,7 @@ def test_create_get_and_list_ingestion_jobs(client_and_documents):
     created_response = client.post("/ingestion/jobs", json={"document_id": document_id})
     created = created_response.json()
 
-    assert created_response.status_code == 201
+    assert created_response.status_code == 202
     assert set(created) == {
         "id",
         "document_id",
@@ -75,7 +75,7 @@ def test_idempotent_creation_and_conflict(client_and_documents):
     repeated = client.post("/ingestion/jobs", json={"document_id": first}, headers=headers)
     conflict = client.post("/ingestion/jobs", json={"document_id": second}, headers=headers)
 
-    assert first_response.status_code == repeated.status_code == 201
+    assert first_response.status_code == repeated.status_code == 202
     assert repeated.json()["id"] == first_response.json()["id"]
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == "idempotency_key_conflict"

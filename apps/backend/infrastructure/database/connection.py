@@ -1,6 +1,9 @@
 import psycopg
 
 from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS, get_database_settings
+from infrastructure.database.migrations.background_worker_execution import (
+    upgrade as upgrade_background_worker_execution,
+)
 from infrastructure.database.migrations.file_integrity_deduplication import (
     upgrade as upgrade_file_integrity_deduplication,
 )
@@ -130,6 +133,7 @@ def init_db():
                 )
             """)
             upgrade_transactional_ingestion_persistence(cur)
+            upgrade_background_worker_execution(cur)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS audit_logs (
                     id BIGSERIAL PRIMARY KEY,

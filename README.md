@@ -64,7 +64,14 @@ source apps/backend/venv/bin/activate
 npm run dev:api
 ```
 
-Run the web app in another terminal:
+Run the ingestion worker in another terminal:
+
+```sh
+source apps/backend/venv/bin/activate
+npm run dev:worker
+```
+
+Run the web app in a third terminal:
 
 ```sh
 npm run dev:web

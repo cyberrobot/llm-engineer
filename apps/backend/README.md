@@ -157,7 +157,7 @@ current document model has no archive state, so every persisted, accessible docu
 is eligible as canonical content.
 
 Upload responses distinguish `NEW_CONTENT`, `DUPLICATE_CONTENT`, `MODIFIED_CONTENT`, and
-`FORCED_REINDEX`. New content returns `201` with one queued ingestion job. A completed identical upload
+`FORCED_REINDEX`. New content returns `202` with one queued ingestion job. A completed identical upload
 returns `200`, the canonical document and completed job, and `ingestion_required=false`. A queued or
 running match returns its active job with `ingestion_in_progress=true`; it never creates a second active
 job. Failed or cancelled matches retain their terminal history and create a new queued recovery job on
@@ -178,19 +178,16 @@ instead of a server error. The partial job predicate excludes legacy jobs withou
 so migration does not rewrite their lifecycle. Database work is limited to short lookup/insert/update
 transactions; hashing never holds a database transaction open.
 
-The upload endpoint preserves the existing queued execution model: it performs preflight and job
-creation but does not add a worker or execute parsing/embedding in the upload request. The existing run
-endpoint remains the execution boundary, and callers must invoke it only when `ingestion_required` is
-true. Forced or modified indexing continues to use the current single active chunk set and existing
-replacement persistence. A source file is stored before preflight and duplicate physical uploads are
-not automatically deleted, as storage cleanup and lifecycle policy are intentionally out of scope.
-Stronger coordination between source replacement and the final indexed representation is deferred to
-PR 9E. Observability, distributed claiming/leases, cleanup, and worker orchestration remain deferred to
-PRs 9F-9H.
+The upload endpoint performs preflight and job creation without parsing or embedding in the HTTP
+request. The current pipeline reconstructs website sources from `documents.source_url`; PDF parsing is
+not yet a pipeline step, so workers deliberately leave upload-only jobs queued rather than claiming
+and failing them. PDF execution and stored-source lifecycle are follow-up work.
 
 Document ingestion requests have a persistent job record under `document_ingestion_jobs`. A document
-must already exist before its job is created. `POST /ingestion/jobs/{job_id}/run` executes the job
-synchronously in the current API process through this explicit sequence:
+must already exist before its job is created. `POST /ingestion/jobs` commits a queued job and returns
+`202 Accepted`; database polling is the durable dispatch mechanism. The compatibility
+`POST /ingestion/jobs/{job_id}/run` endpoint remains available, while normal execution is owned by the
+separate worker through this explicit sequence:
 
 ```text
 PARSE -> CHUNK -> EMBED -> PERSIST
@@ -279,10 +276,10 @@ The API provides:
 - `POST /ingestion/jobs` with a `document_id` JSON field
 - `GET /ingestion/jobs/{job_id}`
 - `GET /ingestion/jobs` with `limit`, `offset`, `status`, and `document_id` filters
-- `POST /ingestion/jobs/{job_id}/run` for synchronous execution
+- `POST /ingestion/jobs/{job_id}/run` as the existing synchronous compatibility path
 
-Creation returns `201 Created`. The optional, case-sensitive `Idempotency-Key` request header is trimmed
-and limited to 255 characters. Repeating the same key and document returns the original job with `201`;
+Creation returns `202 Accepted`. The optional, case-sensitive `Idempotency-Key` request header is trimmed
+and limited to 255 characters. Repeating the same key and document returns the original job with `202`;
 reusing the key for another document returns `409 Conflict`. A partial unique database index makes this
 safe under concurrent requests. The key is intentionally omitted from API responses.
 
@@ -322,11 +319,79 @@ EMBED attempt 2 -> provider unavailable -> persist retry_count=2 -> wait 2 secon
 EMBED attempt 3 -> success -> persist checkpoint -> continue to PERSIST
 ```
 
-This pipeline still does not add progress percentages, queues, workers, delayed scheduling,
-distributed claiming, manual retry endpoints, cancellation commands, or asynchronous execution.
+This pipeline still does not add progress percentages, delayed scheduling, manual retry endpoints,
+or cancellation commands.
 Durable source snapshots are required before finer website checkpoints are enabled. Transactional
-persistence strengthening, observability, distributed job claiming/leases, operational cleanup, and
-worker orchestration remain deferred to PRs 9E-9H.
+persistence is complete; deeper observability and operational cleanup remain deferred to PRs 9G-9H.
+
+### Background ingestion worker
+
+The ingestion-job table is both the authoritative lifecycle record and the PostgreSQL-backed durable
+queue. No broker is involved. The API commits a `queued` row before returning, so a worker can always
+discover it even if the API process exits immediately:
+
+```text
+API creates QUEUED job -> worker claims job -> RUNNING -> heartbeat renews lease
+-> pipeline resumes from checkpoint -> COMPLETED or FAILED
+```
+
+Each claim is one short transaction. It selects the oldest eligible website job by
+`created_at ASC, id ASC` using `FOR UPDATE SKIP LOCKED`, changes `queued` to `running`, assigns
+`worker_id`, sets `claimed_at`, `last_heartbeat_at`, and `lease_expires_at`, increments
+`claim_version`, and commits before pipeline work begins. Independent connections are used for
+claims, heartbeats, and pipeline operations. Multiple processes therefore skip locked work rather
+than blocking or executing the same valid claim.
+
+The lease defaults to 60 seconds and is renewed every 20 seconds. Heartbeats require the current
+`worker_id`, `claim_version`, running status, and an unexpired lease. Pipeline lifecycle and retry
+writes use the same worker/version fence. A stale process cannot complete, fail, or extend a job
+after another worker recovers it. Terminal updates clear live ownership. A legacy or crashed
+`running` job with no lease, or an expired lease, is recoverable without resetting `started_at`,
+checkpoints, or attempt counts:
+
+```text
+worker crashes -> heartbeat stops -> lease expires -> another worker increments claim_version
+-> pipeline reconstructs from durable state -> idempotent PERSIST completes once
+```
+
+This is at-least-once delivery plus exclusive leased execution and an idempotent pipeline, producing
+an effectively-once committed representation; it is not exactly-once execution.
+
+Run locally from `apps/backend` in separate terminals:
+
+```sh
+python -m uvicorn main:app --reload
+python -m assistant.workers.ingestion
+```
+
+The same Docker image runs both processes. Configure the web service with the existing `uvicorn`
+command and a separate Railway worker service with:
+
+```sh
+python -m assistant.workers.ingestion
+```
+
+Both services share `DATABASE_URL`, AI/provider settings, and ingestion settings. Start with one
+worker replica and `INGESTION_WORKER_CONCURRENCY=1`; replicas and per-process concurrency may be
+increased safely, with at least one database connection available per active pipeline plus heartbeat
+and polling connections. The process handles SIGTERM/SIGINT by stopping new claims, waiting up to
+`INGESTION_WORKER_SHUTDOWN_GRACE_SECONDS`, and then stopping heartbeats for unfinished jobs so their
+leases can expire. Deployment liveness is the worker process exit state; a database readiness probe
+can run `python -m assistant.workers.ingestion --health-check`. Use an on-failure restart policy.
+
+Worker settings and defaults:
+
+- `INGESTION_WORKER_ENABLED=true`
+- `INGESTION_WORKER_POLL_INTERVAL_SECONDS=1`
+- `INGESTION_WORKER_LEASE_SECONDS=60`
+- `INGESTION_WORKER_HEARTBEAT_INTERVAL_SECONDS=20`
+- `INGESTION_WORKER_CONCURRENCY=1`
+- `INGESTION_WORKER_SHUTDOWN_GRACE_SECONDS=30`
+- `INGESTION_WORKER_ID` optional; otherwise hostname, PID, and a startup UUID form the identity
+
+PR 9G remains responsible for deeper metrics, dashboards, and alerting. PR 9H remains responsible
+for cleanup/retention operations. Queue priorities, scheduled jobs, replay UI, progress streaming,
+and automatic scaling are intentionally not included.
 
 ## Production operations
 
