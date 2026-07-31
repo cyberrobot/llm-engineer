@@ -337,6 +337,29 @@ requires `DATABASE_URL` and `OPENAI_API_KEY`; invalid configuration prevents the
 accepting traffic. Recommended starting values are the defaults in `.env.example`, adjusted only
 after observing real crawl sizes and provider latency.
 
+### Administrative operations API foundation
+
+`GET /admin/operations` is the protected root of the operations administration API. It returns only
+service availability metadata and an empty capability list; health diagnostics, configuration
+visibility, metrics, audit-log browsing, cache administration, privileged actions, and dashboard
+aggregation are not implemented by this foundation.
+
+Administrative routes use the API's existing opaque `X-API-Key` authentication convention. Set
+`ADMIN_API_KEY` to enable an administrative caller. When that value is absent or blank, the route
+remains registered for API-contract stability but fails closed with `401 Unauthorized` for every
+credential. A valid non-administrative API key is authenticated but receives `403 Forbidden`.
+Credentials and authorization headers are never included in responses or structured logs.
+
+Authorization has two extension levels:
+
+- `operations:read` permits inspection-only operations and protects the router by default.
+- `operations:execute` is additionally required by future state-changing operations.
+
+The configured administrative key currently receives both permissions. Future execute endpoints
+must opt in to the execute dependency; the distinction does not itself add any state-changing route.
+Responses may reuse the UTC `generated_at` metadata contract and an optional request identifier when
+a trusted request-context facility is available.
+
 External operations are bounded:
 
 - website requests use `INGESTION_TIMEOUT_SECONDS` and retry connection failures at most

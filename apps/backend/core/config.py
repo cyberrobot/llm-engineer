@@ -241,6 +241,13 @@ def get_ingest_api_key() -> str | None:
     return os.getenv("INGEST_API_KEY") or os.getenv("ADMIN_API_KEY")
 
 
+def get_admin_api_key() -> str | None:
+    """Return the administrative API credential, if administration is configured."""
+
+    value = os.getenv("ADMIN_API_KEY")
+    return value if value and value.strip() else None
+
+
 def get_max_upload_bytes() -> int:
     return _env_int("MAX_UPLOAD_MB", 25) * 1024 * 1024
 
