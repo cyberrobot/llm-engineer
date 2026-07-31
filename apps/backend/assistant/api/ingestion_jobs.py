@@ -31,7 +31,7 @@ def _error(status_code: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
-@router.post("", response_model=DocumentIngestionJobResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=DocumentIngestionJobResponse, status_code=status.HTTP_202_ACCEPTED)
 def create_ingestion_job(
     request: CreateIngestionJobRequest,
     service: Annotated[DocumentIngestionJobService, Depends(get_document_ingestion_job_service)],

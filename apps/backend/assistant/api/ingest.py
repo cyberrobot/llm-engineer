@@ -77,7 +77,7 @@ def ingest(request: Request, body: IngestRequest):
     return ingest_document(text=body.text, doc_type=body.doc_type, access_roles=body.access_roles)
 
 
-@router.post("/ingest/upload", status_code=201)
+@router.post("/ingest/upload", status_code=202)
 @limiter.limit("5/minute")
 async def upload_pdf(
     request: Request,
@@ -198,14 +198,14 @@ async def upload_pdf(
             },
         ) from exc
 
-    response.status_code = 201 if result.ingestion_required else 200
+    response.status_code = 202 if result.ingestion_required else 200
 
     return {
         "document_id": result.document_id,
         "job_id": str(result.ingestion_job_id),
         "ingestion_job_id": str(result.ingestion_job_id),
         "filename": original_filename,
-        "status": "uploaded" if result.ingestion_required else "deduplicated",
+        "status": "queued" if result.ingestion_required else "deduplicated",
         "next_stage": "validate" if result.ingestion_required else None,
         "content_status": result.content_status.value,
         "deduplicated": result.deduplicated,

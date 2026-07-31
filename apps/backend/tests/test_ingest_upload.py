@@ -65,13 +65,13 @@ def test_successful_pdf_upload_creates_document_job_and_returns_shape(tmp_path, 
     with patch("assistant.api.ingest.uuid.uuid4", return_value="upload-id"):
         response = post_upload(client)
 
-    assert response.status_code == 201
+    assert response.status_code == 202
     assert response.json() == {
         "document_id": "doc-id",
         "job_id": "00000000-0000-0000-0000-000000000009",
         "ingestion_job_id": "00000000-0000-0000-0000-000000000009",
         "filename": "policy.pdf",
-        "status": "uploaded",
+        "status": "queued",
         "next_stage": "validate",
         "content_status": "NEW_CONTENT",
         "deduplicated": False,
@@ -134,7 +134,7 @@ def test_repeated_upload_reuses_active_job_and_force_reindex_creates_job_after_c
         headers={"X-API-Key": "test-key"},
     )
 
-    assert created.status_code == 201
+    assert created.status_code == 202
     assert active_duplicate.status_code == 200
     assert active_duplicate.json()["document_id"] == created.json()["document_id"]
     assert active_duplicate.json()["job_id"] == created.json()["job_id"]
@@ -151,7 +151,7 @@ def test_repeated_upload_reuses_active_job_and_force_reindex_creates_job_after_c
         headers={"X-API-Key": "test-key"},
     )
 
-    assert forced.status_code == 201
+    assert forced.status_code == 202
     assert forced.json()["content_status"] == "FORCED_REINDEX"
     assert forced.json()["document_id"] == created.json()["document_id"]
     assert forced.json()["job_id"] != created.json()["job_id"]
@@ -220,7 +220,7 @@ def test_fingerprint_service_reads_upload_incrementally(tmp_path, monkeypatch):
 
     response = post_upload(client, content=b"%PDF-1.7-streamed")
 
-    assert response.status_code == 201
+    assert response.status_code == 202
     submitted = client.app.state.file_ingestion_service.submit.call_args.args[0]
     assert submitted.fingerprint.file_size_bytes == len(b"%PDF-1.7-streamed")
 
