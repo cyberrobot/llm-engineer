@@ -2,8 +2,9 @@
 
 This package defines the stable, serializable records used by the evaluation framework, loads
 repository-managed evaluation datasets from JSON, calculates deterministic retrieval and
-answer-quality metrics, and orchestrates complete in-memory evaluation runs. It does not persist
-reports and does not provide a CLI or API endpoint.
+answer-quality metrics, orchestrates complete evaluation runs, and can persist terminal runs as
+versioned JSON reports. Report persistence is opt-in; the package provides no evaluation API
+endpoint or database persistence.
 
 The models have three boundaries:
 
@@ -282,6 +283,12 @@ The main options are:
   `--skip-citation-validation` expose the corresponding deterministic answer-evaluation controls.
 - `--json` writes only the complete serialized `EvaluationRun` to standard output. `--pretty` adds
   indentation and is rejected unless `--json` is also present.
+- `--report PATH` writes the complete run to exactly that path and creates missing parent
+  directories. The filename and extension are not changed.
+- `--report-dir PATH` creates the directory and missing parents, then uses a deterministic generated
+  filename.
+- `--overwrite-report` explicitly permits replacement and is rejected unless a report destination
+  is also supplied. `--report` and `--report-dir` are mutually exclusive.
 
 By default, standard output contains a concise run summary, aggregate retrieval/answer metrics,
 timing, and safe diagnostics for failed or errored cases. It does not include prompts, generated
@@ -315,12 +322,90 @@ Exit codes are stable:
 | 3 | Dataset loading, JSON parsing, schema, or field validation failed. |
 | 4 | The run completed with one or more case execution errors. |
 | 5 | Service bootstrap or run-level execution failed. |
+| 6 | A run was returned, but explicitly requested report persistence failed. |
 
 Case execution errors take precedence over deterministic failures. Some skipped cases do not fail a
-run when all evaluated cases pass.
+run when all evaluated cases pass. A report error takes precedence over the evaluation outcome
+because an explicitly requested artifact was not produced.
 
-The CLI keeps each run in memory. It writes no report or baseline files, performs no baseline
-comparison, and intentionally does not modify the dataset or application configuration. The
-production services used by this runner are stateless for these operations and do not invoke the
-legacy RAG audit-log path; future changes to those service contracts may introduce inherited side
-effects that should be documented here.
+Without a report flag, the CLI keeps each run in memory and creates no files or report directory.
+It performs no baseline comparison and intentionally does not modify the dataset or application
+configuration. The production services used by this runner are stateless for these operations and
+do not invoke the legacy RAG audit-log path; future changes to those service contracts may
+introduce inherited side effects that should be documented here.
+
+## Evaluation report persistence
+
+Each report is one complete UTF-8 JSON serialization of `EvaluationRun`, including the run ID,
+dataset identity, status and timestamps, configuration, metadata, ordered case results, retrieval
+and answer results, structured diagnostics, safe errors, and aggregate summary. Human-diffable
+two-space indentation and a final newline are the defaults. Persistence does not recalculate
+metrics, reorder results, fetch omitted retrieved content, generate a new ID or timestamp, execute
+services, or mutate the run.
+
+`EvaluationRun.schema_version` is the report schema version and currently supports only `"1.0"`.
+It is distinct from `EvaluationDataset.schema_version`, which versions the dataset file structure,
+and `EvaluationRun.dataset_version`, which records the dataset content revision. Persisted reports
+must explicitly contain `schema_version`; loading rejects missing and unknown versions without
+migration. Pydantic validates the complete model and structured field errors are retained.
+
+Only terminal `completed` and `failed` runs can be saved or loaded as reports. Failed partial runs
+remain valuable records and are supported; transient `pending` and `running` values are rejected.
+The report is written to a temporary file in the destination directory, flushed and fsynced, then
+committed atomically within normal local-filesystem constraints. With overwrite disabled, an atomic
+same-filesystem hard link provides no-clobber behavior even if another writer creates the
+destination concurrently. With overwrite enabled, `os.replace` atomically replaces the destination.
+Temporary files are removed after success and expected failures. Filesystems must support normal
+same-directory atomic replacement and hard links; no cross-filesystem move or file lock is used.
+
+Save to an explicit path (missing parents are created):
+
+```bash
+python -m assistant.evaluation \
+  --dataset examples/evaluation/example-dataset.json \
+  --report evaluation-reports/latest.json
+```
+
+Generate a filename inside an explicitly requested directory:
+
+```bash
+python -m assistant.evaluation \
+  --dataset examples/evaluation/example-dataset.json \
+  --report-dir evaluation-reports
+```
+
+The generated format is
+`{dataset-name}-{dataset-version}-{started-at-utc}-{run-id}.json`. Components are lowercase,
+bounded, and sanitized to letters, digits, hyphens, underscores, and dots; unsafe sequences become
+hyphens. For example:
+`support-knowledge-baseline-2026.07-20260730T085912Z-run-20260730-001.json`.
+
+Existing destinations are protected by default. Replace one explicitly with:
+
+```bash
+python -m assistant.evaluation \
+  --dataset examples/evaluation/example-dataset.json \
+  --report evaluation-reports/latest.json \
+  --overwrite-report
+```
+
+Human output prints `Report saved to: ...` only after the write succeeds. In `--json` mode, standard
+output remains only the serialized run and the confirmation is written to standard error.
+
+Load a report without executing evaluation logic:
+
+```python
+from assistant.evaluation import load_evaluation_report
+
+run = load_evaluation_report("evaluation-reports/latest.json")
+print(run.summary)
+```
+
+Reports can contain questions, generated answers, source identifiers, retrieved metadata, safe
+errors, and—when `include_retrieved_content` was enabled—retrieved content. They must be handled
+according to the application's data-classification requirements. Persistence never adds
+environment variables, tokens, service objects, database URLs, HTTP headers, cookies, or raw stack
+traces.
+
+Report comparison, regression thresholds, trends, discovery, retention, signing, remote storage,
+and baseline semantics are deliberately outside this package boundary.

@@ -180,6 +180,37 @@ def test_pretty_requires_json_and_help_succeeds(capsys):
     assert "validated evaluation dataset" in capsys.readouterr().out
 
 
+def test_report_arguments_are_explicit_and_validated(capsys):
+    explicit = parse_arguments(
+        ["--dataset", "suite.json", "--report", "reports/latest.data", "--overwrite-report"]
+    )
+    generated = parse_arguments(["--dataset", "suite.json", "--report-dir", "reports"])
+
+    assert explicit.report == "reports/latest.data"
+    assert explicit.report_dir is None
+    assert explicit.overwrite_report is True
+    assert generated.report is None
+    assert generated.report_dir == "reports"
+
+    with pytest.raises(SystemExit) as conflicting:
+        parse_arguments(
+            [
+                "--dataset",
+                "suite.json",
+                "--report",
+                "one.json",
+                "--report-dir",
+                "reports",
+            ]
+        )
+    assert conflicting.value.code == EvaluationCliExitCode.USAGE_ERROR
+
+    with pytest.raises(SystemExit) as meaningless:
+        parse_arguments(["--dataset", "suite.json", "--overwrite-report"])
+    assert meaningless.value.code == EvaluationCliExitCode.USAGE_ERROR
+    assert "--overwrite-report requires" in capsys.readouterr().err
+
+
 def test_human_renderer_includes_required_summary_and_formats_metrics():
     output = render_evaluation_summary(_run())
 
@@ -372,6 +403,151 @@ def test_pretty_json_changes_only_formatting():
 
     assert json.loads(outputs[0]) == json.loads(outputs[1])
     assert '\n  "id"' in outputs[1]
+
+
+@pytest.mark.parametrize(
+    ("extra", "expected_name"),
+    [
+        (["--report", "latest.data"], "latest.data"),
+        (["--report-dir", "reports"], None),
+    ],
+)
+def test_cli_persists_report_after_run_and_preserves_outcome(
+    tmp_path, monkeypatch, extra, expected_name
+):
+    monkeypatch.chdir(tmp_path)
+    expected_run = _run(summary=_summary(total=1, passed=0, failed=1))
+
+    class Runner:
+        def run_dataset(self, _dataset, *, options):
+            return expected_run
+
+    @contextmanager
+    def runner_context():
+        yield Runner()
+
+    stdout, stderr = StringIO(), StringIO()
+    code = run_cli(
+        parse_arguments(["--dataset", "suite.json", *extra]),
+        stdout=stdout,
+        stderr=stderr,
+        load_dataset=lambda _path: object(),
+        runner_context_factory=runner_context,
+    )
+
+    reports = list(tmp_path.rglob("*.json")) + list(tmp_path.rglob("*.data"))
+    assert code == EvaluationCliExitCode.EVALUATION_FAILED
+    assert len(reports) == 1
+    if expected_name is not None:
+        assert reports[0].name == expected_name
+    assert json.loads(reports[0].read_text(encoding="utf-8"))["id"] == "run-123"
+    assert f"Report saved to: {reports[0].relative_to(tmp_path)}" in stdout.getvalue()
+    assert stderr.getvalue() == ""
+
+
+def test_json_mode_report_confirmation_uses_stderr_without_corrupting_stdout(tmp_path):
+    expected_run = _run()
+
+    class Runner:
+        def run_dataset(self, _dataset, *, options):
+            return expected_run
+
+    @contextmanager
+    def runner_context():
+        yield Runner()
+
+    path = tmp_path / "run.json"
+    stdout, stderr = StringIO(), StringIO()
+    code = run_cli(
+        parse_arguments(["--dataset", "suite.json", "--json", "--report", str(path)]),
+        stdout=stdout,
+        stderr=stderr,
+        load_dataset=lambda _path: object(),
+        runner_context_factory=runner_context,
+    )
+
+    assert code == EvaluationCliExitCode.SUCCESS
+    assert json.loads(stdout.getvalue())["id"] == "run-123"
+    assert stderr.getvalue() == f"Report saved to: {path}\n"
+
+
+def test_failed_partial_run_with_case_error_is_persisted_and_keeps_case_error_exit_code(tmp_path):
+    expected_run = _run(
+        status=EvaluationRunStatus.FAILED,
+        summary=_summary(total=2, passed=0, errors=1, skipped=1),
+    )
+
+    class Runner:
+        def run_dataset(self, _dataset, *, options):
+            return expected_run
+
+    @contextmanager
+    def runner_context():
+        yield Runner()
+
+    path = tmp_path / "partial.json"
+    code = run_cli(
+        parse_arguments(["--dataset", "suite.json", "--report", str(path)]),
+        stdout=StringIO(),
+        stderr=StringIO(),
+        load_dataset=lambda _path: object(),
+        runner_context_factory=runner_context,
+    )
+
+    assert code == EvaluationCliExitCode.CASE_EXECUTION_ERROR
+    assert json.loads(path.read_text(encoding="utf-8"))["status"] == "failed"
+
+
+def test_report_error_takes_precedence_and_does_not_claim_success(tmp_path):
+    expected_run = _run(summary=_summary(total=1, passed=0, errors=1))
+    path = tmp_path / "existing.json"
+    path.write_text("keep", encoding="utf-8")
+
+    class Runner:
+        def run_dataset(self, _dataset, *, options):
+            return expected_run
+
+    @contextmanager
+    def runner_context():
+        yield Runner()
+
+    stdout, stderr = StringIO(), StringIO()
+    code = run_cli(
+        parse_arguments(["--dataset", "suite.json", "--report", str(path)]),
+        stdout=stdout,
+        stderr=stderr,
+        load_dataset=lambda _path: object(),
+        runner_context_factory=runner_context,
+    )
+
+    assert code == EvaluationCliExitCode.REPORT_ERROR
+    assert "Evaluation completed" in stdout.getvalue()
+    assert "Unable to save evaluation report" in stderr.getvalue()
+    assert "Report saved" not in stdout.getvalue() + stderr.getvalue()
+    assert path.read_text(encoding="utf-8") == "keep"
+
+
+def test_cli_without_report_flags_creates_no_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    class Runner:
+        def run_dataset(self, _dataset, *, options):
+            return _run()
+
+    @contextmanager
+    def runner_context():
+        yield Runner()
+
+    code = run_cli(
+        parse_arguments(["--dataset", "suite.json"]),
+        stdout=StringIO(),
+        stderr=StringIO(),
+        load_dataset=lambda _path: object(),
+        runner_context_factory=runner_context,
+    )
+
+    assert code == EvaluationCliExitCode.SUCCESS
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_dataset_errors_use_stderr_do_not_bootstrap_and_return_three():
