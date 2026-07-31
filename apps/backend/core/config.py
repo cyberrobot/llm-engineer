@@ -91,6 +91,14 @@ class DatabaseSettings:
 
 
 @dataclass(frozen=True)
+class HealthCheckSettings:
+    """Short timeout and dependency enablement for repeatable operational probes."""
+
+    timeout_seconds: float
+    redis_disabled: bool
+
+
+@dataclass(frozen=True)
 class ContentProcessingSettings:
     """Character-based limits for deterministic website content processing."""
 
@@ -226,6 +234,16 @@ def get_database_settings() -> DatabaseSettings:
     )
 
 
+def get_health_check_settings() -> HealthCheckSettings:
+    timeout_seconds = _env_float("HEALTH_CHECK_TIMEOUT_SECONDS", 2)
+    if timeout_seconds <= 0 or timeout_seconds > 10:
+        raise ValueError("HEALTH_CHECK_TIMEOUT_SECONDS must be greater than zero and at most 10")
+    return HealthCheckSettings(
+        timeout_seconds=timeout_seconds,
+        redis_disabled=_env_bool("DISABLE_CACHE", False),
+    )
+
+
 def get_content_processing_settings() -> ContentProcessingSettings:
     chunk_size = _env_int("INGESTION_CHUNK_SIZE_CHARACTERS", 1200)
     overlap = _env_int("INGESTION_CHUNK_OVERLAP_CHARACTERS", 150)
@@ -323,6 +341,7 @@ def validate_startup_configuration() -> None:
     get_ingestion_retry_settings()
     get_ingestion_worker_settings()
     get_database_settings()
+    get_health_check_settings()
     if get_max_upload_bytes() <= 0:
         raise ValueError("MAX_UPLOAD_MB must be greater than zero")
     if not get_upload_dir().as_posix().strip():

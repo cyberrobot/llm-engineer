@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
+from operations.domain.health import DependencyHealthResult, HealthStatus
+
 
 class AdministrativeErrorCode(str, Enum):
     authentication_required = "admin_authentication_required"
@@ -45,3 +47,8 @@ class OperationsRootResponse(OperationsResponseMetadata):
     service: Literal["operations"] = "operations"
     status: Literal["available"] = "available"
     capabilities: list[str] = Field(default_factory=list)
+
+
+class OperationsHealthResponse(OperationsResponseMetadata):
+    status: HealthStatus
+    checks: list[DependencyHealthResult]
