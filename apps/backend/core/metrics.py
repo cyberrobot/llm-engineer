@@ -102,6 +102,33 @@ class IngestionMetrics:
 ingestion_metrics = IngestionMetrics()
 
 
+class AdministratorAuthenticationMetrics:
+    """Bounded authentication counters without identity or network labels."""
+
+    def __init__(self, *, registry: CollectorRegistry = REGISTRY) -> None:
+        self.login_attempts = Counter(
+            "admin_login_attempts_total", "Administrator login attempts.", registry=registry
+        )
+        self.login_successes = Counter(
+            "admin_login_successes_total", "Successful administrator logins.", registry=registry
+        )
+        self.login_failures = Counter(
+            "admin_login_failures_total", "Failed administrator logins.", registry=registry
+        )
+        self.login_throttled = Counter(
+            "admin_login_throttled_total", "Throttled administrator logins.", registry=registry
+        )
+        self.sessions_created = Counter(
+            "admin_sessions_created_total", "Administrator sessions created.", registry=registry
+        )
+        self.sessions_revoked = Counter(
+            "admin_sessions_revoked_total", "Administrator sessions revoked.", registry=registry
+        )
+
+
+administrator_authentication_metrics = AdministratorAuthenticationMetrics()
+
+
 class IngestionOperationalMetrics:
     """Job/worker metrics whose labels are deliberately bounded enumerations."""
 

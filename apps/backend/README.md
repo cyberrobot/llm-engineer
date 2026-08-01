@@ -6,6 +6,9 @@ Operational ingestion retention, reconciliation, dry-run commands, scheduling gu
 failure recovery are documented in the
 [ingestion maintenance runbook](docs/ingestion-maintenance-runbook.md).
 
+Administrator login, bootstrap, cookie-session security, and the frontend integration contract are
+documented in [administrator authentication](docs/administrator-authentication.md).
+
 ## Run locally
 
 Install dependencies from `requirements.txt`, copy `.env.example` to `.env`, and run:

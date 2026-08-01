@@ -236,6 +236,8 @@ def test_health_validation_checks_database_and_vector_extension(monkeypatch, tmp
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("DATABASE_URL", "postgresql://configured")
     monkeypatch.setenv("OPENAI_API_KEY", "configured")
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.com")
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_PASSWORD", "production-placeholder-password")
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
 
     validate_dependency_health(connection_factory=lambda: Connection())

@@ -15,3 +15,5 @@ mypy
 beautifulsoup4
 prometheus-client
 tenacity
+argon2-cffi
+email-validator

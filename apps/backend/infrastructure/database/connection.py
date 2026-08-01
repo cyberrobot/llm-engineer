@@ -1,6 +1,9 @@
 import psycopg
 
 from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS, get_database_settings
+from infrastructure.database.migrations.administrator_authentication import (
+    upgrade as upgrade_administrator_authentication,
+)
 from infrastructure.database.migrations.assistant_domain_scoping import (
     upgrade as upgrade_assistant_domain_scoping,
 )
@@ -47,6 +50,7 @@ def init_db():
         with conn.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
             cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+            upgrade_administrator_authentication(cur)
             cur.execute("""
                 DO $$
                 BEGIN

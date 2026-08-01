@@ -2,6 +2,7 @@ import os
 import socket
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, cast
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -166,6 +167,51 @@ class IngestionWorkerSettings:
             raise ValueError("INGESTION_WORKER_ID must not be empty")
 
 
+@dataclass(frozen=True)
+class AdminAuthenticationSettings:
+    """Central security policy for administrator credentials and sessions."""
+
+    bootstrap_email: str | None
+    bootstrap_password: str | None
+    session_ttl_seconds: int
+    cookie_name: str
+    cookie_secure: bool
+    cookie_samesite: Literal["lax", "strict"]
+    trusted_origins: tuple[str, ...]
+    login_max_failures: int
+    login_lockout_seconds: int
+    throttle_window_seconds: int
+    throttle_ip_attempts: int
+    throttle_email_attempts: int
+    throttle_global_attempts: int
+
+    def __post_init__(self) -> None:
+        if (self.bootstrap_email is None) != (self.bootstrap_password is None):
+            raise ValueError(
+                "ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD must be configured together"
+            )
+        if self.session_ttl_seconds <= 0:
+            raise ValueError("ADMIN_SESSION_TTL_SECONDS must be greater than zero")
+        if not self.cookie_name.strip():
+            raise ValueError("ADMIN_SESSION_COOKIE_NAME must not be empty")
+        if self.cookie_samesite not in {"lax", "strict"}:
+            raise ValueError("ADMIN_SESSION_COOKIE_SAMESITE must be lax or strict")
+        if not self.trusted_origins:
+            raise ValueError("ADMIN_TRUSTED_ORIGINS must include at least one origin")
+        if any(not origin.startswith(("http://", "https://")) for origin in self.trusted_origins):
+            raise ValueError("ADMIN_TRUSTED_ORIGINS must contain absolute HTTP(S) origins")
+        for name, value in (
+            ("ADMIN_LOGIN_MAX_FAILURES", self.login_max_failures),
+            ("ADMIN_LOGIN_LOCKOUT_SECONDS", self.login_lockout_seconds),
+            ("ADMIN_LOGIN_THROTTLE_WINDOW_SECONDS", self.throttle_window_seconds),
+            ("ADMIN_LOGIN_THROTTLE_IP_ATTEMPTS", self.throttle_ip_attempts),
+            ("ADMIN_LOGIN_THROTTLE_EMAIL_ATTEMPTS", self.throttle_email_attempts),
+            ("ADMIN_LOGIN_THROTTLE_GLOBAL_ATTEMPTS", self.throttle_global_attempts),
+        ):
+            if value <= 0:
+                raise ValueError(f"{name} must be greater than zero")
+
+
 def get_ai_settings() -> AISettings:
     """Read AI configuration from the environment at the composition boundary."""
     timeout = _env_float("AI_REQUEST_TIMEOUT", 30)
@@ -318,6 +364,38 @@ def get_admin_api_key() -> str | None:
     return value if value and value.strip() else None
 
 
+def get_admin_authentication_settings() -> AdminAuthenticationSettings:
+    environment = os.getenv("APP_ENV", "development").strip().lower()
+    email = os.getenv("ADMIN_BOOTSTRAP_EMAIL")
+    password = os.getenv("ADMIN_BOOTSTRAP_PASSWORD")
+    origins = tuple(
+        origin.strip()
+        for origin in os.getenv(
+            "ADMIN_TRUSTED_ORIGINS",
+            "http://localhost:5173,https://app.redmoorconsulting.co.uk",
+        ).split(",")
+        if origin.strip()
+    )
+    cookie_samesite = os.getenv("ADMIN_SESSION_COOKIE_SAMESITE", "lax").strip().lower()
+    if cookie_samesite not in {"lax", "strict"}:
+        raise ValueError("ADMIN_SESSION_COOKIE_SAMESITE must be lax or strict")
+    return AdminAuthenticationSettings(
+        bootstrap_email=email.strip() if email and email.strip() else None,
+        bootstrap_password=password if password else None,
+        session_ttl_seconds=_env_int("ADMIN_SESSION_TTL_SECONDS", 8 * 60 * 60),
+        cookie_name=os.getenv("ADMIN_SESSION_COOKIE_NAME", "redmoor_admin_session").strip(),
+        cookie_secure=_env_bool("ADMIN_SESSION_COOKIE_SECURE", environment != "development"),
+        cookie_samesite=cast(Literal["lax", "strict"], cookie_samesite),
+        trusted_origins=origins,
+        login_max_failures=_env_int("ADMIN_LOGIN_MAX_FAILURES", 5),
+        login_lockout_seconds=_env_int("ADMIN_LOGIN_LOCKOUT_SECONDS", 15 * 60),
+        throttle_window_seconds=_env_int("ADMIN_LOGIN_THROTTLE_WINDOW_SECONDS", 60),
+        throttle_ip_attempts=_env_int("ADMIN_LOGIN_THROTTLE_IP_ATTEMPTS", 20),
+        throttle_email_attempts=_env_int("ADMIN_LOGIN_THROTTLE_EMAIL_ATTEMPTS", 10),
+        throttle_global_attempts=_env_int("ADMIN_LOGIN_THROTTLE_GLOBAL_ATTEMPTS", 200),
+    )
+
+
 def get_max_upload_bytes() -> int:
     return _env_int("MAX_UPLOAD_MB", 25) * 1024 * 1024
 
@@ -342,6 +420,7 @@ def validate_startup_configuration() -> None:
     get_ingestion_worker_settings()
     get_database_settings()
     get_health_check_settings()
+    admin_auth = get_admin_authentication_settings()
     if get_max_upload_bytes() <= 0:
         raise ValueError("MAX_UPLOAD_MB must be greater than zero")
     if not get_upload_dir().as_posix().strip():
@@ -354,3 +433,5 @@ def validate_startup_configuration() -> None:
             raise ValueError("DATABASE_URL is required in production")
         if not ai_settings.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required in production")
+        if not admin_auth.cookie_secure:
+            raise ValueError("ADMIN_SESSION_COOKIE_SECURE must be true in production")

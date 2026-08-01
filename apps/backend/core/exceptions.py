@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
@@ -67,7 +68,27 @@ def ingestion_failed_handler(request: Request, exc: Exception) -> Response:
     return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
+async def request_validation_error_handler(request: Request, exc: Exception) -> Response:
+    if not isinstance(exc, RequestValidationError):
+        raise exc
+    if not request.url.path.startswith("/admin/auth/"):
+        from fastapi.exception_handlers import request_validation_exception_handler
+
+        return await request_validation_exception_handler(request, exc)
+    return JSONResponse(
+        status_code=400,
+        content={
+            "detail": {
+                "code": "invalid_request",
+                "message": "The authentication request is invalid.",
+            }
+        },
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)
     app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
     app.add_exception_handler(AIProviderError, ai_provider_error_handler)
     app.add_exception_handler(IngestionJobNotFound, ingestion_job_not_found_handler)
