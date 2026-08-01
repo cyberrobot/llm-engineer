@@ -48,32 +48,32 @@ def upgrade(cursor: Any) -> None:
         DO $$ BEGIN
             ALTER TABLE documents ADD CONSTRAINT documents_assistant_id_fkey
                 FOREIGN KEY (assistant_id) REFERENCES assistants(id) ON DELETE RESTRICT;
-        EXCEPTION WHEN duplicate_object THEN NULL; END $$
+        EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$
     """)
     cursor.execute("""
         DO $$ BEGIN
             ALTER TABLE documents ADD CONSTRAINT documents_retrieval_state_check
                 CHECK (retrieval_state IN ('enabled', 'disabled'));
-        EXCEPTION WHEN duplicate_object THEN NULL; END $$
+        EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$
     """)
     cursor.execute("""
         DO $$ BEGIN
             ALTER TABLE documents ADD CONSTRAINT documents_id_assistant_unique
                 UNIQUE (id, assistant_id);
-        EXCEPTION WHEN duplicate_object THEN NULL; END $$
+        EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$
     """)
     cursor.execute("""
         DO $$ BEGIN
             ALTER TABLE chunks ADD CONSTRAINT chunks_assistant_id_fkey
                 FOREIGN KEY (assistant_id) REFERENCES assistants(id) ON DELETE RESTRICT;
-        EXCEPTION WHEN duplicate_object THEN NULL; END $$
+        EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$
     """)
     cursor.execute("""
         DO $$ BEGIN
             ALTER TABLE chunks ADD CONSTRAINT chunks_document_assistant_fkey
                 FOREIGN KEY (doc_id, assistant_id) REFERENCES documents(id, assistant_id)
                 ON DELETE CASCADE;
-        EXCEPTION WHEN duplicate_object THEN NULL; END $$
+        EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$
     """)
     cursor.execute("DROP INDEX IF EXISTS documents_source_url_unique_idx")
     cursor.execute("""
