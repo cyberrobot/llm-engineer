@@ -1,4 +1,4 @@
-import type { FormEvent, KeyboardEvent } from 'react'
+import type { FormEvent, KeyboardEvent, RefObject } from 'react'
 
 import styles from './AssistantWidget.module.css'
 
@@ -8,9 +8,11 @@ interface MessageComposerProps {
   assistantName: string
   disabled: boolean
   inputId: string
+  inputRef?: RefObject<HTMLTextAreaElement | null>
   placeholder: string
   statusId: string
   value: string
+  error?: string
   onChange: (value: string) => void
   onSubmit: () => void
 }
@@ -19,9 +21,11 @@ export function MessageComposer({
   assistantName,
   disabled,
   inputId,
+  inputRef,
   placeholder,
   statusId,
   value,
+  error,
   onChange,
   onSubmit,
 }: MessageComposerProps) {
@@ -43,11 +47,13 @@ export function MessageComposer({
         Ask {assistantName} a question
       </label>
       <textarea
+        aria-invalid={error ? true : undefined}
         aria-describedby={statusId}
         autoComplete="off"
         className={styles.input}
         disabled={disabled}
         id={inputId}
+        ref={inputRef}
         maxLength={MAX_MESSAGE_LENGTH}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={handleKeyDown}
@@ -58,6 +64,7 @@ export function MessageComposer({
       <button className={styles.submit} disabled={disabled || value.trim().length === 0} type="submit">
         Send<span className={styles.visuallyHidden}> message</span>
       </button>
+      {error && <p className={styles.validationError}>{error}</p>}
     </form>
   )
 }

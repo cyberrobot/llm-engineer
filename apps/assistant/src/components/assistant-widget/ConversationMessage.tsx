@@ -1,8 +1,8 @@
-import type { AssistantMessage } from './AssistantWidget.types'
+import type { StatefulConversationMessage } from './conversationHistory'
 import styles from './AssistantWidget.module.css'
 
 interface ConversationMessageProps {
-  message: AssistantMessage
+  message: StatefulConversationMessage
 }
 
 export function ConversationMessage({ message }: ConversationMessageProps) {

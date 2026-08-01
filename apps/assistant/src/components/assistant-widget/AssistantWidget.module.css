@@ -96,6 +96,36 @@
   margin-top: 1.5rem;
 }
 
+.pending,
+.failure {
+  margin: 1.25rem 0 0;
+  color: #5d665f;
+}
+
+.failure {
+  padding: 0.75rem 1rem;
+  border-left: 3px solid #9d3d2f;
+  background: #fff6f3;
+  color: #55251f;
+}
+
+.failure p,
+.validationError {
+  margin: 0;
+}
+
+.retry {
+  margin-top: 0.65rem;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 0.4rem;
+  background: #ffffff;
+  color: #55251f;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .suggestionsLabel {
   margin-bottom: 0.5rem;
   color: #5d665f;
@@ -180,6 +210,12 @@
   background: #0d3024;
 }
 
+.validationError {
+  grid-column: 1 / -1;
+  color: #8a2f24;
+  font-size: 0.875rem;
+}
+
 .input:focus-visible,
 .submit:focus-visible,
 .suggestion:focus-visible {
@@ -188,9 +224,20 @@
   box-shadow: 0 0 0 5px #c6a95d;
 }
 
+.retry:focus-visible {
+  outline: 2px solid #123d2d;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px #c6a95d;
+}
+
 .input:disabled,
 .submit:disabled,
 .suggestion:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.retry:disabled {
   cursor: not-allowed;
   opacity: 0.6;
 }
