@@ -25,6 +25,7 @@ def test_migration_bootstraps_and_backfills_assistant_scoped_knowledge_safely():
     )
     assert "documents_retrieval_state_check" in sql
     assert "chunks_document_assistant_fkey" in sql
+    assert "duplicate_object OR duplicate_table" in sql
     assert "ON DELETE CASCADE" in sql
     assert "documents_assistant_source_url_unique_idx" in sql
     assert "documents_assistant_retrieval_state_idx" in sql
