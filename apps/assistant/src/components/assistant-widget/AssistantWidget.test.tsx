@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { AssistantWidget } from './AssistantWidget'
+import { AssistantWidgetConversation as AssistantWidget } from './AssistantWidget'
 import {
   AssistantChatError,
   type AssistantChatClient,

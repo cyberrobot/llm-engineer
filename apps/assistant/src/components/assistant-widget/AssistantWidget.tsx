@@ -79,7 +79,7 @@ function clientKey(client: object | undefined): string {
   return String(nextClientKey)
 }
 
-function AssistantWidgetConversation({
+function Conversation({
   assistantName = DEFAULT_ASSISTANT_NAME,
   welcomeMessage = DEFAULT_WELCOME_MESSAGE,
   placeholder = DEFAULT_PLACEHOLDER,
@@ -329,7 +329,7 @@ function AssistantWidgetConversation({
   )
 }
 
-export function AssistantWidget(props: AssistantWidgetProps) {
+export function AssistantWidgetConversation(props: AssistantWidgetProps) {
   const configurationKey = `${clientKey(props.chatClient)}:${props.welcomeMessage ?? DEFAULT_WELCOME_MESSAGE}`
-  return <AssistantWidgetConversation key={configurationKey} {...props} />
+  return <Conversation key={configurationKey} {...props} />
 }
