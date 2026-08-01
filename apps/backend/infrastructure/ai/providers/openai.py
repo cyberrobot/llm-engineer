@@ -1,6 +1,7 @@
 import logging
+from collections.abc import Iterator
 from time import perf_counter
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import openai
 from openai import OpenAI
@@ -22,7 +23,9 @@ class _Response(Protocol):
 
 
 class _ResponsesAPI(Protocol):
-    def create(self, *, model: str, instructions: str, input: str) -> _Response: ...
+    def create(
+        self, *, model: str, instructions: str, input: str, **options: Any
+    ) -> _Response | Any: ...
 
 
 class _Embedding(Protocol):
@@ -122,6 +125,70 @@ class OpenAIProvider(AIProvider):
         embeddings = self._generate_embeddings(text)
         return embeddings[0]
 
+    def stream_response(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        max_output_tokens: int,
+        temperature: float = 0.2,
+    ) -> Iterator[str]:
+        """Yield Responses API text deltas and close the SDK stream on cancellation."""
+        started_at = perf_counter()
+        stream: Any = None
+        try:
+            stream = self._client.responses.create(
+                model=self._model,
+                instructions=system_prompt,
+                input=user_prompt,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+                stream=True,
+            )
+            for event in stream:
+                event_type = getattr(event, "type", None)
+                if event_type == "response.completed":
+                    self._log_usage(getattr(event, "response", None))
+                    continue
+                if event_type != "response.output_text.delta":
+                    continue
+                delta = getattr(event, "delta", "")
+                if delta:
+                    yield str(delta)
+        except GeneratorExit:
+            raise
+        except AIProviderError:
+            self._log_result(started_at, success=False)
+            raise
+        except openai.AuthenticationError as exc:
+            self._log_result(started_at, success=False)
+            raise AIAuthenticationError from exc
+        except openai.PermissionDeniedError as exc:
+            self._log_result(started_at, success=False)
+            raise AIAuthenticationError from exc
+        except openai.RateLimitError as exc:
+            self._log_result(started_at, success=False)
+            raise AIRateLimitError(retry_after_seconds=self._retry_after(exc)) from exc
+        except openai.APITimeoutError as exc:
+            self._log_result(started_at, success=False)
+            raise AITimeoutError from exc
+        except (openai.APIConnectionError, openai.InternalServerError) as exc:
+            self._log_result(started_at, success=False)
+            raise AIUnavailableError from exc
+        except openai.APIError as exc:
+            self._log_result(started_at, success=False)
+            raise AIProviderError from exc
+        except Exception as exc:
+            self._log_result(started_at, success=False)
+            raise AIProviderError from exc
+        else:
+            self._log_result(started_at, success=True)
+        finally:
+            if stream is not None:
+                close = getattr(stream, "close", None)
+                if close is not None:
+                    close()
+
     def generate_embeddings(self, *, texts: list[str]) -> list[list[float]]:
         """Generate one ordered provider vector per supplied text in a single request."""
         if not texts:
@@ -175,6 +242,20 @@ class OpenAIProvider(AIProvider):
                 "model": self.model,
                 "duration_ms": round((perf_counter() - started_at) * 1_000, 2),
                 "success": success,
+            },
+        )
+
+    def _log_usage(self, response: Any) -> None:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        logger.info(
+            "AI provider token usage recorded",
+            extra={
+                "provider": self.name,
+                "model": self.model,
+                "input_tokens": getattr(usage, "input_tokens", None),
+                "output_tokens": getattr(usage, "output_tokens", None),
             },
         )
 

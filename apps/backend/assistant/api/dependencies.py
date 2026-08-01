@@ -30,8 +30,10 @@ from assistant.application.ports.text_chunker import TextChunker
 from assistant.application.ports.text_cleaner import TextCleaner
 from assistant.application.ports.website_loader import WebsiteLoader
 from assistant.application.prompt_builder import PromptBuilder
+from assistant.application.public_chat import PublicAssistantChatService
 from assistant.application.retrieval_service import RetrievalService
 from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
+from assistant.domain.assistant_repository import AssistantRepository
 from assistant.domain.document_ingestion_job import IngestionStep
 from assistant.infrastructure.ingestion.html_content_extractor import HtmlContentExtractor
 from assistant.infrastructure.ingestion.normalising_text_cleaner import NormalisingTextCleaner
@@ -40,9 +42,11 @@ from assistant.infrastructure.ingestion.website_loader import HttpWebsiteLoader
 from assistant.infrastructure.repositories import (
     DocumentIngestionJobRepository,
     IngestionJobRepository,
+    InMemoryAssistantRepository,
     InMemoryDocumentIngestionJobRepository,
     InMemoryIngestionJobRepository,
     KnowledgeRepository,
+    PostgresAssistantRepository,
     PostgresDocumentIngestionJobRepository,
     PostgresIngestionJobRepository,
     PostgresKnowledgePersistenceRepository,
@@ -63,6 +67,7 @@ from core.config import (
     get_content_processing_settings,
     get_ingestion_retry_settings,
     get_knowledge_persistence_settings,
+    get_public_assistant_chat_settings,
     get_website_loader_settings,
 )
 from infrastructure.ai import AIProvider, create_ai_provider
@@ -101,6 +106,38 @@ def get_chat_service(
 ) -> ChatService:
     """Provide the application service used by Assistant chat routes."""
     return ChatService(ai_provider, retrieval_service, PromptBuilder())
+
+
+@lru_cache
+def get_assistant_repository() -> AssistantRepository:
+    if DATABASE_URL:
+        return PostgresAssistantRepository()
+    return InMemoryAssistantRepository()
+
+
+def get_public_chat_service(
+    ai_provider: Annotated[AIProvider, Depends(get_ai_provider)],
+    repository: Annotated[KnowledgeRepository, Depends(get_knowledge_repository)],
+    assistant_repository: Annotated[AssistantRepository, Depends(get_assistant_repository)],
+) -> PublicAssistantChatService:
+    settings = get_public_assistant_chat_settings()
+
+    def retrieval_factory(assistant_id):
+        return RetrievalService(
+            ai_provider,
+            repository,
+            assistant_id=assistant_id,
+            limit=settings.retrieval_limit,
+            min_score=settings.minimum_similarity_score,
+        )
+
+    return PublicAssistantChatService(
+        assistant_repository,
+        retrieval_factory,
+        ai_provider,
+        PromptBuilder(),
+        settings,
+    )
 
 
 @lru_cache

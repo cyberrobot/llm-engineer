@@ -9,6 +9,9 @@ failure recovery are documented in the
 Administrator login, bootstrap, cookie-session security, and the frontend integration contract are
 documented in [administrator authentication](docs/administrator-authentication.md).
 
+The deployment-gated public widget chat request, grounding, error, and SSE contracts are documented
+in [public assistant chat](docs/public-assistant-chat.md).
+
 ## Run locally
 
 Install dependencies from `requirements.txt`, copy `.env.example` to `.env`, and run:

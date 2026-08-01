@@ -65,6 +65,27 @@ class AISettings:
 
 
 @dataclass(frozen=True)
+class PublicAssistantChatSettings:
+    """Server-owned functional public-chat policy pending PR 11D hardening."""
+
+    enabled: bool
+    retrieval_limit: int
+    minimum_similarity_score: float
+    maximum_output_tokens: int
+    temperature: float
+
+    def __post_init__(self) -> None:
+        if self.retrieval_limit < 1:
+            raise ValueError("PUBLIC_CHAT_RETRIEVAL_LIMIT must be at least 1")
+        if not -1 <= self.minimum_similarity_score <= 1:
+            raise ValueError("PUBLIC_CHAT_MIN_SIMILARITY_SCORE must be between -1 and 1")
+        if self.maximum_output_tokens < 1:
+            raise ValueError("PUBLIC_CHAT_MAX_OUTPUT_TOKENS must be at least 1")
+        if not 0 <= self.temperature <= 2:
+            raise ValueError("PUBLIC_CHAT_TEMPERATURE must be between 0 and 2")
+
+
+@dataclass(frozen=True)
 class KnowledgePersistenceSettings:
     """Canonical vector schema and provider batching limits."""
 
@@ -228,6 +249,16 @@ def get_ai_settings() -> AISettings:
         request_timeout=timeout,
         embedding_model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small").strip(),
         max_retries=max_retries,
+    )
+
+
+def get_public_assistant_chat_settings() -> PublicAssistantChatSettings:
+    return PublicAssistantChatSettings(
+        enabled=_env_bool("PUBLIC_ASSISTANT_CHAT_ENABLED", False),
+        retrieval_limit=_env_int("PUBLIC_CHAT_RETRIEVAL_LIMIT", 3),
+        minimum_similarity_score=_env_float("PUBLIC_CHAT_MIN_SIMILARITY_SCORE", 0.7),
+        maximum_output_tokens=_env_int("PUBLIC_CHAT_MAX_OUTPUT_TOKENS", 500),
+        temperature=_env_float("PUBLIC_CHAT_TEMPERATURE", 0.2),
     )
 
 
@@ -420,6 +451,7 @@ def validate_startup_configuration() -> None:
     get_ingestion_worker_settings()
     get_database_settings()
     get_health_check_settings()
+    get_public_assistant_chat_settings()
     admin_auth = get_admin_authentication_settings()
     if get_max_upload_bytes() <= 0:
         raise ValueError("MAX_UPLOAD_MB must be greater than zero")

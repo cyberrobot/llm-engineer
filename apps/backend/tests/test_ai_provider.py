@@ -102,6 +102,49 @@ def test_openai_provider_rejects_empty_output():
         provider.generate_response(system_prompt="system", user_prompt="user")
 
 
+def test_openai_provider_streams_text_deltas_with_server_owned_limits():
+    provider, client = make_provider("answer")
+
+    class Stream:
+        closed = False
+
+        def __iter__(self):
+            yield SimpleNamespace(type="response.created")
+            yield SimpleNamespace(type="response.output_text.delta", delta="First ")
+            yield SimpleNamespace(type="response.output_text.delta", delta="")
+            yield SimpleNamespace(type="response.output_text.delta", delta="second")
+            yield SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(usage=SimpleNamespace(input_tokens=12, output_tokens=3)),
+            )
+
+        def close(self):
+            self.closed = True
+
+    stream = Stream()
+    client.responses.create.return_value = stream
+
+    result = list(
+        provider.stream_response(
+            system_prompt="Server instructions",
+            user_prompt="Bounded prompt",
+            max_output_tokens=321,
+            temperature=0.1,
+        )
+    )
+
+    assert result == ["First ", "second"]
+    assert stream.closed is True
+    client.responses.create.assert_called_once_with(
+        model="test-model",
+        instructions="Server instructions",
+        input="Bounded prompt",
+        max_output_tokens=321,
+        temperature=0.1,
+        stream=True,
+    )
+
+
 def test_openai_provider_preserves_valid_rate_limit_retry_delay():
     provider, _ = make_provider(status_error(openai.RateLimitError, 429, retry_after="7"))
 

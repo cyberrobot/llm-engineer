@@ -6,6 +6,7 @@ from assistant.api.ingest import router as ingest_router
 from assistant.api.ingestion_jobs import router as ingestion_jobs_router
 from assistant.api.ingestion_status import router as ingestion_status_router
 from assistant.api.knowledge import router as knowledge_router
+from assistant.api.public_chat import router as public_chat_router
 from assistant.api.rag import router as rag_router
 from assistant.schemas import HealthResponse
 from core.health import DependencyHealthError, validate_dependency_health
@@ -18,6 +19,7 @@ router.include_router(ingestion_status_router)
 router.include_router(knowledge_router)
 router.include_router(rag_router)
 router.include_router(audit_router)
+router.include_router(public_chat_router)
 
 
 @router.get(
