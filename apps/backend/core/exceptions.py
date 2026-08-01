@@ -71,6 +71,16 @@ def ingestion_failed_handler(request: Request, exc: Exception) -> Response:
 async def request_validation_error_handler(request: Request, exc: Exception) -> Response:
     if not isinstance(exc, RequestValidationError):
         raise exc
+    if request.url.path.startswith("/public/assistants/"):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": {
+                    "code": "validation_error",
+                    "message": "The chat request is invalid.",
+                }
+            },
+        )
     if not request.url.path.startswith("/admin/auth/"):
         from fastapi.exception_handlers import request_validation_exception_handler
 

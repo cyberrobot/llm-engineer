@@ -1,8 +1,15 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from assistant.domain.assistant import Assistant, AssistantStatus, AssistantVisibility
+from assistant.domain.assistant import (
+    REDMOOR_ASSISTANT_ID,
+    REDMOOR_ASSISTANT_SLUG,
+    Assistant,
+    AssistantStatus,
+    AssistantVisibility,
+)
 from assistant.domain.assistant_repository import AssistantNotFound, AssistantRepository
 from infrastructure.database.connection import get_connection
 
@@ -42,3 +49,39 @@ class PostgresAssistantRepository(AssistantRepository):
             created_at=row[5],
             updated_at=row[6],
         )
+
+
+class InMemoryAssistantRepository(AssistantRepository):
+    """Deterministic local/test assistant lookup with production-equivalent semantics."""
+
+    def __init__(self, assistants: Iterable[Assistant] | None = None) -> None:
+        if assistants is None:
+            created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+            assistants = (
+                Assistant(
+                    id=REDMOOR_ASSISTANT_ID,
+                    slug=REDMOOR_ASSISTANT_SLUG,
+                    name="Redmoor Assistant",
+                    status=AssistantStatus.active,
+                    visibility=AssistantVisibility.public,
+                    created_at=created_at,
+                    updated_at=created_at,
+                ),
+            )
+        self._by_id = {assistant.id: assistant for assistant in assistants}
+        self._by_slug = {assistant.slug: assistant for assistant in self._by_id.values()}
+
+    def get_by_id(self, assistant_id: UUID) -> Assistant:
+        try:
+            return self._by_id[assistant_id]
+        except KeyError as exc:
+            raise AssistantNotFound("Assistant not found.") from exc
+
+    def get_by_slug(self, slug: str) -> Assistant:
+        normalized = slug.strip()
+        if not normalized:
+            raise AssistantNotFound("Assistant not found.")
+        try:
+            return self._by_slug[normalized]
+        except KeyError as exc:
+            raise AssistantNotFound("Assistant not found.") from exc

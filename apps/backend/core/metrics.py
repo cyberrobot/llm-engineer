@@ -129,6 +129,47 @@ class AdministratorAuthenticationMetrics:
 administrator_authentication_metrics = AdministratorAuthenticationMetrics()
 
 
+class PublicAssistantChatMetrics:
+    """Public-chat metrics without user-controlled or high-cardinality labels."""
+
+    def __init__(self, *, registry: CollectorRegistry = REGISTRY) -> None:
+        self.requests = Counter(
+            "public_chat_requests_total", "Prepared public chat requests.", registry=registry
+        )
+        self.completed = Counter(
+            "public_chat_completed_total", "Completed public chat streams.", registry=registry
+        )
+        self.insufficient = Counter(
+            "public_chat_insufficient_knowledge_total",
+            "Public chats answered with the fixed insufficient-knowledge response.",
+            registry=registry,
+        )
+        self.failures = Counter(
+            "public_chat_failures_total", "Failed public chat streams.", registry=registry
+        )
+        self.cancelled = Counter(
+            "public_chat_cancelled_total", "Cancelled public chat streams.", registry=registry
+        )
+        self.retrieval_duration = Histogram(
+            "public_chat_retrieval_duration_seconds",
+            "Public chat retrieval duration.",
+            registry=registry,
+        )
+        self.generation_duration = Histogram(
+            "public_chat_generation_duration_seconds",
+            "Public chat generation duration.",
+            registry=registry,
+        )
+        self.total_duration = Histogram(
+            "public_chat_total_duration_seconds",
+            "Total public chat stream duration.",
+            registry=registry,
+        )
+
+
+public_chat_metrics = PublicAssistantChatMetrics()
+
+
 class IngestionOperationalMetrics:
     """Job/worker metrics whose labels are deliberately bounded enumerations."""
 

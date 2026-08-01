@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 
 
 class AIProvider(ABC):
@@ -25,6 +26,20 @@ class AIProvider(ABC):
         by retrieval should override it.
         """
         return []
+
+    def stream_response(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        max_output_tokens: int,
+        temperature: float = 0.2,
+    ) -> Iterator[str]:
+        """Stream text while keeping older provider adapters source-compatible."""
+        del max_output_tokens, temperature
+        response = self.generate_response(system_prompt=system_prompt, user_prompt=user_prompt)
+        if response:
+            yield response
 
     def generate_embeddings(self, *, texts: list[str]) -> list[list[float]]:
         """Generate embeddings in input order while preserving adapter compatibility."""

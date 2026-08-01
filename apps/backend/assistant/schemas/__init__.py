@@ -6,6 +6,15 @@ from assistant.schemas.ingestion import (
     KnowledgeStatusResponse,
     StartIngestionRequest,
 )
+from assistant.schemas.public_chat import (
+    PublicChatCompleteEvent,
+    PublicChatDeltaEvent,
+    PublicChatErrorEvent,
+    PublicChatErrorResponse,
+    PublicChatHistoryMessage,
+    PublicChatRequest,
+    PublicChatStartEvent,
+)
 
 __all__ = [
     "ChatRequest",
@@ -16,4 +25,11 @@ __all__ = [
     "KnowledgeStatusResponse",
     "SourceReference",
     "StartIngestionRequest",
+    "PublicChatCompleteEvent",
+    "PublicChatDeltaEvent",
+    "PublicChatErrorEvent",
+    "PublicChatErrorResponse",
+    "PublicChatHistoryMessage",
+    "PublicChatRequest",
+    "PublicChatStartEvent",
 ]
