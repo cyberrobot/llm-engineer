@@ -13,6 +13,7 @@ from admin_auth.service import AdministratorAuthenticationService
 from api.openapi import API_CONTRACT_VERSION, create_openapi_schema
 from api.router import api_router
 from assistant.api.dependencies import get_ai_provider, get_website_loader
+from assistant.api.public_chat_middleware import PublicChatBoundaryMiddleware
 from core.config import get_admin_authentication_settings, validate_startup_configuration
 from core.correlation import RequestCorrelationMiddleware
 from core.exceptions import register_exception_handlers
@@ -79,4 +80,5 @@ app.add_middleware(RequestCorrelationMiddleware)
 app.state.limiter = limiter
 register_exception_handlers(app)
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(PublicChatBoundaryMiddleware)
 app.include_router(api_router)

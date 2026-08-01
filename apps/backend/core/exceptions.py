@@ -72,12 +72,50 @@ async def request_validation_error_handler(request: Request, exc: Exception) -> 
     if not isinstance(exc, RequestValidationError):
         raise exc
     if request.url.path.startswith("/public/assistants/"):
+        errors = exc.errors()
+        code = "validation_error"
+        message = "The chat request is invalid."
+        status_code = 422
+        validation_messages = [str(error.get("ctx", {}).get("error", "")) for error in errors]
+        if any(error.get("type") == "json_invalid" for error in errors):
+            code = "invalid_request"
+            message = "The request body is not valid JSON."
+            status_code = 400
+        elif any("Message exceeds" in value for value in validation_messages):
+            code = "message_too_long"
+            message = "The message is too long."
+        elif any("History contains too many" in value for value in validation_messages):
+            code = "too_many_history_messages"
+            message = "There are too many history messages."
+        elif any("History exceeds" in value for value in validation_messages):
+            code = "history_too_large"
+            message = "The history is too large."
+        elif any(tuple(error.get("loc", ())) == ("body", "message") for error in errors):
+            if any(error.get("type") == "string_too_long" for error in errors):
+                code = "message_too_long"
+                message = "The message is too long."
+        elif any(
+            tuple(error.get("loc", ())) == ("body", "history") and error.get("type") == "too_long"
+            for error in errors
+        ):
+            code = "too_many_history_messages"
+            message = "There are too many history messages."
+        elif any(
+            "history" in tuple(error.get("loc", ()))
+            and (
+                error.get("type") == "string_too_long"
+                or "History exceeds" in str(error.get("ctx", {}).get("error", ""))
+            )
+            for error in errors
+        ):
+            code = "history_too_large"
+            message = "The history is too large."
         return JSONResponse(
-            status_code=422,
+            status_code=status_code,
             content={
                 "detail": {
-                    "code": "validation_error",
-                    "message": "The chat request is invalid.",
+                    "code": code,
+                    "message": message,
                 }
             },
         )

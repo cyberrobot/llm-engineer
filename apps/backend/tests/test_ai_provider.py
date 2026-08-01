@@ -130,6 +130,7 @@ def test_openai_provider_streams_text_deltas_with_server_owned_limits():
             user_prompt="Bounded prompt",
             max_output_tokens=321,
             temperature=0.1,
+            timeout_seconds=12,
         )
     )
 
@@ -142,6 +143,7 @@ def test_openai_provider_streams_text_deltas_with_server_owned_limits():
         max_output_tokens=321,
         temperature=0.1,
         stream=True,
+        timeout=12,
     )
 
 

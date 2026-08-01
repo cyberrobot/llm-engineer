@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from functools import lru_cache
 from time import sleep
@@ -31,6 +32,13 @@ from assistant.application.ports.text_cleaner import TextCleaner
 from assistant.application.ports.website_loader import WebsiteLoader
 from assistant.application.prompt_builder import PromptBuilder
 from assistant.application.public_chat import PublicAssistantChatService
+from assistant.application.public_chat_protection import (
+    AnonymousClientResolver,
+    InMemoryConcurrencyLimiter,
+    PublicChatProtection,
+    PublicChatRateLimiter,
+    RedisLockConcurrencyLimiter,
+)
 from assistant.application.retrieval_service import RetrievalService
 from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.assistant_repository import AssistantRepository
@@ -64,6 +72,8 @@ from assistant.infrastructure.seed_knowledge import SEED_VECTOR_ENTRIES
 from assistant.infrastructure.vector_store import InMemoryVectorStore, PgVectorStore, VectorStore
 from core.config import (
     DATABASE_URL,
+    DISABLE_RATE_LIMITS,
+    REDIS_URL,
     get_content_processing_settings,
     get_ingestion_retry_settings,
     get_knowledge_persistence_settings,
@@ -71,6 +81,7 @@ from core.config import (
     get_website_loader_settings,
 )
 from infrastructure.ai import AIProvider, create_ai_provider
+from infrastructure.cache.client import redis_client
 
 
 @lru_cache
@@ -138,6 +149,50 @@ def get_public_chat_service(
         PromptBuilder(),
         settings,
     )
+
+
+def get_public_chat_service_factory() -> Callable[[], PublicAssistantChatService]:
+    """Delay provider/repository construction until low-cost protections have passed."""
+
+    def build() -> PublicAssistantChatService:
+        return get_public_chat_service(
+            get_ai_provider(),
+            get_knowledge_repository(get_vector_store()),
+            get_assistant_repository(),
+        )
+
+    return build
+
+
+@lru_cache
+def get_public_chat_protection() -> PublicChatProtection:
+    """Provide process-local development controls or shared production controls."""
+    settings = get_public_assistant_chat_settings()
+    resolver = AnonymousClientResolver(
+        settings.trusted_proxy_networks,
+        hash_secret=settings.client_key_hash_secret,
+    )
+    environment = os.getenv("APP_ENV", "development").strip().lower()
+    concurrency_limiter: InMemoryConcurrencyLimiter | RedisLockConcurrencyLimiter
+    if environment in {"production", "staging"}:
+        rate_limiter = PublicChatRateLimiter(settings, storage_uri=REDIS_URL)
+        concurrency_limiter = RedisLockConcurrencyLimiter(
+            redis_client,
+            per_client=settings.maximum_concurrent_requests_per_client,
+            global_limit=settings.maximum_concurrent_requests_global,
+            lease_seconds=settings.request_timeout_seconds + 5,
+        )
+    else:
+        from limits.storage import MemoryStorage
+
+        rate_limiter = PublicChatRateLimiter(settings, storage=MemoryStorage())
+        concurrency_limiter = InMemoryConcurrencyLimiter(
+            per_client=settings.maximum_concurrent_requests_per_client,
+            global_limit=settings.maximum_concurrent_requests_global,
+        )
+    if DISABLE_RATE_LIMITS and environment not in {"development", "test"}:
+        raise ValueError("Public chat rate limiting cannot be disabled outside development/test")
+    return PublicChatProtection(settings, resolver, rate_limiter, concurrency_limiter)
 
 
 @lru_cache
