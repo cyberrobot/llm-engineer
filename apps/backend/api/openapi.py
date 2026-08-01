@@ -6,6 +6,13 @@ from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
 
+from admin_auth.api_models import (
+    AdminAuthErrorDetail,
+    AdminAuthErrorResponse,
+    AdministratorUser,
+    AuthenticatedAdministratorResponse,
+    LoginRequest,
+)
 from assistant.schemas import (
     ChatRequest,
     ChatResponse,
@@ -27,6 +34,11 @@ from operations.domain.health import DependencyHealthResult, HealthDiagnostic
 API_CONTRACT_VERSION = "1.0.0"
 
 CONTRACT_MODELS: tuple[type[BaseModel], ...] = (
+    LoginRequest,
+    AdministratorUser,
+    AuthenticatedAdministratorResponse,
+    AdminAuthErrorDetail,
+    AdminAuthErrorResponse,
     ChatRequest,
     ChatResponse,
     ErrorResponse,
