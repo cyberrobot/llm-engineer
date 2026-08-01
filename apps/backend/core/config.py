@@ -1,8 +1,10 @@
 import os
 import socket
 from dataclasses import dataclass
+from ipaddress import ip_network
 from pathlib import Path
-from typing import Literal, cast
+from typing import ClassVar, Literal, cast
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from dotenv import load_dotenv
@@ -66,15 +68,51 @@ class AISettings:
 
 @dataclass(frozen=True)
 class PublicAssistantChatSettings:
-    """Server-owned functional public-chat policy pending PR 11D hardening."""
+    """Validated server-owned functional and resource-protection policy."""
 
     enabled: bool
     retrieval_limit: int
     minimum_similarity_score: float
     maximum_output_tokens: int
     temperature: float
+    allowed_origins: tuple[str, ...]
+    trusted_proxy_networks: tuple[str, ...]
+    client_key_hash_secret: str
+    maximum_message_characters: int
+    maximum_history_message_characters: int
+    maximum_history_messages: int
+    maximum_history_characters: int
+    maximum_history_tokens: int
+    maximum_request_bytes: int
+    maximum_input_tokens: int
+    maximum_context_chunks: int
+    maximum_context_tokens: int
+    model_context_tokens: int
+    maximum_estimated_cost_usd: float
+    rate_limit_per_minute: int
+    rate_limit_per_hour: int
+    global_rate_limit_per_minute: int
+    maximum_concurrent_requests_per_client: int
+    maximum_concurrent_requests_global: int
+    request_timeout_seconds: float
+    first_token_timeout_seconds: float
+
+    _MODEL_INPUT_USD_PER_MILLION: ClassVar[dict[str, float]] = {
+        "gpt-5.5": 5.0,
+        "gpt-5.5-2026-04-23": 5.0,
+    }
+    _MODEL_OUTPUT_USD_PER_MILLION: ClassVar[dict[str, float]] = {
+        "gpt-5.5": 30.0,
+        "gpt-5.5-2026-04-23": 30.0,
+    }
+    _MODEL_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {
+        "gpt-5.5": 1_050_000,
+        "gpt-5.5-2026-04-23": 1_050_000,
+    }
 
     def __post_init__(self) -> None:
+        if not self.client_key_hash_secret.strip():
+            raise ValueError("PUBLIC_CHAT_CLIENT_KEY_HASH_SECRET must not be empty")
         if self.retrieval_limit < 1:
             raise ValueError("PUBLIC_CHAT_RETRIEVAL_LIMIT must be at least 1")
         if not -1 <= self.minimum_similarity_score <= 1:
@@ -83,6 +121,143 @@ class PublicAssistantChatSettings:
             raise ValueError("PUBLIC_CHAT_MAX_OUTPUT_TOKENS must be at least 1")
         if not 0 <= self.temperature <= 2:
             raise ValueError("PUBLIC_CHAT_TEMPERATURE must be between 0 and 2")
+        for origin in self.allowed_origins:
+            if origin == "*":
+                raise ValueError("PUBLIC_CHAT_ALLOWED_ORIGINS must not contain a wildcard")
+            parsed = urlsplit(origin)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.netloc
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError("PUBLIC_CHAT_ALLOWED_ORIGINS must contain exact HTTP(S) origins")
+        for network in self.trusted_proxy_networks:
+            try:
+                ip_network(network, strict=False)
+            except ValueError as exc:
+                raise ValueError("PUBLIC_CHAT_TRUSTED_PROXIES must contain IP networks") from exc
+        for name, value in (
+            ("PUBLIC_CHAT_MAX_MESSAGE_CHARACTERS", self.maximum_message_characters),
+            (
+                "PUBLIC_CHAT_MAX_HISTORY_MESSAGE_CHARACTERS",
+                self.maximum_history_message_characters,
+            ),
+            ("PUBLIC_CHAT_MAX_HISTORY_MESSAGES", self.maximum_history_messages),
+            ("PUBLIC_CHAT_MAX_HISTORY_CHARACTERS", self.maximum_history_characters),
+            ("PUBLIC_CHAT_MAX_HISTORY_TOKENS", self.maximum_history_tokens),
+            ("PUBLIC_CHAT_MAX_REQUEST_BYTES", self.maximum_request_bytes),
+            ("PUBLIC_CHAT_MAX_INPUT_TOKENS", self.maximum_input_tokens),
+            ("PUBLIC_CHAT_MAX_CONTEXT_CHUNKS", self.maximum_context_chunks),
+            ("PUBLIC_CHAT_MAX_CONTEXT_TOKENS", self.maximum_context_tokens),
+            ("PUBLIC_CHAT_MODEL_CONTEXT_TOKENS", self.model_context_tokens),
+            ("PUBLIC_CHAT_RATE_LIMIT_PER_MINUTE", self.rate_limit_per_minute),
+            ("PUBLIC_CHAT_RATE_LIMIT_PER_HOUR", self.rate_limit_per_hour),
+            ("PUBLIC_CHAT_GLOBAL_RATE_LIMIT_PER_MINUTE", self.global_rate_limit_per_minute),
+            (
+                "PUBLIC_CHAT_MAX_CONCURRENT_REQUESTS_PER_CLIENT",
+                self.maximum_concurrent_requests_per_client,
+            ),
+            (
+                "PUBLIC_CHAT_MAX_CONCURRENT_REQUESTS_GLOBAL",
+                self.maximum_concurrent_requests_global,
+            ),
+        ):
+            if value < 1:
+                raise ValueError(f"{name} must be at least 1")
+        if self.maximum_history_messages % 2:
+            raise ValueError("PUBLIC_CHAT_MAX_HISTORY_MESSAGES must be even")
+        if self.maximum_context_chunks > self.retrieval_limit:
+            raise ValueError(
+                "PUBLIC_CHAT_MAX_CONTEXT_CHUNKS must not exceed PUBLIC_CHAT_RETRIEVAL_LIMIT"
+            )
+        if self.maximum_input_tokens + self.maximum_output_tokens > self.model_context_tokens:
+            raise ValueError("Public chat input and output budgets exceed the model context window")
+        if self.request_timeout_seconds <= 0 or self.first_token_timeout_seconds <= 0:
+            raise ValueError("Public chat timeouts must be greater than zero")
+        if self.first_token_timeout_seconds > self.request_timeout_seconds:
+            raise ValueError(
+                "PUBLIC_CHAT_MODEL_FIRST_TOKEN_TIMEOUT_SECONDS must not exceed the request timeout"
+            )
+        if self.maximum_estimated_cost_usd <= 0:
+            raise ValueError("PUBLIC_CHAT_MAX_ESTIMATED_COST must be greater than zero")
+        if self.enabled:
+            model = get_ai_settings().openai_model
+            if model not in self._MODEL_CONTEXT_TOKENS:
+                raise ValueError(f"OPENAI_MODEL {model!r} is not approved for public chat")
+            if self.model_context_tokens > self._MODEL_CONTEXT_TOKENS[model]:
+                raise ValueError("PUBLIC_CHAT_MODEL_CONTEXT_TOKENS exceeds approved model metadata")
+            maximum_cost = (
+                self.maximum_input_tokens * self._MODEL_INPUT_USD_PER_MILLION[model]
+                + self.maximum_output_tokens * self._MODEL_OUTPUT_USD_PER_MILLION[model]
+            ) / 1_000_000
+            if maximum_cost > self.maximum_estimated_cost_usd:
+                raise ValueError(
+                    "Public chat maximum estimated cost exceeds the configured cost cap"
+                )
+
+    @classmethod
+    def development_defaults(cls, *, enabled: bool = False) -> "PublicAssistantChatSettings":
+        return cls(
+            enabled=enabled,
+            retrieval_limit=3,
+            minimum_similarity_score=0.7,
+            maximum_output_tokens=500,
+            temperature=0.2,
+            allowed_origins=("http://localhost:5173",),
+            trusted_proxy_networks=(),
+            client_key_hash_secret="development-only-public-chat-key",
+            maximum_message_characters=4_000,
+            maximum_history_message_characters=4_000,
+            maximum_history_messages=12,
+            maximum_history_characters=12_000,
+            maximum_history_tokens=12_000,
+            maximum_request_bytes=32_768,
+            maximum_input_tokens=8_000,
+            maximum_context_chunks=3,
+            maximum_context_tokens=4_000,
+            model_context_tokens=1_050_000,
+            maximum_estimated_cost_usd=0.10,
+            rate_limit_per_minute=10,
+            rate_limit_per_hour=100,
+            global_rate_limit_per_minute=300,
+            maximum_concurrent_requests_per_client=2,
+            maximum_concurrent_requests_global=20,
+            request_timeout_seconds=45,
+            first_token_timeout_seconds=15,
+        )
+
+    @staticmethod
+    def production_environment_names() -> tuple[str, ...]:
+        return (
+            "PUBLIC_CHAT_ALLOWED_ORIGINS",
+            "PUBLIC_CHAT_TRUSTED_PROXIES",
+            "FORWARDED_ALLOW_IPS",
+            "PUBLIC_CHAT_CLIENT_KEY_HASH_SECRET",
+            "PUBLIC_CHAT_MAX_MESSAGE_CHARACTERS",
+            "PUBLIC_CHAT_MAX_HISTORY_MESSAGE_CHARACTERS",
+            "PUBLIC_CHAT_MAX_HISTORY_MESSAGES",
+            "PUBLIC_CHAT_MAX_HISTORY_CHARACTERS",
+            "PUBLIC_CHAT_MAX_HISTORY_TOKENS",
+            "PUBLIC_CHAT_MAX_REQUEST_BYTES",
+            "PUBLIC_CHAT_MAX_INPUT_TOKENS",
+            "PUBLIC_CHAT_MAX_CONTEXT_CHUNKS",
+            "PUBLIC_CHAT_MAX_CONTEXT_TOKENS",
+            "PUBLIC_CHAT_MODEL_CONTEXT_TOKENS",
+            "PUBLIC_CHAT_MAX_OUTPUT_TOKENS",
+            "PUBLIC_CHAT_MAX_ESTIMATED_COST",
+            "PUBLIC_CHAT_RATE_LIMIT_PER_MINUTE",
+            "PUBLIC_CHAT_RATE_LIMIT_PER_HOUR",
+            "PUBLIC_CHAT_GLOBAL_RATE_LIMIT_PER_MINUTE",
+            "PUBLIC_CHAT_MAX_CONCURRENT_REQUESTS_PER_CLIENT",
+            "PUBLIC_CHAT_MAX_CONCURRENT_REQUESTS_GLOBAL",
+            "PUBLIC_CHAT_REQUEST_TIMEOUT_SECONDS",
+            "PUBLIC_CHAT_MODEL_FIRST_TOKEN_TIMEOUT_SECONDS",
+            "REDIS_URL",
+        )
 
 
 @dataclass(frozen=True)
@@ -253,12 +428,78 @@ def get_ai_settings() -> AISettings:
 
 
 def get_public_assistant_chat_settings() -> PublicAssistantChatSettings:
+    defaults = PublicAssistantChatSettings.development_defaults()
+    enabled = _env_bool("PUBLIC_ASSISTANT_CHAT_ENABLED", False)
+    environment = os.getenv("APP_ENV", "development").strip().lower()
+    if enabled and environment == "production":
+        missing = [
+            name
+            for name in PublicAssistantChatSettings.production_environment_names()
+            if not os.getenv(name, "").strip()
+        ]
+        if missing:
+            raise ValueError(f"{missing[0]} is required when public chat is enabled in production")
+        if _env_bool("DISABLE_RATE_LIMITS", False):
+            raise ValueError("DISABLE_RATE_LIMITS must be false for production public chat")
+    origins = tuple(
+        item.strip()
+        for item in os.getenv(
+            "PUBLIC_CHAT_ALLOWED_ORIGINS", ",".join(defaults.allowed_origins)
+        ).split(",")
+        if item.strip()
+    )
+    proxies = tuple(
+        item.strip()
+        for item in os.getenv("PUBLIC_CHAT_TRUSTED_PROXIES", "").split(",")
+        if item.strip()
+    )
+    if enabled and environment == "production":
+        uvicorn_proxies = tuple(
+            item.strip() for item in os.getenv("FORWARDED_ALLOW_IPS", "").split(",") if item.strip()
+        )
+        if proxies != uvicorn_proxies:
+            raise ValueError("FORWARDED_ALLOW_IPS must exactly match PUBLIC_CHAT_TRUSTED_PROXIES")
+        if not origins:
+            raise ValueError("PUBLIC_CHAT_ALLOWED_ORIGINS must not be empty")
+        if len(os.getenv("PUBLIC_CHAT_CLIENT_KEY_HASH_SECRET", "")) < 32:
+            raise ValueError(
+                "PUBLIC_CHAT_CLIENT_KEY_HASH_SECRET must contain at least 32 characters"
+            )
     return PublicAssistantChatSettings(
-        enabled=_env_bool("PUBLIC_ASSISTANT_CHAT_ENABLED", False),
+        enabled=enabled,
         retrieval_limit=_env_int("PUBLIC_CHAT_RETRIEVAL_LIMIT", 3),
         minimum_similarity_score=_env_float("PUBLIC_CHAT_MIN_SIMILARITY_SCORE", 0.7),
         maximum_output_tokens=_env_int("PUBLIC_CHAT_MAX_OUTPUT_TOKENS", 500),
         temperature=_env_float("PUBLIC_CHAT_TEMPERATURE", 0.2),
+        allowed_origins=origins,
+        trusted_proxy_networks=proxies,
+        client_key_hash_secret=os.getenv(
+            "PUBLIC_CHAT_CLIENT_KEY_HASH_SECRET", defaults.client_key_hash_secret
+        ),
+        maximum_message_characters=_env_int("PUBLIC_CHAT_MAX_MESSAGE_CHARACTERS", 4_000),
+        maximum_history_message_characters=_env_int(
+            "PUBLIC_CHAT_MAX_HISTORY_MESSAGE_CHARACTERS", 4_000
+        ),
+        maximum_history_messages=_env_int("PUBLIC_CHAT_MAX_HISTORY_MESSAGES", 12),
+        maximum_history_characters=_env_int("PUBLIC_CHAT_MAX_HISTORY_CHARACTERS", 12_000),
+        maximum_history_tokens=_env_int("PUBLIC_CHAT_MAX_HISTORY_TOKENS", 12_000),
+        maximum_request_bytes=_env_int("PUBLIC_CHAT_MAX_REQUEST_BYTES", 32_768),
+        maximum_input_tokens=_env_int("PUBLIC_CHAT_MAX_INPUT_TOKENS", 8_000),
+        maximum_context_chunks=_env_int("PUBLIC_CHAT_MAX_CONTEXT_CHUNKS", 3),
+        maximum_context_tokens=_env_int("PUBLIC_CHAT_MAX_CONTEXT_TOKENS", 4_000),
+        model_context_tokens=_env_int("PUBLIC_CHAT_MODEL_CONTEXT_TOKENS", 1_050_000),
+        maximum_estimated_cost_usd=_env_float("PUBLIC_CHAT_MAX_ESTIMATED_COST", 0.10),
+        rate_limit_per_minute=_env_int("PUBLIC_CHAT_RATE_LIMIT_PER_MINUTE", 10),
+        rate_limit_per_hour=_env_int("PUBLIC_CHAT_RATE_LIMIT_PER_HOUR", 100),
+        global_rate_limit_per_minute=_env_int("PUBLIC_CHAT_GLOBAL_RATE_LIMIT_PER_MINUTE", 300),
+        maximum_concurrent_requests_per_client=_env_int(
+            "PUBLIC_CHAT_MAX_CONCURRENT_REQUESTS_PER_CLIENT", 2
+        ),
+        maximum_concurrent_requests_global=_env_int(
+            "PUBLIC_CHAT_MAX_CONCURRENT_REQUESTS_GLOBAL", 20
+        ),
+        request_timeout_seconds=_env_float("PUBLIC_CHAT_REQUEST_TIMEOUT_SECONDS", 45),
+        first_token_timeout_seconds=_env_float("PUBLIC_CHAT_MODEL_FIRST_TOKEN_TIMEOUT_SECONDS", 15),
     )
 
 

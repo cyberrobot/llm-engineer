@@ -34,9 +34,10 @@ class AIProvider(ABC):
         user_prompt: str,
         max_output_tokens: int,
         temperature: float = 0.2,
+        timeout_seconds: float | None = None,
     ) -> Iterator[str]:
         """Stream text while keeping older provider adapters source-compatible."""
-        del max_output_tokens, temperature
+        del max_output_tokens, temperature, timeout_seconds
         response = self.generate_response(system_prompt=system_prompt, user_prompt=user_prompt)
         if response:
             yield response

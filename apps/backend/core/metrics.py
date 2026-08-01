@@ -150,6 +150,60 @@ class PublicAssistantChatMetrics:
         self.cancelled = Counter(
             "public_chat_cancelled_total", "Cancelled public chat streams.", registry=registry
         )
+        self.rate_limit_rejections = Counter(
+            "public_chat_rate_limit_rejections_total",
+            "Rejected public chat requests by configured rate limits.",
+            registry=registry,
+        )
+        self.origin_rejections = Counter(
+            "public_chat_origin_rejections_total",
+            "Rejected public chat browser origins.",
+            registry=registry,
+        )
+        self.payload_rejections = Counter(
+            "public_chat_payload_rejections_total",
+            "Rejected public chat request payloads.",
+            registry=registry,
+        )
+        self.input_limit_rejections = Counter(
+            "public_chat_input_limit_rejections_total",
+            "Rejected public chat token budgets.",
+            registry=registry,
+        )
+        self.concurrency_rejections = Counter(
+            "public_chat_concurrency_rejections_total",
+            "Rejected public chat concurrency acquisitions.",
+            ("reason",),
+            registry=registry,
+        )
+        self.timeouts = Counter(
+            "public_chat_timeouts_total", "Timed out public chats.", registry=registry
+        )
+        self.active = Gauge(
+            "public_chat_active_requests",
+            "Active public chat streams on this instance.",
+            registry=registry,
+        )
+        self.request_bytes = Histogram(
+            "public_chat_request_bytes",
+            "Accepted and rejected public chat request sizes.",
+            registry=registry,
+        )
+        self.estimated_input_tokens = Histogram(
+            "public_chat_estimated_input_tokens",
+            "Conservatively estimated public chat prompt tokens.",
+            registry=registry,
+        )
+        self.estimated_output_tokens = Histogram(
+            "public_chat_output_tokens",
+            "Conservative estimated public chat output tokens.",
+            registry=registry,
+        )
+        self.time_to_first_token = Histogram(
+            "public_chat_time_to_first_token_seconds",
+            "Public chat time from request preparation to first model delta.",
+            registry=registry,
+        )
         self.retrieval_duration = Histogram(
             "public_chat_retrieval_duration_seconds",
             "Public chat retrieval duration.",

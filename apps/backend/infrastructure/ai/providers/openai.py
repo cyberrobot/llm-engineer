@@ -132,11 +132,15 @@ class OpenAIProvider(AIProvider):
         user_prompt: str,
         max_output_tokens: int,
         temperature: float = 0.2,
+        timeout_seconds: float | None = None,
     ) -> Iterator[str]:
         """Yield Responses API text deltas and close the SDK stream on cancellation."""
         started_at = perf_counter()
         stream: Any = None
         try:
+            request_options: dict[str, Any] = {}
+            if timeout_seconds is not None:
+                request_options["timeout"] = timeout_seconds
             stream = self._client.responses.create(
                 model=self._model,
                 instructions=system_prompt,
@@ -144,6 +148,7 @@ class OpenAIProvider(AIProvider):
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
                 stream=True,
+                **request_options,
             )
             for event in stream:
                 event_type = getattr(event, "type", None)

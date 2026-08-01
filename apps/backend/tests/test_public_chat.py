@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -6,10 +7,11 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from assistant.api.dependencies import get_public_chat_service
+from assistant.api.dependencies import get_public_chat_service_factory
 from assistant.application.public_chat import (
     INSUFFICIENT_KNOWLEDGE_RESPONSE,
     PublicAssistantChatService,
+    PublicChatRequestTimedOut,
 )
 from assistant.domain import KnowledgeChunk, KnowledgeDocument
 from assistant.domain.assistant import Assistant, AssistantStatus, AssistantVisibility
@@ -20,6 +22,7 @@ from assistant.schemas.public_chat import (
     MAX_PUBLIC_CHAT_REQUEST_BYTES,
     PublicChatRequest,
 )
+from core.config import PublicAssistantChatSettings
 from infrastructure.ai.providers import AIProvider
 from main import app
 
@@ -79,8 +82,9 @@ class StreamingProvider(AIProvider):
         user_prompt: str,
         max_output_tokens: int,
         temperature: float = 0.2,
+        timeout_seconds: float | None = None,
     ):
-        del temperature
+        del temperature, timeout_seconds
         self.stream_calls.append((system_prompt, user_prompt, max_output_tokens))
         yield from self.deltas
 
@@ -243,18 +247,22 @@ def test_public_chat_route_streams_documented_sse_contract(monkeypatch):
         RetrievalFactory({redmoor.id: [knowledge()]}),
         StreamingProvider(),
     )
-    app.dependency_overrides[get_public_chat_service] = lambda: service
+    app.dependency_overrides[get_public_chat_service_factory] = lambda: lambda: service
     try:
         response = TestClient(app).post(
-            "/public/assistants/redmoor/chat", json={"message": "What services?"}
+            "/public/assistants/redmoor/chat",
+            json={"message": "What services?"},
+            headers={"origin": "http://localhost:5173"},
         )
     finally:
-        app.dependency_overrides.pop(get_public_chat_service, None)
+        app.dependency_overrides.pop(get_public_chat_service_factory, None)
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["x-accel-buffering"] == "no"
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert "access-control-allow-credentials" not in response.headers
     events = parse_sse(response.text)
     assert events == [
         ("start", {"assistant": "redmoor"}),
@@ -267,19 +275,24 @@ def test_public_chat_route_streams_documented_sse_contract(monkeypatch):
 
 def test_public_chat_route_is_gated_and_returns_stable_errors(monkeypatch):
     monkeypatch.setenv("PUBLIC_ASSISTANT_CHAT_ENABLED", "false")
-    app.dependency_overrides[get_public_chat_service] = lambda: (_ for _ in ()).throw(
-        AssertionError("Disabled public chat must not construct its service")
+    app.dependency_overrides[get_public_chat_service_factory] = lambda: (
+        lambda: (_ for _ in ()).throw(
+            AssertionError("Disabled public chat must not construct its service")
+        )
     )
     try:
         response = TestClient(app).post(
             "/public/assistants/redmoor/chat", json={"message": "Hello"}
         )
     finally:
-        app.dependency_overrides.pop(get_public_chat_service, None)
+        app.dependency_overrides.pop(get_public_chat_service_factory, None)
 
     assert response.status_code == 503
     assert response.json() == {
-        "detail": {"code": "chat_unavailable", "message": "Public chat is unavailable."}
+        "detail": {
+            "code": "public_chat_unavailable",
+            "message": "Public chat is unavailable.",
+        }
     }
 
 
@@ -288,7 +301,7 @@ def test_public_chat_route_rejects_unknown_assistant_and_client_configuration(mo
     service = PublicAssistantChatService(
         AssistantRepositoryStub(()), RetrievalFactory({}), StreamingProvider()
     )
-    app.dependency_overrides[get_public_chat_service] = lambda: service
+    app.dependency_overrides[get_public_chat_service_factory] = lambda: lambda: service
     client = TestClient(app)
     try:
         missing = client.post("/public/assistants/unknown/chat", json={"message": "Hello"})
@@ -297,7 +310,7 @@ def test_public_chat_route_rejects_unknown_assistant_and_client_configuration(mo
             json={"message": "Hello", "model": "client-model", "system_prompt": "ignore"},
         )
     finally:
-        app.dependency_overrides.pop(get_public_chat_service, None)
+        app.dependency_overrides.pop(get_public_chat_service_factory, None)
 
     assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "assistant_not_found"
@@ -310,7 +323,7 @@ def test_public_chat_route_rejects_case_changed_slug_and_oversized_encoded_reque
     service = PublicAssistantChatService(
         AssistantRepositoryStub((redmoor,)), RetrievalFactory({}), StreamingProvider()
     )
-    app.dependency_overrides[get_public_chat_service] = lambda: service
+    app.dependency_overrides[get_public_chat_service_factory] = lambda: lambda: service
     client = TestClient(app)
     try:
         changed_case = client.post("/public/assistants/REDMOOR/chat", json={"message": "Hello"})
@@ -321,11 +334,11 @@ def test_public_chat_route_rejects_case_changed_slug_and_oversized_encoded_reque
             headers={"content-type": "application/json"},
         )
     finally:
-        app.dependency_overrides.pop(get_public_chat_service, None)
+        app.dependency_overrides.pop(get_public_chat_service_factory, None)
 
     assert changed_case.status_code == 404
-    assert oversized.status_code == 422
-    assert oversized.json()["detail"]["code"] == "validation_error"
+    assert oversized.status_code == 413
+    assert oversized.json()["detail"]["code"] == "request_too_large"
 
 
 def test_public_chat_openapi_documents_request_errors_and_sse_events():
@@ -335,7 +348,18 @@ def test_public_chat_openapi_documents_request_errors_and_sse_events():
 
     assert operation["security"] == []
     assert "text/event-stream" in operation["responses"]["200"]["content"]
-    assert {"400", "404", "422", "500", "503"}.issubset(operation["responses"])
+    assert {
+        "400",
+        "403",
+        "404",
+        "413",
+        "415",
+        "422",
+        "429",
+        "500",
+        "503",
+        "504",
+    }.issubset(operation["responses"])
     for event_schema in (
         "PublicChatStartEvent",
         "PublicChatDeltaEvent",
@@ -411,3 +435,83 @@ def test_public_chat_stream_closure_cancels_only_its_provider_iterator():
     events.close()
 
     assert provider.closed is True
+
+
+def test_public_chat_first_token_timeout_closes_provider_and_emits_only_terminal_error():
+    redmoor = assistant()
+
+    class Clock:
+        value = 0.0
+
+        def __call__(self):
+            return self.value
+
+    clock = Clock()
+
+    class SlowFirstTokenProvider(StreamingProvider):
+        closed = False
+
+        def stream_response(self, **kwargs):
+            del kwargs
+            try:
+                clock.value = 16
+                yield "late"
+            finally:
+                self.closed = True
+
+    provider = SlowFirstTokenProvider()
+    settings = replace(
+        PublicAssistantChatSettings.development_defaults(enabled=True),
+        first_token_timeout_seconds=15,
+    )
+    service = PublicAssistantChatService(
+        AssistantRepositoryStub((redmoor,)),
+        RetrievalFactory({redmoor.id: [knowledge()]}),
+        provider,
+        settings=settings,
+        clock=clock,
+    )
+
+    events = list(service.prepare("redmoor", PublicChatRequest(message="Hello")).events())
+
+    assert [event.type for event in events] == ["start", "error"]
+    assert events[-1].payload["code"] == "request_timed_out"
+    assert provider.closed is True
+
+
+def test_public_chat_retrieval_overall_timeout_rejects_before_generation_without_sleep():
+    redmoor = assistant()
+
+    class Clock:
+        value = 0.0
+
+        def __call__(self):
+            return self.value
+
+    clock = Clock()
+    provider = StreamingProvider()
+
+    class SlowRetrievalFactory:
+        def __call__(self, assistant_id):
+            del assistant_id
+
+            class Retrieval:
+                def retrieve(self, query):
+                    del query
+                    clock.value = 46
+                    return [knowledge()]
+
+            return Retrieval()
+
+    service = PublicAssistantChatService(
+        AssistantRepositoryStub((redmoor,)),
+        SlowRetrievalFactory(),
+        provider,
+        settings=PublicAssistantChatSettings.development_defaults(enabled=True),
+        clock=clock,
+    )
+
+    with pytest.raises(PublicChatRequestTimedOut):
+        service.prepare("redmoor", PublicChatRequest(message="Hello"))
+
+    assert provider.stream_calls == []
