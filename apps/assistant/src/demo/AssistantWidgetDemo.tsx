@@ -1,6 +1,6 @@
 import {
   AssistantChatError,
-  AssistantWidget,
+  AssistantWidgetConversation as AssistantWidget,
   type AssistantChatClient,
   type AssistantMessage,
 } from '../components/assistant-widget'
@@ -56,7 +56,7 @@ const demoClient: AssistantChatClient = {
     }
 
     return {
-      answer: `Mock answer for turn ${Math.floor(history.length / 2) + 1}. PR 12C will replace this demo boundary with the public API adapter.`,
+      answer: `Mock answer for turn ${Math.floor(history.length / 2) + 1}. The published widget uses the public API adapter instead of this demo client.`,
     }
   },
 }

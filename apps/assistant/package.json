@@ -1,27 +1,49 @@
 {
-  "name": "@ai-discovery-assistant/assistant",
-  "private": true,
-  "version": "0.0.0",
+  "name": "@redmoor/assistant-widget",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Inline React assistant widget for the Redmoor public assistant API.",
+  "license": "UNLICENSED",
   "type": "module",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "types": "./dist/index.d.ts",
+  "sideEffects": [
+    "./dist/styles.css"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cyberrobot/llm-engineer.git",
+    "directory": "apps/assistant"
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "build": "tsc --noEmit -p tsconfig.json && vite build && tsc -p tsconfig.build.json",
     "lint": "eslint src",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "pack:check": "node scripts/pack-dry-run.mjs",
+    "pack:verify": "npm run build && node scripts/verify-package.mjs"
   },
-  "dependencies": {
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
@@ -30,6 +52,8 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.5.0",
     "jsdom": "^26.1.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
     "vite": "^8.0.10",

@@ -10,7 +10,7 @@
     "dev:api": "npm run dev --workspace @ai-discovery-assistant/backend",
     "dev:worker": "npm run worker --workspace @ai-discovery-assistant/backend",
     "dev:web": "npm run dev --workspace @ai-discovery-assistant/rag-ui",
-    "dev:assistant": "npm run dev --workspace @ai-discovery-assistant/assistant",
+    "dev:assistant": "npm run dev --workspace @redmoor/assistant-widget",
     "build": "npm run build --workspace @ai-discovery-assistant/rag-ui",
     "lint": "npm run lint --workspace @ai-discovery-assistant/rag-ui",
     "storybook": "npm run storybook --workspace @ai-discovery-assistant/rag-ui",

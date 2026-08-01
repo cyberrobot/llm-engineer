@@ -1,4 +1,4 @@
-export { AssistantWidget } from './AssistantWidget'
+export { AssistantWidgetConversation } from './AssistantWidget'
 export type {
   AssistantChatClient,
   AssistantChatErrorCode,
