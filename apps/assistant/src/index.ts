@@ -5,8 +5,14 @@ export type { ApiErrorCode, ApiLogger, HttpClientOptions } from './api/client'
 export { assistantConfig } from './config/assistantConfig'
 export { AssistantWidget } from './components/assistant-widget'
 export type {
+  AssistantChatClient,
+  AssistantChatErrorCode,
+  AssistantChatHistoryMessage,
+  AssistantChatRequest,
+  AssistantChatResponse,
   AssistantMessage,
   AssistantMessageRole,
   AssistantWidgetProps,
 } from './components/assistant-widget'
+export { AssistantChatError, buildConversationHistory } from './components/assistant-widget'
 export type { AssistantConfig } from './types/config'

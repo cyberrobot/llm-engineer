@@ -1,6 +1,9 @@
-import { useRef, useState } from 'react'
-
-import { AssistantWidget, type AssistantMessage } from '../components/assistant-widget'
+import {
+  AssistantChatError,
+  AssistantWidget,
+  type AssistantChatClient,
+  type AssistantMessage,
+} from '../components/assistant-widget'
 
 const redmoorSuggestions = [
   'What services does Redmoor Consulting offer?',
@@ -27,50 +30,46 @@ const sampleConversation: readonly AssistantMessage[] = [
   },
 ]
 
-const initialInteractiveMessages: readonly AssistantMessage[] = [
-  {
-    id: 'interactive-welcome',
-    role: 'assistant',
-    content: 'Hello. Ask me a question about Redmoor Consulting.',
+let shouldFailRetryExample = true
+
+const demoClient: AssistantChatClient = {
+  historyLimit: 6,
+  async send({ message, history }, { signal }) {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(resolve, 1_200)
+      signal.addEventListener('abort', () => {
+        window.clearTimeout(timeout)
+        reject(new DOMException('Aborted', 'AbortError'))
+      }, { once: true })
+    })
+
+    const normalized = message.toLowerCase()
+    if (normalized.includes('unavailable')) {
+      throw new AssistantChatError('assistant_unavailable', false)
+    }
+    if (normalized.includes('rate limit')) {
+      throw new AssistantChatError('rate_limited', true)
+    }
+    if (normalized.includes('retry') && shouldFailRetryExample) {
+      shouldFailRetryExample = false
+      throw new AssistantChatError('network_error', true)
+    }
+
+    return {
+      answer: `Mock answer for turn ${Math.floor(history.length / 2) + 1}. PR 12C will replace this demo boundary with the public API adapter.`,
+    }
   },
-]
+}
 
 export function AssistantWidgetDemo() {
-  const nextMessageNumber = useRef(0)
-  const [rejectionHandled, setRejectionHandled] = useState(false)
-  const [messages, setMessages] = useState<readonly AssistantMessage[]>(
-    initialInteractiveMessages,
-  )
-
-  async function handleSubmit(content: string) {
-    nextMessageNumber.current += 1
-    const messageNumber = nextMessageNumber.current
-    setMessages((current) => [
-      ...current,
-      { id: `demo-user-${messageNumber}`, role: 'user', content },
-    ])
-
-    await new Promise((resolve) => window.setTimeout(resolve, 1_200))
-
-    setMessages((current) => [
-      ...current,
-      {
-        id: `demo-assistant-${messageNumber}`,
-        role: 'assistant',
-        content:
-          'This is a static demo response for layout review only. A later integration will supply real assistant responses.',
-      },
-    ])
-  }
-
   return (
     <main className="demoPage">
       <header className="demoIntro">
         <p className="demoEyebrow">Component development</p>
-        <h1>Assistant widget foundation</h1>
+        <h1>Assistant widget conversation states</h1>
         <p>
-          These examples exercise initial, interactive, filled, long-content, pending, rejected,
-          and constrained-width states without making network requests.
+          These examples exercise mock multi-turn, pending, retry, unavailable, filled,
+          long-content, and constrained-width states without making network requests.
         </p>
       </header>
 
@@ -78,14 +77,14 @@ export function AssistantWidgetDemo() {
         <div className="demoSectionHeading">
           <p>Interactive example</p>
           <h2 id="interactive-heading">Ask Redmoor</h2>
-          <span>Submissions remain pending for 1.2 seconds before a static demo reply.</span>
+          <span>Submissions remain pending for 1.2 seconds before a mock reply.</span>
         </div>
         <AssistantWidget
           assistantName="Redmoor Assistant"
-          messages={messages}
-          onSubmit={handleSubmit}
+          chatClient={demoClient}
           placeholder="Ask Redmoor a question…"
           suggestedQuestions={redmoorSuggestions}
+          welcomeMessage="Hello. Ask me a question about Redmoor Consulting."
         />
       </section>
 
@@ -112,25 +111,17 @@ export function AssistantWidgetDemo() {
 
       <section className="demoSection" aria-labelledby="rejection-heading">
         <div className="demoSectionHeading">
-          <p>Host-handled failure</p>
-          <h2 id="rejection-heading">Rejected submission</h2>
+          <p>Mocked failures</p>
+          <h2 id="rejection-heading">Retry and unavailable states</h2>
           <span>
-            Submit a question to verify that the composer is restored and the host error callback
-            runs without exposing exception details.
+            Ask &quot;retry this&quot; for a one-time retryable failure, &quot;rate limit&quot; for a
+            retryable limit, or &quot;unavailable&quot; for a non-retryable failure.
           </span>
-          <output className="demoResult" aria-live="polite">
-            {rejectionHandled ? 'The host handled the simulated failure.' : ''}
-          </output>
         </div>
         <AssistantWidget
           assistantName="Redmoor Assistant"
-          onError={() => setRejectionHandled(true)}
-          onSubmit={async () => {
-            setRejectionHandled(false)
-            await new Promise((resolve) => window.setTimeout(resolve, 600))
-            throw new Error('Simulated demo submission failure')
-          }}
-          welcomeMessage="Try a submission that the demo host will reject."
+          chatClient={demoClient}
+          welcomeMessage="Try one of the mocked failure phrases above."
         />
       </section>
 
