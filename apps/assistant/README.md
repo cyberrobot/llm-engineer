@@ -84,7 +84,42 @@ npm run pack:verify --workspace @redmoor/assistant-widget
 ```
 
 The local Vite demo and package-consumer fixture are development tools and are excluded from the
-published tarball. Publication and release automation are intentionally handled separately.
+published tarball.
+
+## Releasing
+
+Package versions are changed manually in `apps/assistant/package.json` and the repository lockfile.
+Before the first release, create an npm trusted publisher for `@redmoor/assistant-widget` with the
+GitHub repository owner and name, workflow filename `publish-assistant-widget.yml`, and environment
+`npm`. Create that GitHub environment as well; configure required reviewers and deployment branch
+or tag rules there when release approval is required. The workflow uses npm's public registry and
+GitHub OIDC, so it does not require a long-lived npm token. The npm package must permit public
+publication for this scoped package.
+
+To release a version:
+
+1. Update the `version` in `apps/assistant/package.json` with `npm version <version> --workspace
+   @redmoor/assistant-widget --no-git-tag-version`, review the resulting manifest and lockfile
+   changes, and merge them through the normal review process.
+2. From the merged commit, run the widget lint, tests, build, and `pack:verify` checks.
+3. Create and push an annotated tag matching the package version exactly:
+
+   ```sh
+   git tag -a assistant-widget-v0.1.0 -m "Release assistant widget 0.1.0"
+   git push origin assistant-widget-v0.1.0
+   ```
+
+The tag starts the **Publish assistant widget** workflow. It checks out that exact tag, rejects a
+malformed tag or a tag that differs from `apps/assistant/package.json`, repeats all package checks,
+and publishes only `@redmoor/assistant-widget` with public access and npm provenance. An existing
+tag can also be selected explicitly with the workflow's manual `release_tag` input.
+
+If validation or a package check fails, fix the problem through a reviewed commit, update the
+package version when appropriate, and create a new matching tag; do not move a published release
+tag. If publication fails before npm accepts the package, re-run the same workflow after correcting
+the npm trusted-publisher or GitHub environment configuration. If npm already contains that version,
+a retry fails safely because npm versions are immutable: bump the package version and release a new
+matching tag instead.
 
 ### Connected backend demo
 
