@@ -11,6 +11,50 @@
 
 ## Repository Inspection and Scope
 
+### Repository navigation
+
+Start with `docs/architecture/repository-map.md` and `docs/architecture/dependency-rules.md`. Use
+them to select the smallest relevant application and layer and to confirm its allowed dependency
+directions before reading implementation files. For every selected subtree, locate and read the
+nearest scoped `AGENTS.md` between the repository root and the target file; its more specific
+instructions supplement or override broader repository guidance for that scope. Do not scan or
+enumerate the entire repository as a default discovery step.
+
+For every task:
+
+1. Read the task, `git status -sb`, the focused diff, the nearest scoped `AGENTS.md`, and the nearest
+   relevant README, manifest, configuration, and tests.
+2. Search by a concrete symbol, route, configuration key, business concept, or filename within the
+   selected subtree. Prefer scoped commands such as `rg <pattern> apps/backend/assistant` or
+   `rg --files apps/assistant/src` over repository-wide searches.
+3. Follow direct imports, callers, ports, adapters, registrations, and tests outward from the primary
+   change area. Expand into another subtree only when this dependency trail or a public contract
+   requires it.
+4. Inspect shared bootstrap, exports, migrations, dependency injection, and lockfiles only when the
+   change crosses those boundaries. Do not read them speculatively.
+5. Exclude generated and runtime directories from discovery, including `node_modules/`, `dist/`,
+   virtual environments, caches, uploads, evaluation reports, coverage output, and `.codex/results/`.
+
+Route initial inspection by change area:
+
+- Backend API or business behaviour: start in the matching `apps/backend/<context>/api/`,
+  `application/`, and `domain/` paths, then inspect its infrastructure adapters and focused tests.
+- Shared backend runtime or provider behaviour: start in `apps/backend/core/`,
+  `apps/backend/infrastructure/`, or `apps/backend/shared/`, then identify the bounded-context callers.
+- Database changes: start with the owning repository and domain model, then inspect
+  `apps/backend/infrastructure/database/migrations/` and relevant persistence tests.
+- Internal RAG UI changes: start in `apps/rag-ui/src/components/`, follow calls into
+  `apps/rag-ui/src/services/` and `src/utils/`, and inspect colocated stories or tests.
+- Published assistant widget changes: start at `apps/assistant/src/index.ts`, the public widget facade,
+  or the affected `src/components/assistant-widget/` code; inspect `src/publicChatClient.ts`, package
+  exports, consumer fixtures, and demo code only as required by the affected contract.
+- Documentation or workflow changes: start with the named document plus the implementation,
+  manifest, or command it describes; verify referenced paths without walking unrelated source trees.
+
+Repository-wide enumeration is a fallback for genuinely cross-cutting work or when focused searches
+cannot locate an owning boundary. If used, state what uncertainty requires it and filter out generated
+and ignored content.
+
 Before implementation:
 
 1. Inspect the relevant domain models, services, repositories, factories, utilities, configuration, dependencies, conventions, and tests.

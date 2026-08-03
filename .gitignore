@@ -7,3 +7,6 @@ dist/
 *.py[cod]
 apps/backend/uploads/
 apps/backend/evaluation-reports/
+
+# Local Codex execution reports
+.codex/results/
