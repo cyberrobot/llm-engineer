@@ -20,6 +20,14 @@ nearest scoped `AGENTS.md` between the repository root and the target file; its 
 instructions supplement or override broader repository guidance for that scope. Do not scan or
 enumerate the entire repository as a default discovery step.
 
+Current scoped guidance:
+
+- `apps/backend/AGENTS.md` applies to backend code, tests, migrations, operations, and backend docs.
+- `apps/assistant/AGENTS.md` applies to the published assistant widget, its demo, package fixtures,
+  and tests.
+- `apps/rag-ui/` currently has no scoped file, so this root file and the architecture documents
+  remain authoritative there.
+
 For every task:
 
 1. Read the task, `git status -sb`, the focused diff, the nearest scoped `AGENTS.md`, and the nearest

@@ -1,5 +1,25 @@
 # Backend Engineering Rules
 
+## Repository Navigation
+
+Read the root `AGENTS.md`, `docs/architecture/repository-map.md`, and
+`docs/architecture/dependency-rules.md` before changing backend code. Start with the owning bounded
+context and inspect only the layers participating in the requested behaviour:
+
+- `assistant/domain/` for assistant, document, ingestion, citation, and evaluation rules.
+- `assistant/application/` and `assistant/application/ports/` for use-case orchestration and
+  application-owned integration contracts.
+- `assistant/api/` and `assistant/schemas/` for HTTP validation and transport mapping.
+- `assistant/infrastructure/` for assistant repositories, ingestion adapters, and vector stores.
+- `admin_auth/` or `operations/` for their respective bounded contexts.
+- `core/`, `infrastructure/`, and `shared/` only for genuinely shared runtime concerns.
+- `tests/` for the focused behavioural and persistence coverage matching the changed boundary.
+
+Follow imports, dependency factories, repository contracts, migrations, and callers outward from
+the primary change area. Do not enumerate all backend files or inspect every bounded context by
+default. Read `main.py`, shared router registration, database bootstrap, migrations, or provider
+factories only when the change affects those composition or public-contract boundaries.
+
 ## Domain Models and Validation
 
 - Model important business concepts explicitly and validate them so invalid states are difficult to construct.
