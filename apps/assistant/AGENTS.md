@@ -1,5 +1,23 @@
 # Frontend Engineering Rules
 
+## Repository Navigation
+
+Read the root `AGENTS.md`, `docs/architecture/repository-map.md`, and
+`docs/architecture/dependency-rules.md` before changing the assistant widget. Start at the narrowest
+affected public or internal boundary:
+
+- `src/index.ts`, `src/AssistantWidget.tsx`, and `src/AssistantWidget.types.ts` for the supported
+  package surface.
+- `src/components/assistant-widget/` for rendered conversation behaviour and bounded state.
+- `src/publicChatClient.ts` and `src/api/` for the public backend transport contract.
+- `src/config/` for validated browser configuration.
+- `src/demo/` only for local consumer behaviour.
+- `test-fixtures/consumer/` and `scripts/` only when package exports or distributable contents change.
+
+Follow component imports and public exports from the affected file; do not scan all widget source or
+the demo by default. Treat `package.json` exports, compiled styles, peer dependencies, and consumer
+fixtures as package contracts, but inspect them only when the requested change can affect consumers.
+
 ## Frontend Testing
 
 Add or update frontend tests whenever user-visible behaviour changes. Exercise the rendered interface through text, accessible roles, labelled controls, keyboard and pointer input, and navigation; do not test hook internals, component state, exact DOM structure, CSS classes, or generated IDs when a behavioural alternative exists. A frontend feature is incomplete unless its meaningful success, loading, empty, failure, disabled, and accessibility states are covered where applicable.
