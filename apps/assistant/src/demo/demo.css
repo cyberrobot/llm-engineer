@@ -24,9 +24,15 @@ body {
 
 .demoIntro h1,
 .demoSectionHeading h2,
+.demoConnection h3,
+.demoConfigError h2,
 .demoIntro p,
 .demoSectionHeading p,
-.demoSectionHeading span {
+.demoSectionHeading span,
+.demoConnection p,
+.demoConnection dl,
+.demoConfigError p,
+.demoConfigError pre {
   margin: 0;
 }
 
@@ -75,16 +81,58 @@ body {
   font-size: 0.875rem;
 }
 
-.demoResult {
-  min-height: 1.5rem;
+.demoConnection,
+.demoConfigError {
+  padding: 1rem;
+  border: 1px solid #cbc9bd;
+  border-radius: 0.75rem;
+  background: #f8f7f2;
+}
+
+.demoConnection {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  color: #5d665f;
+  font-size: 0.8125rem;
+}
+
+.demoConnection h3,
+.demoConfigError h2 {
   color: #123d2d;
-  font-size: 0.875rem;
+  font-size: 1rem;
+}
+
+.demoConnection dl,
+.demoConnection dl div,
+.demoConfigError {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.demoConnection dl div {
+  gap: 0.2rem;
+}
+
+.demoConnection dt {
   font-weight: 700;
 }
 
-.demoNarrow {
-  width: 20rem;
-  max-width: 100%;
+.demoConnection dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.demoConfigError {
+  max-width: 46rem;
+}
+
+.demoConfigError pre {
+  padding: 1rem;
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: #e8e7df;
+  white-space: pre-wrap;
 }
 
 @media (max-width: 48rem) {

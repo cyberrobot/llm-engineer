@@ -85,3 +85,63 @@ npm run pack:verify --workspace @redmoor/assistant-widget
 
 The local Vite demo and package-consumer fixture are development tools and are excluded from the
 published tarball. Publication and release automation are intentionally handled separately.
+
+### Connected backend demo
+
+The primary Vite demo is a real consumer of the package-level `AssistantWidget` API. It uses the
+same public client as a host application, keeps conversation history in memory, and never stores or
+logs questions and answers. Only automated tests intercept HTTP; normal local use requires a running
+backend.
+
+Create `apps/assistant/.env` from `apps/assistant/.env.example`:
+
+```dotenv
+VITE_ASSISTANT_API_BASE_URL=http://localhost:8000
+VITE_ASSISTANT_ID=redmoor
+```
+
+Both values are required. The demo deliberately has no localhost or assistant fallback, so a
+production build cannot silently connect to a developer machine. These are public browser settings,
+not secrets.
+
+For the smallest seeded local setup, configure `apps/backend/.env` with
+`PUBLIC_ASSISTANT_CHAT_ENABLED=true`, a valid `OPENAI_API_KEY`, and an empty `DATABASE_URL`. The
+backend then uses its built-in active, publicly visible `redmoor` assistant and curated in-memory
+knowledge fixture. Start the backend and frontend from separate repository-root terminals:
+
+```sh
+source apps/backend/venv/bin/activate
+npm run dev:api
+```
+
+```sh
+npm run dev:assistant
+```
+
+Open `http://localhost:5173`, submit a suggested or manual question, and verify that the response
+appears. A follow-up sends the completed prior turn through the same public client. Stop the backend
+to exercise the safe network error and retry flow. Refresh the page to start a new in-memory
+conversation.
+
+For the normal database-backed backend, start dependencies with `docker compose up -d`. Backend
+startup applies the repository's schema bootstrap and creates the active, public `redmoor` assistant
+idempotently. Indexed knowledge must also exist for that assistant; use the repository's established
+ingestion workflow rather than editing database rows. The public route remains disabled unless
+`PUBLIC_ASSISTANT_CHAT_ENABLED=true`.
+
+The demo origin is `http://localhost:5173`. The backend development default and
+`apps/backend/.env.example` already include that exact origin in `PUBLIC_CHAT_ALLOWED_ORIGINS`; keep
+it when overriding the comma-separated list. Do not use a wildcard origin or browser `no-cors` mode.
+
+Troubleshooting:
+
+- A configuration page names missing or invalid frontend variables; update `apps/assistant/.env`
+  and restart Vite.
+- A browser CORS error means the exact frontend origin is absent from
+  `PUBLIC_CHAT_ALLOWED_ORIGINS` or the backend was not restarted after it changed.
+- “Currently unavailable” means the slug was not found, is inactive/private, or the public route is
+  unavailable. Confirm `VITE_ASSISTANT_ID=redmoor` and the backend gate.
+- A network error usually means the backend is not running at `VITE_ASSISTANT_API_BASE_URL`; start it
+  and use the widget's retry button.
+- A safe generic server error hides provider and backend details by design; inspect backend logs for
+  configuration or provider failures without logging conversation content.
