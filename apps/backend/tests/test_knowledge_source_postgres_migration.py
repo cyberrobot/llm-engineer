@@ -77,9 +77,12 @@ def test_migration_upgrades_repeats_downgrades_reupgrades_and_enforces_constrain
             upgrade(cursor)
             upgrade(cursor)
             assert cursor.execute("SELECT to_regclass('knowledge_sources')").fetchone()[0]
-            assert cursor.execute(
-                "SELECT to_regclass('knowledge_source_active_job_unique_idx')"
-            ).fetchone()[0]
+            assert (
+                cursor.execute(
+                    "SELECT to_regclass('knowledge_source_active_job_unique_idx')"
+                ).fetchone()[0]
+                is None
+            )
 
             source_values = (
                 str(uuid4()),
@@ -261,11 +264,9 @@ def test_migration_enforces_knowledge_source_constraint_matrix():
                 "INSERT INTO document_ingestion_jobs (id, document_id, status) VALUES (%s,%s,'queued')",
                 (active_job, documents[0]),
             )
-            _expect_constraint(
-                cursor,
+            cursor.execute(
                 "INSERT INTO document_ingestion_jobs (id, document_id, status) VALUES (%s,%s,'running')",
                 (str(uuid4()), documents[0]),
-                "duplicate_active_job",
             )
             terminal_jobs = []
             for status in ("completed", "failed", "cancelled", "completed"):
@@ -312,7 +313,7 @@ def test_migration_enforces_knowledge_source_constraint_matrix():
         connection.rollback()
 
 
-def test_migration_reports_documents_with_duplicate_active_jobs():
+def test_migration_removes_draft_active_job_index_and_allows_legacy_active_jobs():
     _require_database()
     schema = f"knowledge_source_duplicates_{uuid4().hex}"
     assistant_id = str(uuid4())
@@ -330,69 +331,31 @@ def test_migration_reports_documents_with_duplicate_active_jobs():
             )
             cursor.execute(
                 """INSERT INTO document_ingestion_jobs (id, document_id, status)
-                   VALUES (%s, %s, 'queued'), (%s, %s, 'running')""",
-                (str(uuid4()), document_id, str(uuid4()), document_id),
+                   VALUES (%s, %s, 'queued')""",
+                (str(uuid4()), document_id),
             )
 
-            cursor.execute("SAVEPOINT unsafe_upgrade")
-            with pytest.raises(psycopg.errors.UniqueViolation) as error:
-                upgrade(cursor)
-
-            assert "Cannot enforce one active ingestion job per document" in str(error.value)
-            assert document_id in str(error.value)
-            cursor.execute("ROLLBACK TO SAVEPOINT unsafe_upgrade")
-            assert (
-                cursor.execute(
-                    "SELECT to_regclass('knowledge_source_active_job_unique_idx')"
-                ).fetchone()[0]
-                is None
-            )
-        connection.rollback()
-
-
-def test_migration_duplicate_diagnostic_is_deterministic_and_bounded():
-    _require_database()
-    schema = f"knowledge_source_bounded_duplicates_{uuid4().hex}"
-    assistant_id = str(uuid4())
-    document_ids = [f"document-{index:02d}" for index in range(25)]
-
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-            _set_schema(cursor, schema)
-            _create_baseline(cursor)
-            cursor.execute("INSERT INTO assistants (id) VALUES (%s)", (assistant_id,))
-            cursor.executemany(
-                "INSERT INTO documents (id, assistant_id) VALUES (%s, %s)",
-                [(document_id, assistant_id) for document_id in reversed(document_ids)],
-            )
-            cursor.executemany(
+            cursor.execute("""CREATE UNIQUE INDEX knowledge_source_active_job_unique_idx
+                ON document_ingestion_jobs(document_id)
+                WHERE status IN ('queued', 'running')""")
+            upgrade(cursor)
+            cursor.execute(
                 """INSERT INTO document_ingestion_jobs (id, document_id, status)
-                   VALUES (%s, %s, %s)""",
-                [
-                    (str(uuid4()), document_id, status)
-                    for document_id in document_ids
-                    for status in ("queued", "running")
-                ],
+                   VALUES (%s, %s, 'running')""",
+                (str(uuid4()), document_id),
             )
-
-            cursor.execute("SAVEPOINT unsafe_upgrade")
-            with pytest.raises(psycopg.errors.UniqueViolation) as error:
-                upgrade(cursor)
-
-            diagnostic = str(error.value)
-            assert "affect 25 document(s)" in diagnostic
-            for document_id in document_ids[:20]:
-                assert document_id in diagnostic
-            for document_id in document_ids[20:]:
-                assert document_id not in diagnostic
-            assert "5 additional document(s) omitted" in diagnostic
-            assert len(diagnostic) < 2_000
-            cursor.execute("ROLLBACK TO SAVEPOINT unsafe_upgrade")
             assert (
                 cursor.execute(
                     "SELECT to_regclass('knowledge_source_active_job_unique_idx')"
                 ).fetchone()[0]
                 is None
+            )
+            assert (
+                cursor.execute(
+                    """SELECT count(*) FROM document_ingestion_jobs
+                   WHERE document_id=%s AND status IN ('queued', 'running')""",
+                    (document_id,),
+                ).fetchone()[0]
+                == 2
             )
         connection.rollback()

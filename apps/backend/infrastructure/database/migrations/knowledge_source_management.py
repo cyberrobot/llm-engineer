@@ -46,53 +46,9 @@ def upgrade(cursor: Any) -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS knowledge_sources_document_unique_idx
         ON knowledge_sources(document_id)
     """)
-    # Keep the diagnostic and index creation in one stable view of active jobs.
-    cursor.execute("LOCK TABLE document_ingestion_jobs IN SHARE ROW EXCLUSIVE MODE")
-    cursor.execute("""
-        DO $$
-        DECLARE
-            duplicate_document_count BIGINT;
-            duplicate_document_ids TEXT;
-        BEGIN
-            WITH duplicate_active_jobs AS (
-                SELECT document_id
-                FROM document_ingestion_jobs
-                WHERE status IN ('queued', 'running')
-                GROUP BY document_id
-                HAVING count(*) > 1
-            ), numbered AS (
-                SELECT document_id, row_number() OVER (ORDER BY document_id) AS position
-                FROM duplicate_active_jobs
-            )
-            SELECT count(*), string_agg(document_id, ', ' ORDER BY document_id)
-                FILTER (WHERE position <= 20)
-            INTO duplicate_document_count, duplicate_document_ids
-            FROM numbered;
-
-            IF duplicate_document_count > 0 THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '23505',
-                    MESSAGE = 'Cannot enforce one active ingestion job per document',
-                    DETAIL = format(
-                        'Duplicate active ingestion jobs affect %s document(s). First %s: %s%s',
-                        duplicate_document_count,
-                        least(duplicate_document_count, 20),
-                        duplicate_document_ids,
-                        CASE WHEN duplicate_document_count > 20
-                            THEN format(' (%s additional document(s) omitted)',
-                                        duplicate_document_count - 20)
-                            ELSE '' END
-                    ),
-                    HINT = 'Resolve duplicate queued/running jobs before retrying this migration.';
-            END IF;
-        END
-        $$
-    """)
-    cursor.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS knowledge_source_active_job_unique_idx
-        ON document_ingestion_jobs(document_id)
-        WHERE status IN ('queued', 'running')
-    """)
+    # Earlier drafts applied this invariant to every ingestion workflow. Knowledge Source
+    # re-ingestion is instead serialized by locking its source row in the repository transaction.
+    cursor.execute("DROP INDEX IF EXISTS knowledge_source_active_job_unique_idx")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS knowledge_source_reingestion_requests (
             assistant_id TEXT NOT NULL REFERENCES assistants(id) ON DELETE CASCADE,

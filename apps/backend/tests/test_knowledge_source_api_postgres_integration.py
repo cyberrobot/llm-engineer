@@ -1,5 +1,4 @@
 import os
-from contextlib import suppress
 from uuid import UUID
 
 import psycopg
@@ -130,5 +129,9 @@ def test_database_backed_api_lifecycle(monkeypatch):
             )
     finally:
         if document_id is not None:
-            with suppress(Exception), get_connection() as connection:
+            with get_connection() as connection:
+                connection.execute(
+                    "DELETE FROM ingestion_persistence_results WHERE document_id=%s",
+                    (document_id,),
+                )
                 connection.execute("DELETE FROM documents WHERE id=%s", (document_id,))

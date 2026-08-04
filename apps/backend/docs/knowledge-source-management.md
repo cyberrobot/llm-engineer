@@ -27,14 +27,10 @@ updates content without writing retrieval state, so a simultaneous worker comple
 stale administrator intent. Enabling restores the committed representation without re-embedding.
 Re-ingestion preserves the source identity and transactionally reuses a queued or running job;
 otherwise it queues one new job for the current persisted payload. Keyed replays return the original
-job, and database uniqueness enforces one queued/running job per source under concurrency.
-
-During upgrade, the knowledge-source migration checks existing ingestion history before adding that
-uniqueness guarantee. If any document already has multiple queued or running jobs, the migration
-stops with a diagnostic reporting the total and the first 20 document identifiers in deterministic
-order; additional identifiers are counted but omitted to keep the failure bounded. Operators must
-reconcile those jobs explicitly and rerun the migration; the migration never deletes or changes job
-history.
+job. Concurrent Knowledge Source re-ingestion is serialized by locking the Knowledge Source row;
+the later transaction observes and reuses the active job created by the winning transaction.
+Idempotency receipts provide deterministic replay for keyed requests. The shared ingestion-job table
+does not globally prohibit multiple active jobs for unrelated ingestion workflows.
 
 Pull-request CI starts the repository's PostgreSQL/pgvector service and runs the knowledge-source
 PostgreSQL suites in required mode. Missing or unavailable database configuration is a failure in

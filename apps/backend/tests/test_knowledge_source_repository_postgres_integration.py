@@ -1,6 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from threading import Barrier
 from uuid import UUID, uuid4
 
@@ -92,8 +92,40 @@ def _processed(source_url: str, version: str, text: str) -> ContentProcessingRes
 
 
 def _cleanup(document_ids: set[str], assistant_ids: set[UUID] | None = None) -> None:
-    with suppress(Exception), get_connection() as connection:
-        connection.execute("DELETE FROM documents WHERE id = ANY(%s)", (list(document_ids),))
+    if not document_ids and not assistant_ids:
+        return
+    ids = list(document_ids)
+    with get_connection() as connection:
+        if ids:
+            connection.execute(
+                "DELETE FROM ingestion_persistence_results WHERE document_id = ANY(%s)", (ids,)
+            )
+            connection.execute(
+                """DELETE FROM ingestion_step_executions WHERE ingestion_job_id IN
+                   (SELECT id FROM document_ingestion_jobs WHERE document_id = ANY(%s))""",
+                (ids,),
+            )
+            connection.execute(
+                "UPDATE documents SET last_ingestion_job_id=NULL WHERE id = ANY(%s)", (ids,)
+            )
+            connection.execute("DELETE FROM chunks WHERE doc_id = ANY(%s)", (ids,))
+            connection.execute(
+                """DELETE FROM knowledge_source_reingestion_requests WHERE source_id IN
+                   (SELECT id FROM knowledge_sources WHERE document_id = ANY(%s))""",
+                (ids,),
+            )
+            connection.execute(
+                "DELETE FROM document_ingestion_jobs WHERE document_id = ANY(%s)", (ids,)
+            )
+            connection.execute("DELETE FROM knowledge_sources WHERE document_id = ANY(%s)", (ids,))
+            connection.execute("DELETE FROM documents WHERE id = ANY(%s)", (ids,))
+            remaining = connection.execute(
+                """SELECT
+                     (SELECT count(*) FROM knowledge_sources WHERE document_id = ANY(%s)),
+                     (SELECT count(*) FROM documents WHERE id = ANY(%s))""",
+                (ids, ids),
+            ).fetchone()
+            assert remaining == (0, 0)
         if assistant_ids:
             connection.execute(
                 "DELETE FROM assistants WHERE id = ANY(%s)",
@@ -227,18 +259,23 @@ def test_repository_creation_isolation_reingestion_deletion_and_rollback():
 def test_concurrent_url_creation_and_reingestion_have_one_canonical_outcome():
     _require_database()
     init_db()
+    service = _service()
     unique_path = uuid4().hex
     documents: set[str] = set()
-
     create_barrier = Barrier(2)
 
-    @contextmanager
-    def create_connection():
-        create_barrier.wait(timeout=5)
-        with get_connection() as connection:
-            yield connection
-
     def create_url():
+        first_call = True
+
+        @contextmanager
+        def create_connection():
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                create_barrier.wait(timeout=5)
+            with get_connection() as connection:
+                yield connection
+
         return KnowledgeSourceService(
             PostgresKnowledgeSourceRepository(create_connection),
             PostgresAssistantRepository(),
@@ -257,6 +294,20 @@ def test_concurrent_url_creation_and_reingestion_have_one_canonical_outcome():
         job_ids = {result[0].latest_job.id for result in creations}
         documents.update(document_ids)
         assert len(source_ids) == len(document_ids) == len(job_ids) == 1
+        assert sorted(result[1] for result in creations) == [False, True]
+        with get_connection() as connection:
+            canonical_counts = connection.execute(
+                """SELECT
+                     (SELECT count(*) FROM knowledge_sources WHERE id=%s),
+                     (SELECT count(*) FROM documents WHERE id=%s),
+                     (SELECT count(*) FROM document_ingestion_jobs WHERE document_id=%s)""",
+                (
+                    str(next(iter(source_ids))),
+                    next(iter(document_ids)),
+                    next(iter(document_ids)),
+                ),
+            ).fetchone()
+        assert canonical_counts == (1, 1, 1)
 
         initial_job = creations[0][0].latest_job
         _complete(initial_job.id)
@@ -264,13 +315,18 @@ def test_concurrent_url_creation_and_reingestion_have_one_canonical_outcome():
         key = f"concurrent-reingestion-{uuid4()}"
         reingest_barrier = Barrier(2)
 
-        @contextmanager
-        def reingest_connection():
-            reingest_barrier.wait(timeout=5)
-            with get_connection() as connection:
-                yield connection
-
         def reingest():
+            first_call = True
+
+            @contextmanager
+            def reingest_connection():
+                nonlocal first_call
+                if first_call:
+                    first_call = False
+                    reingest_barrier.wait(timeout=5)
+                with get_connection() as connection:
+                    yield connection
+
             return KnowledgeSourceService(
                 PostgresKnowledgeSourceRepository(reingest_connection),
                 PostgresAssistantRepository(),
@@ -280,6 +336,24 @@ def test_concurrent_url_creation_and_reingestion_have_one_canonical_outcome():
             reingestions = list(executor.map(lambda _: reingest(), range(2)))
         assert len({result[0].latest_job.id for result in reingestions}) == 1
         assert sorted(result[1] for result in reingestions) == [False, True]
+        replayed, replay_reused = service.reingest(
+            REDMOOR_ASSISTANT_ID, source_id, idempotency_key=key
+        )
+        assert replayed.latest_job.id == reingestions[0][0].latest_job.id
+        assert replay_reused is True
+        other, _ = service.create(
+            REDMOOR_ASSISTANT_ID,
+            source_type=KnowledgeSourceType.direct_text,
+            name="Conflicting receipt owner",
+            direct_text="A different source cannot reuse this receipt key.",
+        )
+        documents.add(other.source.document_id)
+        with pytest.raises(IdempotencyConflict):
+            service.reingest(
+                REDMOOR_ASSISTANT_ID,
+                other.source.id,
+                idempotency_key=key,
+            )
         with get_connection() as connection:
             assert (
                 connection.execute(
@@ -457,7 +531,7 @@ def test_retrieval_state_remains_authoritative_across_ingestion_completion():
                 mode=PersistenceMode.reindex,
             ),
         )
-        assert any(item.document_id == document_id for item in retrieval.retrieve("authority"))
+        assert any(item.document.id == document_id for item in retrieval.retrieve("authority"))
         _complete(view.latest_job.id)
         reingested, reused = service.reingest(REDMOOR_ASSISTANT_ID, view.source.id)
         assert reused is False
@@ -496,7 +570,7 @@ def test_retrieval_state_remains_authoritative_across_ingestion_completion():
                 (document_id,),
             ).fetchall()
         assert states == ("disabled", "disabled")
-        assert not any(item.document_id == document_id for item in retrieval.retrieve("authority"))
+        assert not any(item.document.id == document_id for item in retrieval.retrieve("authority"))
 
         embedding_calls = provider.batch_calls
         enabled = service.update(
@@ -504,7 +578,7 @@ def test_retrieval_state_remains_authoritative_across_ingestion_completion():
         )
         assert enabled.source.retrieval_state is DocumentRetrievalState.enabled
         matching = [
-            item for item in retrieval.retrieve("authority") if item.document_id == document_id
+            item for item in retrieval.retrieve("authority") if item.document.id == document_id
         ]
         assert [item.content for item in matching] == ["Replacement authoritative knowledge"]
         with get_connection() as connection:
