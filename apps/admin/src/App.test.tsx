@@ -1,0 +1,21 @@
+import { render,screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import { describe,expect,it,vi } from 'vitest';
+import App from './App';
+import { AdminApiError, type AdminApi, type Administrator } from './api/adminApi';
+import { AuthProvider } from './auth/AuthContext';
+
+const administrator:Administrator={id:'admin-1',email:'admin@example.test',role:'administrator'};
+function deferred<T>(){let resolve!:(value:T)=>void,reject!:(reason?:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}}
+function renderApp(api:AdminApi,path='/admin'){return render(<MemoryRouter initialEntries={[path]}><AuthProvider api={api}><App/></AuthProvider></MemoryRouter>)}
+function apiWith(overrides:Partial<AdminApi>={}):AdminApi{return{currentUser:vi.fn().mockResolvedValue(administrator),login:vi.fn().mockResolvedValue(administrator),logout:vi.fn().mockResolvedValue(undefined),...overrides}}
+
+describe('administrator application workflows',()=>{
+  it('hides protected content until session restoration completes',async()=>{const session=deferred<Administrator>();renderApp(apiWith({currentUser:vi.fn(()=>session.promise)}));expect(screen.getByRole('heading',{name:'Restoring your session'})).toBeInTheDocument();expect(screen.queryByText(/Dashboard functionality/)).not.toBeInTheDocument();session.resolve(administrator);expect(await screen.findByText('Dashboard functionality is not implemented yet.')).toBeInTheDocument()});
+  it('redirects a confirmed unauthenticated session with a safe return path',async()=>{renderApp(apiWith({currentUser:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated'))}),'/admin/assistants');expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument()});
+  it('shows a retryable restoration failure and retries manually',async()=>{const currentUser=vi.fn().mockRejectedValueOnce(new AdminApiError('network')).mockResolvedValueOnce(administrator);renderApp(apiWith({currentUser}));expect(await screen.findByRole('heading',{name:'Unable to restore your session'})).toBeInTheDocument();await userEvent.click(screen.getByRole('button',{name:'Try again'}));expect(await screen.findByText('Dashboard functionality is not implemented yet.')).toBeInTheDocument();expect(currentUser).toHaveBeenCalledTimes(2)});
+  it('validates required fields and signs in by keyboard without duplicate pending requests',async()=>{const login=vi.fn().mockResolvedValue(administrator);renderApp(apiWith({currentUser:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated')),login}),'/login?returnTo=/admin/assistants');const email=await screen.findByLabelText('Email address');await userEvent.click(screen.getByRole('button',{name:'Sign in'}));expect(screen.getByRole('alert')).toHaveFocus();await userEvent.type(email,'admin@example.test');await userEvent.type(screen.getByLabelText('Password'),'correct password{Enter}');expect(await screen.findByText('Assistant management is not implemented yet.')).toBeInTheDocument();expect(login).toHaveBeenCalledOnce()});
+  it('preserves email and safely reports invalid credentials',async()=>{renderApp(apiWith({currentUser:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated')),login:vi.fn().mockRejectedValue(new AdminApiError('invalid_credentials'))}),'/login');await userEvent.type(await screen.findByLabelText('Email address'),'admin@example.test');await userEvent.type(screen.getByLabelText('Password'),'wrong{Enter}');expect(await screen.findByRole('alert')).toHaveTextContent('email or password is invalid');expect(screen.getByLabelText('Email address')).toHaveValue('admin@example.test');expect(screen.getByLabelText('Password')).toHaveValue('')});
+  it('renders shell landmarks and logs out even when the session is already expired',async()=>{const logout=vi.fn().mockResolvedValue(undefined);renderApp(apiWith({logout}));expect(await screen.findByRole('navigation',{name:'Primary'})).toBeInTheDocument();expect(screen.getByText('admin@example.test')).toBeInTheDocument();await userEvent.click(screen.getByRole('button',{name:'Sign out'}));expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();expect(logout).toHaveBeenCalledOnce()});
+});

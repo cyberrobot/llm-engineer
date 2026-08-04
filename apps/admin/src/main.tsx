@@ -1,0 +1,11 @@
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
+import App from './App';
+import { createAdminApi } from './api/adminApi';
+import { AuthProvider } from './auth/AuthContext';
+import { ConfigurationError } from './components/FullPageStatus';
+import { readAdminConfig } from './config';
+import './styles.css';
+const config=readAdminConfig();
+createRoot(document.getElementById('root')!).render(<StrictMode>{config.ok?<BrowserRouter><AuthProvider api={createAdminApi(config.apiBaseUrl)}><App/></AuthProvider></BrowserRouter>:<ConfigurationError variable={config.variable} reason={config.reason}/>}</StrictMode>);

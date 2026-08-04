@@ -11,11 +11,15 @@
     "dev:worker": "npm run worker --workspace @ai-discovery-assistant/backend",
     "dev:web": "npm run dev --workspace @ai-discovery-assistant/rag-ui",
     "dev:assistant": "npm run dev --workspace @redmoor/assistant-widget",
+    "dev:admin": "npm run dev --workspace @ai-discovery-assistant/admin",
     "build": "npm run build --workspace @ai-discovery-assistant/rag-ui",
+    "build:admin": "npm run build --workspace @ai-discovery-assistant/admin",
     "lint": "npm run lint --workspace @ai-discovery-assistant/rag-ui",
+    "lint:admin": "npm run lint --workspace @ai-discovery-assistant/admin",
     "storybook": "npm run storybook --workspace @ai-discovery-assistant/rag-ui",
     "test": "npm run test --workspaces --if-present",
     "test:api": "npm run test --workspace @ai-discovery-assistant/backend",
+    "test:admin": "npm run test --workspace @ai-discovery-assistant/admin",
     "test:storybook": "npm run test-storybook --workspace @ai-discovery-assistant/rag-ui"
   }
 }
