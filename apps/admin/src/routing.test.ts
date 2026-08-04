@@ -1,0 +1,2 @@
+import { describe,expect,it } from 'vitest';import { safeReturnLocation } from './routing';
+describe('safe return locations',()=>{it.each([['/admin/assistants','/admin/assistants'],['https://evil.test','/admin'],['//evil.test/path','/admin'],['%broken','/admin'],['/login','/admin'],['/login?returnTo=/login','/admin']])('maps %s to %s',(value,expected)=>expect(safeReturnLocation(value)).toBe(expected));});
