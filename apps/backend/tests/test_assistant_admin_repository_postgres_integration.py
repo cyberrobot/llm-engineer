@@ -187,6 +187,19 @@ def test_postgres_pagination_is_deterministic_for_test_created_rows() -> None:
         )
         for index, assistant_id in enumerate(ids)
     ]
+    baseline_items, baseline_total = repository.list(
+        limit=1,
+        offset=0,
+        status=AssistantStatus.inactive,
+        visibility=AssistantVisibility.private,
+    )
+    assert len(baseline_items) <= 1
+    _, other_filter_baseline = repository.list(
+        limit=1,
+        offset=0,
+        status=AssistantStatus.active,
+        visibility=AssistantVisibility.private,
+    )
     try:
         for item in assistants:
             repository.create(item)
@@ -198,7 +211,7 @@ def test_postgres_pagination_is_deterministic_for_test_created_rows() -> None:
         )
         created = [item for item in page if item.id in set(ids)]
         assert created == assistants[:2]
-        assert total >= 3
+        assert total == baseline_total + 3
         next_page, same_total = repository.list(
             limit=1,
             offset=2,
@@ -214,9 +227,16 @@ def test_postgres_pagination_is_deterministic_for_test_created_rows() -> None:
             visibility=AssistantVisibility.private,
         )
         assert all(item.id not in set(ids) for item in empty)
-        assert empty_total >= len(empty)
+        assert empty_total == other_filter_baseline
     finally:
         _cleanup(*assistants)
+    _, cleaned_total = repository.list(
+        limit=1,
+        offset=0,
+        status=AssistantStatus.inactive,
+        visibility=AssistantVisibility.private,
+    )
+    assert cleaned_total == baseline_total
 
 
 def test_concurrent_dependent_insert_cannot_commit_after_assistant_delete() -> None:
