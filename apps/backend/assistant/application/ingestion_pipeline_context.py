@@ -32,7 +32,12 @@ class WebsiteIngestionContextFactory:
         context = IngestionPipelineContext(
             job_id,
             document_id,
-            metadata={"source_url": source.source_url, "access_roles": source.access_roles},
+            metadata={
+                "source_url": source.source_url,
+                "access_roles": source.access_roles,
+                "direct_text": source.direct_text,
+                "single_page": source.single_page,
+            },
         )
         if last_completed_step is None:
             return context

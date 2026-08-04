@@ -1,5 +1,8 @@
 # Backend
 
+Administrator lifecycle operations for direct-text and single-page URL knowledge are documented in
+[`docs/knowledge-source-management.md`](docs/knowledge-source-management.md).
+
 FastAPI backend for the AI Discovery Assistant.
 
 Operational ingestion retention, reconciliation, dry-run commands, scheduling guidance, and

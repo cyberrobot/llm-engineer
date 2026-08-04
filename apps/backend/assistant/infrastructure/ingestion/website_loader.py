@@ -176,6 +176,21 @@ class HttpWebsiteLoader(WebsiteLoader):
         )
         return documents
 
+    def load_single_page(self, url: str) -> list[WebsiteDocument]:
+        """Load exactly the requested page while retaining URL and redirect protections."""
+        root_url = validate_public_url(url, self._resolver)
+        try:
+            return [self._to_document(self._download(root_url, allowed_origin=None))]
+        except _PageTimeout as exc:
+            raise WebsiteTimeoutError("Website root page request timed out.") from exc
+        except _PageHTTPStatus as exc:
+            raise WebsiteHTTPStatusError(
+                exc.status_code,
+                retry_after_seconds=self._parse_retry_after(exc.retry_after),
+            ) from exc
+        except (InvalidWebsiteUrl, _PageFailure) as exc:
+            raise WebsiteLoadError("Website root page could not be loaded.") from exc
+
     def _download(self, url: str, *, allowed_origin: Origin | None) -> _DownloadedPage:
         current_url = url
         for _redirect_count in range(MAX_REDIRECTS + 1):
