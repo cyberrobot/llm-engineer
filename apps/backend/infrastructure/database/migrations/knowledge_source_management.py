@@ -46,6 +46,34 @@ def upgrade(cursor: Any) -> None:
         CREATE UNIQUE INDEX IF NOT EXISTS knowledge_sources_document_unique_idx
         ON knowledge_sources(document_id)
     """)
+    # Keep the diagnostic and index creation in one stable view of active jobs.
+    cursor.execute("LOCK TABLE document_ingestion_jobs IN SHARE ROW EXCLUSIVE MODE")
+    cursor.execute("""
+        DO $$
+        DECLARE
+            duplicate_document_ids TEXT;
+        BEGIN
+            SELECT string_agg(document_id, ', ' ORDER BY document_id)
+            INTO duplicate_document_ids
+            FROM (
+                SELECT document_id
+                FROM document_ingestion_jobs
+                WHERE status IN ('queued', 'running')
+                GROUP BY document_id
+                HAVING count(*) > 1
+            ) duplicate_active_jobs;
+
+            IF duplicate_document_ids IS NOT NULL THEN
+                RAISE EXCEPTION USING
+                    ERRCODE = '23505',
+                    MESSAGE = 'Cannot enforce one active ingestion job per document',
+                    DETAIL = 'Duplicate active ingestion jobs exist for document(s): '
+                        || duplicate_document_ids,
+                    HINT = 'Resolve duplicate queued/running jobs before retrying this migration.';
+            END IF;
+        END
+        $$
+    """)
     cursor.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS knowledge_source_active_job_unique_idx
         ON document_ingestion_jobs(document_id)

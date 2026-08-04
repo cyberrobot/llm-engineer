@@ -29,6 +29,11 @@ Re-ingestion preserves the source identity and transactionally reuses a queued o
 otherwise it queues one new job for the current persisted payload. Keyed replays return the original
 job, and database uniqueness enforces one queued/running job per source under concurrency.
 
+During upgrade, the knowledge-source migration checks existing ingestion history before adding that
+uniqueness guarantee. If any document already has multiple queued or running jobs, the migration
+stops with a diagnostic listing the affected document identifiers. Operators must reconcile those
+jobs explicitly and rerun the migration; the migration never deletes or changes job history.
+
 Deletion returns `409 active_ingestion` while a job is queued or running. Otherwise it removes the
 source-owned document, chunks, embeddings, and terminal job history in one transaction, returning
 `204`. Cross-assistant and missing resources use the same not-found response. Provider and database
