@@ -28,6 +28,9 @@ from infrastructure.database.migrations.ingestion_pipeline_checkpoint import (
 from infrastructure.database.migrations.ingestion_retry_recovery import (
     upgrade as upgrade_ingestion_retry_recovery,
 )
+from infrastructure.database.migrations.knowledge_source_management import (
+    upgrade as upgrade_knowledge_source_management,
+)
 from infrastructure.database.migrations.transactional_ingestion_persistence import (
     upgrade as upgrade_transactional_ingestion_persistence,
 )
@@ -146,6 +149,7 @@ def init_db():
                 )
             """)
             upgrade_assistant_domain_scoping(cur)
+            upgrade_knowledge_source_management(cur)
             upgrade_transactional_ingestion_persistence(cur)
             upgrade_background_worker_execution(cur)
             upgrade_ingestion_observability(cur)

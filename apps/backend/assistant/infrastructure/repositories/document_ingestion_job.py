@@ -32,6 +32,8 @@ class IngestionJobPage:
 class IngestionDocumentSource:
     source_url: str
     access_roles: tuple[str, ...]
+    direct_text: str | None = None
+    single_page: bool = False
 
 
 class DocumentIngestionJobRepository(ABC):
@@ -192,12 +194,18 @@ class PostgresDocumentIngestionJobRepository(DocumentIngestionJobRepository):
         try:
             with self._connection_factory() as connection:
                 row = connection.execute(
-                    "SELECT source_url, access_roles FROM documents WHERE id = %s",
+                    """SELECT documents.source_url, documents.access_roles,
+                              knowledge_sources.direct_text,
+                              knowledge_sources.source_type = 'url'
+                       FROM documents
+                       LEFT JOIN knowledge_sources
+                         ON knowledge_sources.document_id = documents.id
+                       WHERE documents.id = %s""",
                     (document_id,),
                 ).fetchone()
             if row is None or row[0] is None:
                 return None
-            return IngestionDocumentSource(str(row[0]), tuple(row[1]))
+            return IngestionDocumentSource(str(row[0]), tuple(row[1]), row[2], bool(row[3]))
         except psycopg.Error as exc:
             raise IngestionJobRepositoryFailure("Document source lookup failed.") from exc
 

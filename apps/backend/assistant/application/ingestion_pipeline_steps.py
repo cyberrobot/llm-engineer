@@ -1,5 +1,7 @@
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from html import escape
 
 from assistant.application.content_processing_service import ContentProcessingService
 from assistant.application.ingestion_pipeline import (
@@ -10,6 +12,7 @@ from assistant.application.knowledge_persistence_service import KnowledgePersist
 from assistant.application.ports.website_loader import WebsiteLoader
 from assistant.domain.document_ingestion_job import IngestionStep
 from assistant.domain.knowledge_persistence import PersistenceMode, PreparedKnowledge
+from assistant.domain.website_document import WebsiteDocument
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +29,22 @@ class ParseIngestionStep:
                 "ingestion_source_unavailable", "The ingestion source is unavailable."
             )
         try:
-            context.parsed_document = self.loader.load(source_url)
+            direct_text = context.metadata.get("direct_text")
+            if isinstance(direct_text, str):
+                context.parsed_document = [
+                    WebsiteDocument(
+                        url=source_url,
+                        status_code=200,
+                        content_type="text/html",
+                        html=f"<main><p>{escape(direct_text)}</p></main>",
+                        title=None,
+                        retrieved_at=datetime.now(timezone.utc),
+                    )
+                ]
+            elif context.metadata.get("single_page") and hasattr(self.loader, "load_single_page"):
+                context.parsed_document = self.loader.load_single_page(source_url)
+            else:
+                context.parsed_document = self.loader.load(source_url)
         except Exception as exc:
             logger.exception(
                 "Document parsing failed",
