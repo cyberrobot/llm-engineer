@@ -9,6 +9,12 @@ from admin_auth.dependencies import require_administrator_role, require_trusted_
 from assistant.api.assistant_admin import router
 from assistant.api.dependencies import get_assistant_administration_service
 from assistant.application.assistant_admin_service import AssistantAdministrationService
+from assistant.domain.assistant import (
+    MAX_ASSISTANT_NAME_LENGTH,
+    MAX_ASSISTANT_SLUG_LENGTH,
+    REDMOOR_ASSISTANT_ID,
+)
+from assistant.domain.assistant_repository import AssistantDeletionBlocked
 from assistant.infrastructure.repositories.assistant import InMemoryAssistantRepository
 from core.exceptions import register_exception_handlers
 
@@ -17,10 +23,12 @@ FIRST_ID = UUID("11111111-1111-4111-8111-111111111111")
 SECOND_ID = UUID("22222222-2222-4222-8222-222222222222")
 
 
-def _client(*, authenticated: bool = True, trusted: bool = True) -> TestClient:
+def _client(*, authenticated: bool = True, trusted: bool = True, repository=None) -> TestClient:
     identifiers = iter((FIRST_ID, SECOND_ID))
     service = AssistantAdministrationService(
-        InMemoryAssistantRepository(()), clock=lambda: NOW, id_factory=lambda: next(identifiers)
+        repository or InMemoryAssistantRepository(()),
+        clock=lambda: NOW,
+        id_factory=lambda: next(identifiers),
     )
     app = FastAPI()
     register_exception_handlers(app)
@@ -118,18 +126,36 @@ def test_create_list_detail_update_and_delete_contract() -> None:
 
 
 @pytest.mark.parametrize(
-    "payload",
+    ("payload", "expected_status"),
     [
-        {"slug": "Invalid", "name": "Name"},
-        {"slug": "valid", "name": " "},
-        {"slug": "valid", "name": "control\u0001"},
-        {"slug": "valid", "name": "Name", "unknown": True},
+        ({"slug": "Invalid", "name": "Name"}, 422),
+        ({"slug": "x" * (MAX_ASSISTANT_SLUG_LENGTH + 1), "name": "Name"}, 422),
+        ({"slug": "valid", "name": " "}, 400),
+        ({"slug": "valid", "name": "x" * (MAX_ASSISTANT_NAME_LENGTH + 1)}, 422),
+        ({"slug": "valid", "name": "control\u0001"}, 400),
+        ({"slug": "valid", "name": "Name", "unknown": True}, 422),
     ],
 )
-def test_invalid_create_requests_use_safe_structured_validation(payload: dict[str, object]) -> None:
+def test_invalid_create_requests_use_deterministic_structured_validation(
+    payload: dict[str, object], expected_status: int
+) -> None:
     response = _client().post("/admin/assistants", json=payload)
-    assert response.status_code in {400, 422}
+    # Transport/schema errors are 422; normalized domain-name rules are 400.
+    assert response.status_code == expected_status
     assert response.json()["detail"]["code"] == "invalid_request"
+
+
+def test_create_accepts_explicit_lifecycle_values_and_exact_length_boundaries() -> None:
+    client = _client()
+    slug = "x" * MAX_ASSISTANT_SLUG_LENGTH
+    name = "N" * MAX_ASSISTANT_NAME_LENGTH
+    created = client.post(
+        "/admin/assistants",
+        json={"slug": slug, "name": name, "status": "active", "visibility": "public"},
+    )
+    assert created.status_code == 201
+    assert (created.json()["slug"], created.json()["name"]) == (slug, name)
+    assert (created.json()["status"], created.json()["visibility"]) == ("active", "public")
 
 
 def test_pagination_bounds_immutable_fields_empty_patch_and_invalid_uuid() -> None:
@@ -150,6 +176,47 @@ def test_pagination_bounds_immutable_fields_empty_patch_and_invalid_uuid() -> No
         response = client.patch(f"/admin/assistants/{FIRST_ID}", json=payload)
         assert response.status_code == 422
         assert response.json()["detail"]["code"] == "invalid_request"
+
+    missing_token = client.patch(f"/admin/assistants/{FIRST_ID}", json={"name": "Changed"})
+    assert missing_token.status_code == 422
+    assert missing_token.json()["detail"]["code"] == "invalid_request"
+
+
+def test_delete_conflicts_and_missing_have_stable_safe_contracts() -> None:
+    redmoor_repository = InMemoryAssistantRepository()
+    redmoor_client = _client(repository=redmoor_repository)
+    protected = redmoor_client.delete(f"/admin/assistants/{REDMOOR_ASSISTANT_ID}")
+    assert protected.status_code == 409
+    assert protected.json()["detail"] == {
+        "code": "protected_assistant",
+        "message": "The seeded assistant cannot be deleted.",
+    }
+    assert redmoor_repository.get_by_id(REDMOOR_ASSISTANT_ID).id == REDMOOR_ASSISTANT_ID
+
+    class DependentRepository(InMemoryAssistantRepository):
+        def delete(self, assistant_id):
+            self.get_by_id(assistant_id)
+            raise AssistantDeletionBlocked("blocked")
+
+    dependency_repository = DependentRepository(())
+    dependency_client = _client(repository=dependency_repository)
+    assert (
+        dependency_client.post(
+            "/admin/assistants", json={"slug": "dependent", "name": "Dependent"}
+        ).status_code
+        == 201
+    )
+    blocked = dependency_client.delete(f"/admin/assistants/{FIRST_ID}")
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == {
+        "code": "assistant_has_dependencies",
+        "message": "Assistant has dependent records.",
+    }
+    assert dependency_repository.get_by_id(FIRST_ID).slug == "dependent"
+
+    missing = _client().delete(f"/admin/assistants/{FIRST_ID}")
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["code"] == "assistant_not_found"
 
 
 def test_duplicate_slug_and_missing_assistant_have_stable_safe_errors() -> None:
@@ -183,3 +250,16 @@ def test_openapi_documents_routes_security_models_conflicts_and_validation() -> 
         assert operation["security"]
     assert "immutable" in paths["/admin/assistants"]["post"]["description"]
     assert "concurrency token" in paths["/admin/assistants/{assistant_id}"]["patch"]["description"]
+    list_parameters = {
+        item["name"]: item for item in paths["/admin/assistants"]["get"]["parameters"]
+    }
+    assert set(list_parameters) == {"limit", "offset", "status", "visibility"}
+    assert list_parameters["limit"]["schema"]["maximum"] == 100
+    create_schema = schema["components"]["schemas"]["CreateAssistantRequest"]
+    assert create_schema["properties"]["status"]["default"] == "inactive"
+    assert create_schema["properties"]["visibility"]["default"] == "private"
+    update_schema = schema["components"]["schemas"]["UpdateAssistantRequest"]
+    assert "concurrency_token" in update_schema["required"]
+    assert "slug" not in update_schema["properties"]
+    assert "id" not in update_schema["properties"]
+    assert "Redmoor" in paths["/admin/assistants/{assistant_id}"]["delete"]["description"]

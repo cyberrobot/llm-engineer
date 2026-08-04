@@ -224,19 +224,57 @@ def test_public_chat_service_streams_fixed_fallback_without_model_call():
 
 
 @pytest.mark.parametrize(
-    "unavailable",
+    ("status", "visibility"),
     [
-        assistant(visibility=AssistantVisibility.private),
-        assistant(status=AssistantStatus.inactive),
+        (AssistantStatus.inactive, AssistantVisibility.public),
+        (AssistantStatus.active, AssistantVisibility.private),
+        (AssistantStatus.inactive, AssistantVisibility.private),
     ],
 )
-def test_public_chat_service_hides_private_and_inactive_assistants(unavailable):
+def test_public_chat_service_hides_every_unavailable_lifecycle_combination(status, visibility):
+    unavailable = assistant(status=status, visibility=visibility)
     service = PublicAssistantChatService(
         AssistantRepositoryStub((unavailable,)), RetrievalFactory({}), StreamingProvider()
     )
 
     with pytest.raises(AssistantNotFound):
         service.prepare("redmoor", PublicChatRequest(message="Hello"))
+
+
+def test_public_chat_route_returns_equivalent_safe_response_for_missing_inactive_and_private(
+    monkeypatch,
+):
+    monkeypatch.setenv("PUBLIC_ASSISTANT_CHAT_ENABLED", "true")
+    unavailable = (
+        assistant(slug="inactive", status=AssistantStatus.inactive),
+        assistant(slug="private", visibility=AssistantVisibility.private),
+        assistant(
+            slug="both",
+            status=AssistantStatus.inactive,
+            visibility=AssistantVisibility.private,
+        ),
+    )
+    service = PublicAssistantChatService(
+        AssistantRepositoryStub(unavailable), RetrievalFactory({}), StreamingProvider()
+    )
+    app.dependency_overrides[get_public_chat_service_factory] = lambda: lambda: service
+    try:
+        responses = [
+            TestClient(app).post(f"/public/assistants/{slug}/chat", json={"message": "Hello"})
+            for slug in ("inactive", "private", "both", "missing")
+        ]
+    finally:
+        app.dependency_overrides.pop(get_public_chat_service_factory, None)
+
+    assert {response.status_code for response in responses} == {404}
+    bodies = [response.json() for response in responses]
+    assert bodies == [bodies[0]] * len(bodies)
+    assert bodies[0] == {
+        "detail": {"code": "assistant_not_found", "message": "Assistant not found."}
+    }
+    serialized = str(bodies).lower()
+    assert "inactive" not in serialized
+    assert "private" not in serialized
 
 
 def test_public_chat_route_streams_documented_sse_contract(monkeypatch):
