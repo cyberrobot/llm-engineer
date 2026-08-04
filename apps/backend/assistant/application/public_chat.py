@@ -8,7 +8,7 @@ from uuid import UUID
 from assistant.application.prompt_builder import Prompt, PromptBuilder
 from assistant.application.public_chat_protection import TokenBudget
 from assistant.domain import KnowledgeChunk
-from assistant.domain.assistant import AssistantStatus, AssistantVisibility
+from assistant.domain.assistant import Assistant, AssistantStatus, AssistantVisibility
 from assistant.domain.assistant_repository import AssistantNotFound
 from assistant.schemas.public_chat import PublicChatRequest
 from core.config import PublicAssistantChatSettings, get_public_assistant_chat_settings
@@ -31,7 +31,7 @@ class ScopedRetrieval(Protocol):
 
 
 class PublicAssistantLookup(Protocol):
-    def get_by_slug(self, slug: str): ...
+    def get_by_slug(self, slug: str) -> Assistant: ...
 
 
 @dataclass(frozen=True, slots=True)

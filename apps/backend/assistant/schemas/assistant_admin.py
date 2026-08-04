@@ -29,7 +29,7 @@ class UpdateAssistantRequest(BaseModel):
     visibility: AssistantVisibility | None = None
 
     @model_validator(mode="after")
-    def non_empty(self):
+    def non_empty(self) -> "UpdateAssistantRequest":
         if self.name is None and self.status is None and self.visibility is None:
             raise ValueError("At least one mutable field is required.")
         return self
@@ -56,3 +56,14 @@ class AssistantListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class AssistantAdminErrorDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str
+    message: str
+
+
+class AssistantAdminErrorResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    detail: AssistantAdminErrorDetail

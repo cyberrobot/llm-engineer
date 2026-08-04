@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
@@ -9,7 +10,13 @@ from assistant.domain.assistant import (
     AssistantStatus,
     AssistantVisibility,
 )
-from assistant.domain.assistant_repository import AssistantDeletionBlocked, AssistantRepository
+from assistant.domain.assistant_repository import (
+    AssistantConcurrentUpdate,
+    AssistantDeletionBlocked,
+    AssistantNotFound,
+    AssistantRepository,
+    DuplicateAssistantSlug,
+)
 from core.metrics import assistant_administration_metrics
 
 logger = logging.getLogger(__name__)
@@ -30,7 +37,7 @@ class AssistantView:
     has_dependencies: bool
 
     @property
-    def deletion_allowed(self):
+    def deletion_allowed(self) -> bool:
         return self.assistant.id != REDMOOR_ASSISTANT_ID and not self.has_dependencies
 
 
@@ -39,44 +46,75 @@ class AssistantAdministrationService:
         self,
         repository: AssistantRepository,
         *,
-        clock=lambda: datetime.now(timezone.utc),
-        id_factory=uuid4,
-    ):
+        clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        id_factory: Callable[[], UUID] = uuid4,
+    ) -> None:
         self.repository, self.clock, self.id_factory = repository, clock, id_factory
 
-    def list_assistants(self, *, limit, offset, status=None, visibility=None):
+    def list_assistants(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: AssistantStatus | None = None,
+        visibility: AssistantVisibility | None = None,
+    ) -> tuple[list[Assistant], int]:
         return self.repository.list(
             limit=limit, offset=offset, status=status, visibility=visibility
         )
 
-    def get_assistant(self, assistant_id: UUID):
-        assistant = self.repository.get_by_id(assistant_id)
+    def get_assistant(self, assistant_id: UUID) -> AssistantView:
+        try:
+            assistant = self.repository.get_by_id(assistant_id)
+        except AssistantNotFound:
+            self._metric("detail", "not_found")
+            raise
+        dependencies = self.repository.dependency_summary(assistant_id)
         return AssistantView(
             assistant,
-            self.repository.dependency_count(assistant_id),
-            self.repository.has_dependencies(assistant_id),
+            dependencies.knowledge_source_count,
+            dependencies.has_dependencies,
         )
 
     def create_assistant(
-        self, *, slug, name, status=AssistantStatus.inactive, visibility=AssistantVisibility.private
-    ):
+        self,
+        *,
+        slug: str,
+        name: str,
+        status: AssistantStatus = AssistantStatus.inactive,
+        visibility: AssistantVisibility = AssistantVisibility.private,
+    ) -> Assistant:
         now = self.clock()
         assistant = Assistant(self.id_factory(), slug, name, status, visibility, now, now)
         try:
             result = self.repository.create(assistant)
-        except Exception:
-            self._metric("conflicts")
+        except DuplicateAssistantSlug:
+            self._metric("create", "conflict")
+            self._log("assistant_duplicate_slug_conflict", assistant)
             raise
-        self._metric("created")
+        except Exception:
+            self._metric("create", "failure")
+            raise
+        self._metric("create", "success")
         self._log("assistant_created", result)
         return result
 
     def update_assistant(
-        self, assistant_id, *, concurrency_token, name=None, status=None, visibility=None
-    ):
+        self,
+        assistant_id: UUID,
+        *,
+        concurrency_token: datetime,
+        name: str | None = None,
+        status: AssistantStatus | None = None,
+        visibility: AssistantVisibility | None = None,
+    ) -> Assistant:
         if name is None and status is None and visibility is None:
             raise EmptyAssistantUpdate("At least one mutable field is required.")
-        current = self.repository.get_by_id(assistant_id)
+        try:
+            current = self.repository.get_by_id(assistant_id)
+        except AssistantNotFound:
+            self._metric("update", "not_found")
+            raise
         updated = current
         now = max(self.clock(), current.updated_at + timedelta(microseconds=1))
         if name is not None:
@@ -91,10 +129,17 @@ class AssistantAdministrationService:
             updated = updated.change_visibility(visibility, at=now)
         try:
             result = self.repository.update(updated, expected_updated_at=concurrency_token)
-        except Exception:
-            self._metric("conflicts")
+        except AssistantConcurrentUpdate:
+            self._metric("update", "conflict")
+            self._log("assistant_concurrent_update_conflict", current)
             raise
-        self._metric("updated")
+        except AssistantNotFound:
+            self._metric("update", "not_found")
+            raise
+        except Exception:
+            self._metric("update", "failure")
+            raise
+        self._metric("update", "success")
         self._log("assistant_updated", result)
         if current.status is not result.status:
             self._log(
@@ -107,36 +152,52 @@ class AssistantAdministrationService:
             self._log("assistant_visibility_changed", result)
         return result
 
-    def delete_assistant(self, assistant_id):
+    def delete_assistant(self, assistant_id: UUID) -> None:
         if assistant_id == REDMOOR_ASSISTANT_ID:
+            self._metric("delete", "conflict")
+            self._log_event(
+                "assistant_protected_deletion", assistant_id=assistant_id, outcome_code="protected"
+            )
             raise ProtectedAssistantDeletion("The seeded assistant cannot be deleted.")
         try:
             self.repository.delete(assistant_id)
         except AssistantDeletionBlocked:
-            self._metric("conflicts")
-            raise
-        self._metric("deleted")
-        try:
-            logger.info("assistant_deleted", extra={"assistant_id": str(assistant_id)})
-        except Exception:
-            pass
-
-    def _metric(self, name):
-        try:
-            getattr(assistant_administration_metrics, name).inc()
-        except Exception:
-            pass
-
-    def _log(self, event, assistant):
-        try:
-            logger.info(
-                event,
-                extra={
-                    "assistant_id": str(assistant.id),
-                    "assistant_slug": assistant.slug,
-                    "status": assistant.status.value,
-                    "visibility": assistant.visibility.value,
-                },
+            self._metric("delete", "conflict")
+            self._log_event(
+                "assistant_deletion_blocked", assistant_id=assistant_id, outcome_code="dependencies"
             )
+            raise
+        except AssistantNotFound:
+            self._metric("delete", "not_found")
+            raise
+        except Exception:
+            self._metric("delete", "failure")
+            raise
+        self._metric("delete", "success")
+        self._log_event("assistant_deleted", assistant_id=assistant_id, outcome_code="success")
+
+    def _metric(self, operation: str, outcome: str) -> None:
+        try:
+            assistant_administration_metrics.operations.labels(
+                operation=operation, outcome=outcome
+            ).inc()
+        except Exception:
+            pass
+
+    def _log(self, event: str, assistant: Assistant) -> None:
+        self._log_event(
+            event,
+            assistant_id=assistant.id,
+            assistant_slug=assistant.slug,
+            status=assistant.status.value,
+            visibility=assistant.visibility.value,
+        )
+
+    def _log_event(self, event: str, **fields: object) -> None:
+        try:
+            safe_fields = dict(fields)
+            if "assistant_id" in safe_fields:
+                safe_fields["assistant_id"] = str(safe_fields["assistant_id"])
+            logger.info(event, extra=safe_fields)
         except Exception:
             pass

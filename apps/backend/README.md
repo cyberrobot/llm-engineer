@@ -16,7 +16,15 @@ Authenticated administrators can manage assistants at `/admin/assistants`. Creat
 `inactive` and `private`; slugs are immutable and globally unique. Updates require the `updated_at`
 value returned as `concurrency_token`, and stale updates return a conflict. Deletion is restricted to
 unused assistants and never cascades assistant knowledge; the seeded Redmoor assistant cannot be
-deleted. Public chat remains available only for assistants that are both active and public.
+deleted. The API provides list (`GET`), detail (`GET /{id}`), create (`POST`), partial update
+(`PATCH /{id}`), and delete (`DELETE /{id}`); every route requires an administrator cookie session,
+and writes additionally require a configured trusted `Origin`. Stable error codes include
+`assistant_not_found`, `assistant_slug_conflict`, `assistant_update_conflict`,
+`protected_assistant`, `assistant_has_dependencies`, and `invalid_request`. Creation has no generic
+idempotency-key mechanism: database slug uniqueness provides deterministic replay conflict handling.
+Public chat remains available only for assistants that are both active and public, while authenticated
+knowledge-source administration remains available regardless of assistant status or visibility and
+status/visibility changes do not mutate knowledge-source state.
 
 The deployment-gated public widget chat request, grounding, error, and SSE contracts are documented
 in [public assistant chat](docs/public-assistant-chat.md).

@@ -3,6 +3,7 @@ from collections.abc import Callable
 from functools import lru_cache
 from time import sleep
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import Depends
 
@@ -142,7 +143,7 @@ def get_public_chat_service(
 ) -> PublicAssistantChatService:
     settings = get_public_assistant_chat_settings()
 
-    def retrieval_factory(assistant_id):
+    def retrieval_factory(assistant_id: UUID) -> RetrievalService:
         return RetrievalService(
             ai_provider,
             repository,

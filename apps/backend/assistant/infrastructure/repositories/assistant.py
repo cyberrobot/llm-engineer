@@ -13,11 +13,14 @@ from assistant.domain.assistant import (
 from assistant.domain.assistant_repository import (
     AssistantConcurrentUpdate,
     AssistantDeletionBlocked,
+    AssistantDependencySummary,
     AssistantNotFound,
     AssistantRepository,
     DuplicateAssistantSlug,
 )
 from infrastructure.database.connection import get_connection
+
+ASSISTANT_SLUG_UNIQUE_CONSTRAINT = "assistants_slug_key"
 
 
 class PostgresAssistantRepository(AssistantRepository):
@@ -49,13 +52,25 @@ class PostgresAssistantRepository(AssistantRepository):
                     ),
                 )
         except Exception as exc:
-            if getattr(exc, "sqlstate", None) == "23505":
+            if (
+                getattr(exc, "sqlstate", None) == "23505"
+                and getattr(getattr(exc, "diag", None), "constraint_name", None)
+                == ASSISTANT_SLUG_UNIQUE_CONSTRAINT
+            ):
                 raise DuplicateAssistantSlug("Assistant slug already exists.") from exc
             raise
         return assistant
 
-    def list(self, *, limit, offset, status=None, visibility=None):
-        clauses, params = [], []
+    def list(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: AssistantStatus | None = None,
+        visibility: AssistantVisibility | None = None,
+    ) -> tuple[list[Assistant], int]:
+        clauses: list[str] = []
+        params: list[object] = []
         if status is not None:
             clauses.append("status=%s")
             params.append(status.value)
@@ -75,7 +90,7 @@ class PostgresAssistantRepository(AssistantRepository):
             rows = cursor.fetchall()
         return [_assistant(row) for row in rows], total
 
-    def update(self, assistant, *, expected_updated_at):
+    def update(self, assistant: Assistant, *, expected_updated_at: datetime) -> Assistant:
         with self._connection_factory() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "UPDATE assistants SET name=%s,status=%s,visibility=%s,updated_at=%s WHERE id=%s AND updated_at=%s",
@@ -95,28 +110,38 @@ class PostgresAssistantRepository(AssistantRepository):
                 raise AssistantConcurrentUpdate("Assistant was updated concurrently.")
         return assistant
 
-    def dependency_count(self, assistant_id):
+    def dependency_count(self, assistant_id: UUID) -> int:
         with self._connection_factory() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "SELECT COUNT(*) FROM knowledge_sources WHERE assistant_id=%s", (str(assistant_id),)
             )
             return cursor.fetchone()[0]
 
-    def has_dependencies(self, assistant_id):
+    def has_dependencies(self, assistant_id: UUID) -> bool:
+        return self.dependency_summary(assistant_id).has_dependencies
+
+    def dependency_summary(self, assistant_id: UUID) -> AssistantDependencySummary:
         with self._connection_factory() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "SELECT EXISTS(SELECT 1 FROM knowledge_sources WHERE assistant_id=%s "
+                "SELECT (SELECT COUNT(*) FROM knowledge_sources WHERE assistant_id=%s), "
+                "EXISTS(SELECT 1 FROM knowledge_sources WHERE assistant_id=%s "
                 "UNION ALL SELECT 1 FROM documents WHERE assistant_id=%s "
                 "UNION ALL SELECT 1 FROM chunks WHERE assistant_id=%s)",
-                (str(assistant_id),) * 3,
+                (str(assistant_id),) * 4,
             )
-            return bool(cursor.fetchone()[0])
+            row = cursor.fetchone()
+            return AssistantDependencySummary(
+                knowledge_source_count=int(row[0]), has_dependencies=bool(row[1])
+            )
 
-    def delete(self, assistant_id):
+    def delete(self, assistant_id: UUID) -> None:
         with self._connection_factory() as connection, connection.cursor() as cursor:
             cursor.execute("SELECT 1 FROM assistants WHERE id=%s FOR UPDATE", (str(assistant_id),))
             if cursor.fetchone() is None:
                 raise AssistantNotFound("Assistant not found.")
+            # These are the only direct assistant ownership paths. Ingestion jobs,
+            # execution history, persistence/file receipts, fingerprints, and managed
+            # source metadata are necessarily anchored by a document or source.
             cursor.execute(
                 "SELECT EXISTS(SELECT 1 FROM knowledge_sources WHERE assistant_id=%s UNION ALL SELECT 1 FROM documents WHERE assistant_id=%s UNION ALL SELECT 1 FROM chunks WHERE assistant_id=%s)",
                 (str(assistant_id),) * 3,
@@ -149,7 +174,7 @@ class PostgresAssistantRepository(AssistantRepository):
         )
 
 
-def _assistant(row):
+def _assistant(row: tuple[Any, ...]) -> Assistant:
     return Assistant(
         UUID(str(row[0])),
         str(row[1]),
@@ -187,14 +212,23 @@ class InMemoryAssistantRepository(AssistantRepository):
         except KeyError as exc:
             raise AssistantNotFound("Assistant not found.") from exc
 
-    def create(self, assistant):
+    def create(self, assistant: Assistant) -> Assistant:
         if assistant.slug in self._by_slug:
             raise DuplicateAssistantSlug("Assistant slug already exists.")
+        if assistant.id in self._by_id:
+            raise ValueError("Assistant ID already exists.")
         self._by_id[assistant.id] = assistant
         self._by_slug[assistant.slug] = assistant
         return assistant
 
-    def list(self, *, limit, offset, status=None, visibility=None):
+    def list(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: AssistantStatus | None = None,
+        visibility: AssistantVisibility | None = None,
+    ) -> tuple[list[Assistant], int]:
         values = [
             a
             for a in self._by_id.values()
@@ -204,7 +238,7 @@ class InMemoryAssistantRepository(AssistantRepository):
         values.sort(key=lambda a: (a.created_at, a.id), reverse=True)
         return values[offset : offset + limit], len(values)
 
-    def update(self, assistant, *, expected_updated_at):
+    def update(self, assistant: Assistant, *, expected_updated_at: datetime) -> Assistant:
         current = self.get_by_id(assistant.id)
         if current.updated_at != expected_updated_at:
             raise AssistantConcurrentUpdate("Assistant was updated concurrently.")
@@ -212,13 +246,19 @@ class InMemoryAssistantRepository(AssistantRepository):
         self._by_slug[assistant.slug] = assistant
         return assistant
 
-    def dependency_count(self, assistant_id):
+    def dependency_count(self, assistant_id: UUID) -> int:
         return 0
 
-    def has_dependencies(self, assistant_id):
+    def has_dependencies(self, assistant_id: UUID) -> bool:
         return False
 
-    def delete(self, assistant_id):
+    def dependency_summary(self, assistant_id: UUID) -> AssistantDependencySummary:
+        return AssistantDependencySummary(
+            knowledge_source_count=self.dependency_count(assistant_id),
+            has_dependencies=self.has_dependencies(assistant_id),
+        )
+
+    def delete(self, assistant_id: UUID) -> None:
         assistant = self.get_by_id(assistant_id)
         del self._by_id[assistant_id]
         del self._by_slug[assistant.slug]
