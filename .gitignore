@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 node_modules/
 dist/
+storybook-static/
 *.py[cod]
 apps/backend/uploads/
 apps/backend/evaluation-reports/
