@@ -129,6 +129,44 @@ class AdministratorAuthenticationMetrics:
 administrator_authentication_metrics = AdministratorAuthenticationMetrics()
 
 
+class KnowledgeSourceMetrics:
+    """Knowledge-source lifecycle counters without user-controlled labels."""
+
+    def __init__(self, *, registry: CollectorRegistry = REGISTRY) -> None:
+        self.created = Counter(
+            "knowledge_source_created_total", "Created knowledge sources.", registry=registry
+        )
+        self.reingested = Counter(
+            "knowledge_source_reingested_total", "Queued source re-ingestions.", registry=registry
+        )
+        self.replayed = Counter(
+            "knowledge_source_replayed_total",
+            "Idempotent source request replays.",
+            registry=registry,
+        )
+        self.duplicate_urls = Counter(
+            "knowledge_source_duplicate_url_rejections_total",
+            "Duplicate source URL submissions.",
+            registry=registry,
+        )
+        self.deleted = Counter(
+            "knowledge_source_deleted_total", "Deleted knowledge sources.", registry=registry
+        )
+        self.retrieval_enabled = Counter(
+            "knowledge_source_retrieval_enabled_total",
+            "Knowledge sources enabled for retrieval.",
+            registry=registry,
+        )
+        self.retrieval_disabled = Counter(
+            "knowledge_source_retrieval_disabled_total",
+            "Knowledge sources disabled for retrieval.",
+            registry=registry,
+        )
+
+
+knowledge_source_metrics = KnowledgeSourceMetrics()
+
+
 class PublicAssistantChatMetrics:
     """Public-chat metrics without user-controlled or high-cardinality labels."""
 

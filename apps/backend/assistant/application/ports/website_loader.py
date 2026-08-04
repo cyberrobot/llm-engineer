@@ -39,3 +39,7 @@ class WebsiteLoader(ABC):
     @abstractmethod
     def load(self, url: str) -> list[WebsiteDocument]:
         """Load raw HTML documents reachable from the supplied root URL."""
+
+    @abstractmethod
+    def load_single_page(self, url: str) -> list[WebsiteDocument]:
+        """Load exactly the supplied page without crawling links."""

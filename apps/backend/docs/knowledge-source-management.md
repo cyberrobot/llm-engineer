@@ -16,13 +16,18 @@ ingestion fetches exactly the requested page after redirects; it does not follow
 Creation returns `202` with the source and its durable queued ingestion job. The source payload,
 canonical document, and job are committed atomically, so a worker can reconstruct direct text after
 an API restart. Lists are newest-first and omit direct text; protected detail responses include it.
-URLs are unique within an assistant. `Idempotency-Key` is case-sensitive and may be used on create
-and re-ingestion requests.
+URLs are unique within an assistant. Each source exclusively owns one canonical document, enforced
+by the database so deleting a source cannot remove another source's document. `Idempotency-Key` is
+case-sensitive and may be used on create and re-ingestion requests. Keys are assistant scoped, so
+the same key used for another assistant starts an independent request.
 
 `PATCH` accepts only `retrieval_state` (`enabled` or `disabled`). Disabling retains chunks and
-embeddings but immediately removes the document from production retrieval. Enabling restores the
-committed representation without re-embedding. Re-ingestion preserves the source identity and
-reuses a queued or running job; otherwise it queues a new job for the current persisted payload.
+embeddings but immediately removes the document from production retrieval. Ingestion persistence
+updates content without writing retrieval state, so a simultaneous worker completion cannot restore
+stale administrator intent. Enabling restores the committed representation without re-embedding.
+Re-ingestion preserves the source identity and transactionally reuses a queued or running job;
+otherwise it queues one new job for the current persisted payload. Keyed replays return the original
+job, and database uniqueness enforces one queued/running job per source under concurrency.
 
 Deletion returns `409 active_ingestion` while a job is queued or running. Otherwise it removes the
 source-owned document, chunks, embeddings, and terminal job history in one transaction, returning

@@ -36,10 +36,31 @@ def upgrade(cursor: Any) -> None:
         ON knowledge_sources(assistant_id, normalized_url)
         WHERE source_type = 'url'
     """)
+    cursor.execute("DROP INDEX IF EXISTS knowledge_sources_creation_key_unique_idx")
     cursor.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS knowledge_sources_creation_key_unique_idx
-        ON knowledge_sources(creation_idempotency_key)
+        ON knowledge_sources(assistant_id, creation_idempotency_key)
         WHERE creation_idempotency_key IS NOT NULL
+    """)
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS knowledge_sources_document_unique_idx
+        ON knowledge_sources(document_id)
+    """)
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS knowledge_source_active_job_unique_idx
+        ON document_ingestion_jobs(document_id)
+        WHERE status IN ('queued', 'running')
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS knowledge_source_reingestion_requests (
+            assistant_id TEXT NOT NULL REFERENCES assistants(id) ON DELETE CASCADE,
+            source_id TEXT NOT NULL REFERENCES knowledge_sources(id) ON DELETE CASCADE,
+            idempotency_key TEXT NOT NULL,
+            request_hash TEXT NOT NULL CHECK (request_hash ~ '^[0-9a-f]{64}$'),
+            ingestion_job_id TEXT NOT NULL REFERENCES document_ingestion_jobs(id) ON DELETE CASCADE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (assistant_id, idempotency_key)
+        )
     """)
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS knowledge_sources_assistant_page_idx
@@ -48,4 +69,6 @@ def upgrade(cursor: Any) -> None:
 
 
 def downgrade(cursor: Any) -> None:
+    cursor.execute("DROP TABLE IF EXISTS knowledge_source_reingestion_requests")
+    cursor.execute("DROP INDEX IF EXISTS knowledge_source_active_job_unique_idx")
     cursor.execute("DROP TABLE IF EXISTS knowledge_sources")

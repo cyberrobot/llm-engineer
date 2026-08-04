@@ -63,14 +63,23 @@ class PostgresKnowledgeSourceRepository:
             _insert_job(connection, job)
         return job
 
-    def find_creation(self, key: str) -> tuple[KnowledgeSource, str] | None:
+    def find_creation(self, assistant_id: UUID, key: str) -> tuple[KnowledgeSource, str] | None:
         with self._connection_factory() as connection:
             row = connection.execute(
                 f"SELECT {_SOURCE_COLUMNS}, creation_request_hash "
-                "FROM knowledge_sources WHERE creation_idempotency_key = %s",
-                (key,),
+                "FROM knowledge_sources WHERE assistant_id = %s AND creation_idempotency_key = %s",
+                (str(assistant_id), key),
             ).fetchone()
         return (_source(row[:11]), row[11]) if row else None
+
+    def find_by_url(self, assistant_id: UUID, normalized_url: str) -> KnowledgeSource | None:
+        with self._connection_factory() as connection:
+            row = connection.execute(
+                f"SELECT {_SOURCE_COLUMNS} FROM knowledge_sources "
+                "WHERE assistant_id = %s AND normalized_url = %s",
+                (str(assistant_id), normalized_url),
+            ).fetchone()
+        return _source(row) if row else None
 
     def _job(self, suffix: str, parameters: tuple[Any, ...]) -> DocumentIngestionJob | None:
         with self._connection_factory() as connection:
@@ -135,6 +144,62 @@ class _Transaction(KnowledgeSourceTransaction):
             (state.value, row[7], str(assistant_id)),
         )
         return _source(row)
+
+    def reingest(self, assistant_id, source_id, job, request_hash, idempotency_key):
+        row = self.connection.execute(
+            f"SELECT {_SOURCE_COLUMNS} FROM knowledge_sources "
+            "WHERE id=%s AND assistant_id=%s FOR UPDATE",
+            (str(source_id), str(assistant_id)),
+        ).fetchone()
+        if row is None:
+            raise LookupError(source_id)
+        source = _source(row)
+        if idempotency_key:
+            # Different source rows can receive the same assistant-scoped key concurrently.
+            # Serialize that receipt identity before inspecting or inserting it.
+            self.connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"knowledge-source-reingestion:{assistant_id}:{idempotency_key}",),
+            )
+            receipt = self.connection.execute(
+                "SELECT source_id, request_hash, ingestion_job_id "
+                "FROM knowledge_source_reingestion_requests "
+                "WHERE assistant_id=%s AND idempotency_key=%s",
+                (str(assistant_id), idempotency_key),
+            ).fetchone()
+            if receipt:
+                if receipt[0] != str(source_id) or receipt[1] != request_hash:
+                    raise KnowledgeSourceConflict("idempotency_key_conflict")
+                stored = self.connection.execute(
+                    f"SELECT {_JOB_COLUMNS} FROM document_ingestion_jobs WHERE id=%s",
+                    (receipt[2],),
+                ).fetchone()
+                if stored is None:
+                    raise KnowledgeSourceConflict("idempotency_key_conflict")
+                return source, _job(stored), True
+        active = self.connection.execute(
+            f"SELECT {_JOB_COLUMNS} FROM document_ingestion_jobs "
+            "WHERE document_id=%s AND status IN ('queued','running') "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (source.document_id,),
+        ).fetchone()
+        selected = _job(active) if active else job
+        if active is None:
+            _insert_job(self.connection, job)
+        if idempotency_key:
+            self.connection.execute(
+                "INSERT INTO knowledge_source_reingestion_requests "
+                "(assistant_id, source_id, idempotency_key, request_hash, ingestion_job_id) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (
+                    str(assistant_id),
+                    str(source_id),
+                    idempotency_key,
+                    request_hash,
+                    str(selected.id),
+                ),
+            )
+        return source, selected, active is not None
 
     def delete(self, assistant_id, source_id):
         row = self.connection.execute(

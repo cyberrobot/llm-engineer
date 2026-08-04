@@ -17,6 +17,17 @@ from assistant.domain.website_document import WebsiteDocument
 logger = logging.getLogger(__name__)
 
 
+def _direct_text_html(value: str) -> str:
+    paragraphs = [part for part in value.replace("\r\n", "\n").split("\n\n") if part]
+    return (
+        "<main>"
+        + "".join(
+            f"<p>{escape(paragraph).replace(chr(10), '<br>')}</p>" for paragraph in paragraphs
+        )
+        + "</main>"
+    )
+
+
 @dataclass(frozen=True)
 class ParseIngestionStep:
     loader: WebsiteLoader
@@ -36,12 +47,12 @@ class ParseIngestionStep:
                         url=source_url,
                         status_code=200,
                         content_type="text/html",
-                        html=f"<main><p>{escape(direct_text)}</p></main>",
+                        html=_direct_text_html(direct_text),
                         title=None,
                         retrieved_at=datetime.now(timezone.utc),
                     )
                 ]
-            elif context.metadata.get("single_page") and hasattr(self.loader, "load_single_page"):
+            elif context.metadata.get("single_page"):
                 context.parsed_document = self.loader.load_single_page(source_url)
             else:
                 context.parsed_document = self.loader.load(source_url)
