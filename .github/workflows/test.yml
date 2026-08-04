@@ -12,6 +12,23 @@ jobs:
   pytest:
     name: Backend tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ai_discovery_assistant
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ai_discovery_assistant"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_discovery_assistant
+      KNOWLEDGE_SOURCE_POSTGRES_REQUIRED: "true"
     defaults:
       run:
         working-directory: apps/backend
@@ -32,6 +49,13 @@ jobs:
 
       - name: Run pytest
         run: pytest
+
+      - name: Run required knowledge-source PostgreSQL tests without skips
+        run: >-
+          pytest -q -o "addopts=" --strict-markers
+          tests/test_knowledge_source_postgres_migration.py
+          tests/test_knowledge_source_repository_postgres_integration.py
+          tests/test_knowledge_source_api_postgres_integration.py
 
   storybook-tests:
     name: Storybook tests

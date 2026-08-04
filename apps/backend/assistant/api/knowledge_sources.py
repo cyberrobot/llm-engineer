@@ -145,6 +145,8 @@ def reingest(
         return _response(view, detail=True, reused=reused)
     except KnowledgeSourceNotFound as exc:
         raise _error("knowledge_source_not_found", "Knowledge source not found.", 404) from exc
+    except IdempotencyConflict as exc:
+        raise _error("idempotency_key_conflict", str(exc), 409) from exc
 
 
 @router.delete(

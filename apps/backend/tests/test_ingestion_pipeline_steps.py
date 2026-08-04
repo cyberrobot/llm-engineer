@@ -40,6 +40,20 @@ class FakeLoader:
             )
         ]
 
+    def load_single_page(self, url: str) -> list[WebsiteDocument]:
+        return self.load(url)
+
+
+def test_direct_text_adapter_preserves_paragraphs_and_escapes_html():
+    state = context()
+    state.metadata["direct_text"] = "First <unsafe> paragraph.\n\nSecond paragraph."
+
+    assert ParseIngestionStep(FakeLoader()).execute(state).succeeded
+    assert state.parsed_document is not None
+    assert state.parsed_document[0].html == (
+        "<main><p>First &lt;unsafe&gt; paragraph.</p><p>Second paragraph.</p></main>"
+    )
+
 
 class FakeProcessor:
     def process(self, documents):
