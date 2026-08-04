@@ -1,3 +1,4 @@
+import os
 from uuid import uuid4
 
 import psycopg
@@ -11,11 +12,15 @@ from infrastructure.database.migrations.knowledge_source_management import downg
 
 def _require_database() -> None:
     if not DATABASE_URL:
+        if os.getenv("KNOWLEDGE_SOURCE_POSTGRES_REQUIRED") == "true":
+            pytest.fail("DATABASE_URL is required for knowledge-source PostgreSQL tests")
         pytest.skip("DATABASE_URL is not configured")
     try:
         with psycopg.connect(DATABASE_URL, connect_timeout=2) as connection:
             connection.execute("SELECT 1")
     except psycopg.OperationalError as exc:
+        if os.getenv("KNOWLEDGE_SOURCE_POSTGRES_REQUIRED") == "true":
+            pytest.fail(f"Required PostgreSQL test database is unavailable: {exc}")
         pytest.skip(f"PostgreSQL test database is unavailable: {exc}")
 
 
@@ -39,6 +44,13 @@ def _create_baseline(cursor) -> None:
 
 def _set_schema(cursor, schema: str) -> None:
     cursor.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
+
+
+def _expect_constraint(cursor, statement: str, parameters: tuple, name: str) -> None:
+    cursor.execute(sql.SQL("SAVEPOINT {}").format(sql.Identifier(name)))
+    with pytest.raises(psycopg.IntegrityError):
+        cursor.execute(statement, parameters)
+    cursor.execute(sql.SQL("ROLLBACK TO SAVEPOINT {}").format(sql.Identifier(name)))
 
 
 def test_migration_upgrades_repeats_downgrades_reupgrades_and_enforces_constraints():
@@ -100,6 +112,206 @@ def test_migration_upgrades_repeats_downgrades_reupgrades_and_enforces_constrain
         connection.rollback()
 
 
+def test_migration_enforces_knowledge_source_constraint_matrix():
+    _require_database()
+    schema = f"knowledge_source_constraints_{uuid4().hex}"
+    assistants = [str(uuid4()), str(uuid4())]
+    documents = [str(uuid4()) for _ in range(8)]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            _set_schema(cursor, schema)
+            _create_baseline(cursor)
+            cursor.executemany(
+                "INSERT INTO assistants (id) VALUES (%s)", [(x,) for x in assistants]
+            )
+            cursor.executemany(
+                "INSERT INTO documents (id, assistant_id) VALUES (%s, %s)",
+                [(document, assistants[index % 2]) for index, document in enumerate(documents)],
+            )
+            upgrade(cursor)
+
+            insert_source = """INSERT INTO knowledge_sources
+                (id, assistant_id, source_type, name, retrieval_state, direct_text,
+                 normalized_url, document_id, content_version, creation_idempotency_key,
+                 creation_request_hash)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
+            digest = "a" * 64
+            first_source = str(uuid4())
+            cursor.execute(
+                insert_source,
+                (
+                    first_source,
+                    assistants[0],
+                    "url",
+                    "Guide",
+                    "enabled",
+                    None,
+                    "https://example.com/guide",
+                    documents[0],
+                    digest,
+                    "shared-key",
+                    digest,
+                ),
+            )
+            _expect_constraint(
+                cursor,
+                insert_source,
+                (
+                    str(uuid4()),
+                    assistants[0],
+                    "url",
+                    "Duplicate",
+                    "enabled",
+                    None,
+                    "https://example.com/other",
+                    documents[2],
+                    digest,
+                    "shared-key",
+                    digest,
+                ),
+                "duplicate_creation_key",
+            )
+            second_source = str(uuid4())
+            cursor.execute(
+                insert_source,
+                (
+                    second_source,
+                    assistants[1],
+                    "url",
+                    "Isolated",
+                    "disabled",
+                    None,
+                    "https://example.com/guide",
+                    documents[1],
+                    digest,
+                    "shared-key",
+                    digest,
+                ),
+            )
+            _expect_constraint(
+                cursor,
+                insert_source,
+                (
+                    str(uuid4()),
+                    assistants[0],
+                    "url",
+                    "Duplicate URL",
+                    "enabled",
+                    None,
+                    "https://example.com/guide",
+                    documents[4],
+                    digest,
+                    None,
+                    None,
+                ),
+                "duplicate_url",
+            )
+
+            invalid_sources = [
+                ("direct_text", None, None, "Valid", "enabled", digest),
+                ("direct_text", "text", "https://example.com/x", "Valid", "enabled", digest),
+                ("url", "text", "https://example.com/x", "Valid", "enabled", digest),
+                ("url", None, None, "Valid", "enabled", digest),
+                ("direct_text", "text", None, "   ", "enabled", digest),
+                ("direct_text", "text", None, "Valid", "enabled", "invalid"),
+                ("direct_text", "text", None, "Valid", "hidden", digest),
+            ]
+            for index, (kind, text_value, url, name, state, version) in enumerate(invalid_sources):
+                _expect_constraint(
+                    cursor,
+                    insert_source,
+                    (
+                        str(uuid4()),
+                        assistants[0],
+                        kind,
+                        name,
+                        state,
+                        text_value,
+                        url,
+                        documents[6],
+                        version,
+                        None,
+                        None,
+                    ),
+                    f"invalid_source_{index}",
+                )
+            _expect_constraint(
+                cursor,
+                insert_source,
+                (
+                    str(uuid4()),
+                    assistants[0],
+                    "direct_text",
+                    "Second owner",
+                    "enabled",
+                    "text",
+                    None,
+                    documents[0],
+                    digest,
+                    None,
+                    None,
+                ),
+                "duplicate_document_owner",
+            )
+
+            active_job = str(uuid4())
+            cursor.execute(
+                "INSERT INTO document_ingestion_jobs (id, document_id, status) VALUES (%s,%s,'queued')",
+                (active_job, documents[0]),
+            )
+            _expect_constraint(
+                cursor,
+                "INSERT INTO document_ingestion_jobs (id, document_id, status) VALUES (%s,%s,'running')",
+                (str(uuid4()), documents[0]),
+                "duplicate_active_job",
+            )
+            terminal_jobs = []
+            for status in ("completed", "failed", "cancelled", "completed"):
+                job_id = str(uuid4())
+                terminal_jobs.append(job_id)
+                cursor.execute(
+                    "INSERT INTO document_ingestion_jobs (id, document_id, status) VALUES (%s,%s,%s)",
+                    (job_id, documents[0], status),
+                )
+
+            insert_receipt = """INSERT INTO knowledge_source_reingestion_requests
+                (assistant_id, source_id, idempotency_key, request_hash, ingestion_job_id)
+                VALUES (%s,%s,%s,%s,%s)"""
+            cursor.execute(
+                insert_receipt,
+                (assistants[0], first_source, "receipt-key", digest, terminal_jobs[0]),
+            )
+            _expect_constraint(
+                cursor,
+                insert_receipt,
+                (assistants[0], first_source, "receipt-key", digest, terminal_jobs[1]),
+                "duplicate_receipt",
+            )
+            cursor.execute(
+                insert_receipt,
+                (assistants[1], second_source, "receipt-key", digest, active_job),
+            )
+            for index, values in enumerate(
+                (
+                    (str(uuid4()), first_source, "bad-assistant", digest, terminal_jobs[1]),
+                    (assistants[0], str(uuid4()), "bad-source", digest, terminal_jobs[1]),
+                    (assistants[0], first_source, "bad-job", digest, str(uuid4())),
+                )
+            ):
+                _expect_constraint(cursor, insert_receipt, values, f"invalid_receipt_{index}")
+            cursor.execute("DELETE FROM document_ingestion_jobs WHERE id=%s", (terminal_jobs[0],))
+            assert (
+                cursor.execute(
+                    "SELECT count(*) FROM knowledge_source_reingestion_requests WHERE assistant_id=%s",
+                    (assistants[0],),
+                ).fetchone()[0]
+                == 0
+            )
+        connection.rollback()
+
+
 def test_migration_reports_documents_with_duplicate_active_jobs():
     _require_database()
     schema = f"knowledge_source_duplicates_{uuid4().hex}"
@@ -129,7 +341,58 @@ def test_migration_reports_documents_with_duplicate_active_jobs():
             assert "Cannot enforce one active ingestion job per document" in str(error.value)
             assert document_id in str(error.value)
             cursor.execute("ROLLBACK TO SAVEPOINT unsafe_upgrade")
-            assert cursor.execute(
-                "SELECT to_regclass('knowledge_source_active_job_unique_idx')"
-            ).fetchone()[0] is None
+            assert (
+                cursor.execute(
+                    "SELECT to_regclass('knowledge_source_active_job_unique_idx')"
+                ).fetchone()[0]
+                is None
+            )
+        connection.rollback()
+
+
+def test_migration_duplicate_diagnostic_is_deterministic_and_bounded():
+    _require_database()
+    schema = f"knowledge_source_bounded_duplicates_{uuid4().hex}"
+    assistant_id = str(uuid4())
+    document_ids = [f"document-{index:02d}" for index in range(25)]
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            _set_schema(cursor, schema)
+            _create_baseline(cursor)
+            cursor.execute("INSERT INTO assistants (id) VALUES (%s)", (assistant_id,))
+            cursor.executemany(
+                "INSERT INTO documents (id, assistant_id) VALUES (%s, %s)",
+                [(document_id, assistant_id) for document_id in reversed(document_ids)],
+            )
+            cursor.executemany(
+                """INSERT INTO document_ingestion_jobs (id, document_id, status)
+                   VALUES (%s, %s, %s)""",
+                [
+                    (str(uuid4()), document_id, status)
+                    for document_id in document_ids
+                    for status in ("queued", "running")
+                ],
+            )
+
+            cursor.execute("SAVEPOINT unsafe_upgrade")
+            with pytest.raises(psycopg.errors.UniqueViolation) as error:
+                upgrade(cursor)
+
+            diagnostic = str(error.value)
+            assert "affect 25 document(s)" in diagnostic
+            for document_id in document_ids[:20]:
+                assert document_id in diagnostic
+            for document_id in document_ids[20:]:
+                assert document_id not in diagnostic
+            assert "5 additional document(s) omitted" in diagnostic
+            assert len(diagnostic) < 2_000
+            cursor.execute("ROLLBACK TO SAVEPOINT unsafe_upgrade")
+            assert (
+                cursor.execute(
+                    "SELECT to_regclass('knowledge_source_active_job_unique_idx')"
+                ).fetchone()[0]
+                is None
+            )
         connection.rollback()

@@ -162,7 +162,13 @@ def test_list_detail_enable_disable_delete_and_cross_assistant_contract(api):
     )
     deleted = client.delete(detail_path, headers={"Origin": ORIGIN})
 
-    assert listed.status_code == detail.status_code == disabled.status_code == enabled.status_code == 200
+    assert (
+        listed.status_code
+        == detail.status_code
+        == disabled.status_code
+        == enabled.status_code
+        == 200
+    )
     assert listed.json()["total"] == 1
     assert listed.json()["items"][0]["direct_text"] is None
     assert detail.json()["direct_text"] == view.source.direct_text

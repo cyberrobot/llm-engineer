@@ -31,8 +31,14 @@ job, and database uniqueness enforces one queued/running job per source under co
 
 During upgrade, the knowledge-source migration checks existing ingestion history before adding that
 uniqueness guarantee. If any document already has multiple queued or running jobs, the migration
-stops with a diagnostic listing the affected document identifiers. Operators must reconcile those
-jobs explicitly and rerun the migration; the migration never deletes or changes job history.
+stops with a diagnostic reporting the total and the first 20 document identifiers in deterministic
+order; additional identifiers are counted but omitted to keep the failure bounded. Operators must
+reconcile those jobs explicitly and rerun the migration; the migration never deletes or changes job
+history.
+
+Pull-request CI starts the repository's PostgreSQL/pgvector service and runs the knowledge-source
+PostgreSQL suites in required mode. Missing or unavailable database configuration is a failure in
+that mode, while local runs may still skip those suites when `DATABASE_URL` is not configured.
 
 Deletion returns `409 active_ingestion` while a job is queued or running. Otherwise it removes the
 source-owned document, chunks, embeddings, and terminal job history in one transaction, returning

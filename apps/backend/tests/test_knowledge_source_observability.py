@@ -49,7 +49,9 @@ def test_success_logs_are_structured_and_exclude_sensitive_payloads(caplog):
 
     assert replayed is False
     assert _counter(metrics.created) == 1
-    record = next(record for record in caplog.records if record.message == "Knowledge source created")
+    record = next(
+        record for record in caplog.records if record.message == "Knowledge source created"
+    )
     assert record.assistant_id == str(REDMOOR_ASSISTANT_ID)
     assert record.source_id == str(view.source.id)
     assert record.document_id == view.source.document_id

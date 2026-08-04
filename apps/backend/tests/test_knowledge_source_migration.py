@@ -18,7 +18,8 @@ def test_knowledge_source_migration_is_scoped_constrained_and_reversible():
     assert "knowledge_sources_assistant_url_unique_idx" in sql
     assert "ON knowledge_sources(assistant_id, creation_idempotency_key)" in sql
     assert "knowledge_sources_document_unique_idx" in sql
-    assert "Duplicate active ingestion jobs exist for document(s)" in sql
+    assert "Duplicate active ingestion jobs affect %s document(s)" in sql
+    assert "additional document(s) omitted" in sql
     assert "knowledge_source_active_job_unique_idx" in sql
     assert "knowledge_source_reingestion_requests" in sql
     downgrade(cursor)

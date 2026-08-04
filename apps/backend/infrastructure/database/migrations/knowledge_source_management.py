@@ -51,24 +51,38 @@ def upgrade(cursor: Any) -> None:
     cursor.execute("""
         DO $$
         DECLARE
+            duplicate_document_count BIGINT;
             duplicate_document_ids TEXT;
         BEGIN
-            SELECT string_agg(document_id, ', ' ORDER BY document_id)
-            INTO duplicate_document_ids
-            FROM (
+            WITH duplicate_active_jobs AS (
                 SELECT document_id
                 FROM document_ingestion_jobs
                 WHERE status IN ('queued', 'running')
                 GROUP BY document_id
                 HAVING count(*) > 1
-            ) duplicate_active_jobs;
+            ), numbered AS (
+                SELECT document_id, row_number() OVER (ORDER BY document_id) AS position
+                FROM duplicate_active_jobs
+            )
+            SELECT count(*), string_agg(document_id, ', ' ORDER BY document_id)
+                FILTER (WHERE position <= 20)
+            INTO duplicate_document_count, duplicate_document_ids
+            FROM numbered;
 
-            IF duplicate_document_ids IS NOT NULL THEN
+            IF duplicate_document_count > 0 THEN
                 RAISE EXCEPTION USING
                     ERRCODE = '23505',
                     MESSAGE = 'Cannot enforce one active ingestion job per document',
-                    DETAIL = 'Duplicate active ingestion jobs exist for document(s): '
-                        || duplicate_document_ids,
+                    DETAIL = format(
+                        'Duplicate active ingestion jobs affect %s document(s). First %s: %s%s',
+                        duplicate_document_count,
+                        least(duplicate_document_count, 20),
+                        duplicate_document_ids,
+                        CASE WHEN duplicate_document_count > 20
+                            THEN format(' (%s additional document(s) omitted)',
+                                        duplicate_document_count - 20)
+                            ELSE '' END
+                    ),
                     HINT = 'Resolve duplicate queued/running jobs before retrying this migration.';
             END IF;
         END
