@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from assistant.application.assistant_admin_service import AssistantAdministrationService
 from assistant.application.chat import ChatService
 from assistant.application.content_processing_service import ContentProcessingService
 from assistant.application.ingestion_job_service import DocumentIngestionJobService
@@ -126,6 +127,12 @@ def get_assistant_repository() -> AssistantRepository:
     if DATABASE_URL:
         return PostgresAssistantRepository()
     return InMemoryAssistantRepository()
+
+
+def get_assistant_administration_service(
+    repository: Annotated[AssistantRepository, Depends(get_assistant_repository)],
+) -> AssistantAdministrationService:
+    return AssistantAdministrationService(repository)
 
 
 def get_public_chat_service(

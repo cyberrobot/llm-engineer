@@ -167,6 +167,27 @@ class KnowledgeSourceMetrics:
 knowledge_source_metrics = KnowledgeSourceMetrics()
 
 
+class AssistantAdministrationMetrics:
+    def __init__(self, *, registry: CollectorRegistry = REGISTRY) -> None:
+        self.created = Counter(
+            "assistant_admin_created_total", "Created assistants.", registry=registry
+        )
+        self.updated = Counter(
+            "assistant_admin_updated_total", "Updated assistants.", registry=registry
+        )
+        self.deleted = Counter(
+            "assistant_admin_deleted_total", "Deleted assistants.", registry=registry
+        )
+        self.conflicts = Counter(
+            "assistant_admin_conflicts_total",
+            "Assistant administration conflicts.",
+            registry=registry,
+        )
+
+
+assistant_administration_metrics = AssistantAdministrationMetrics()
+
+
 class PublicAssistantChatMetrics:
     """Public-chat metrics without user-controlled or high-cardinality labels."""
 

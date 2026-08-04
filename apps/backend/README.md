@@ -12,6 +12,12 @@ failure recovery are documented in the
 Administrator login, bootstrap, cookie-session security, and the frontend integration contract are
 documented in [administrator authentication](docs/administrator-authentication.md).
 
+Authenticated administrators can manage assistants at `/admin/assistants`. Creation defaults to
+`inactive` and `private`; slugs are immutable and globally unique. Updates require the `updated_at`
+value returned as `concurrency_token`, and stale updates return a conflict. Deletion is restricted to
+unused assistants and never cascades assistant knowledge; the seeded Redmoor assistant cannot be
+deleted. Public chat remains available only for assistants that are both active and public.
+
 The deployment-gated public widget chat request, grounding, error, and SSE contracts are documented
 in [public assistant chat](docs/public-assistant-chat.md).
 
