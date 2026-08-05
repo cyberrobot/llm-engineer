@@ -7,6 +7,9 @@ from assistant.schemas import HealthResponse
 
 
 def test_health_routes_preserve_existing_health_and_expose_assistant_health(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DISABLE_CACHE", "true")
     monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
 
     from main import app

@@ -487,11 +487,13 @@ Missing or invalid credentials return `401`, while an authenticated principal wi
 `operations:read` receives `403`. Raw exceptions, hostnames, connection strings, and credentials are
 never returned.
 
-PostgreSQL is registered as required when `DATABASE_URL` is configured. Redis is registered as an
-optional cache check unless `DISABLE_CACHE=true`, so its failure degrades detailed diagnostics but
-does not make readiness fail. OpenAI is a configuration-only optional diagnostic: it verifies that a
-credential is configured without constructing a client or making a completion, embedding, or other
-remote request. Independent checks run concurrently and each is bounded by
+PostgreSQL is registered as required when `DATABASE_URL` is configured; its check validates both
+connectivity and availability of the `vector` extension. Writable upload storage is always required
+for readiness. Redis is registered as an optional cache check unless `DISABLE_CACHE=true`, so its
+failure degrades detailed diagnostics but does not make readiness fail. OpenAI is a
+configuration-only optional diagnostic: it verifies that a credential is configured without
+constructing a client or making a completion, embedding, or other remote request. Independent checks
+run concurrently and each is bounded by
 `HEALTH_CHECK_TIMEOUT_SECONDS` (default `2`, valid range greater than zero through `10` seconds).
 No health result caching is used. Uvicorn completes the FastAPI lifespan startup—including validated
 configuration and configured database initialization—before serving routes, which is the readiness

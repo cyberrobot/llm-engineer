@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from types import SimpleNamespace
@@ -207,6 +208,53 @@ def test_owned_website_client_is_closed_but_injected_client_is_not():
     close.assert_called_once_with()
 
 
+def test_application_shutdown_closes_remaining_resources_after_one_close_fails(monkeypatch):
+    import main
+
+    events: list[str] = []
+
+    class CachedFactory:
+        def __init__(self, resource):
+            self.resource = resource
+
+        def __call__(self):
+            return self.resource
+
+        def cache_info(self):
+            return SimpleNamespace(currsize=1)
+
+        def cache_clear(self):
+            events.append(f"{self.resource.name}_cache_cleared")
+
+    class Resource:
+        def __init__(self, name, *, fails=False):
+            self.name = name
+            self.fails = fails
+
+        def close(self):
+            events.append(f"{self.name}_closed")
+            if self.fails:
+                raise RuntimeError("sensitive shutdown detail")
+
+    monkeypatch.setattr(main, "validate_startup_configuration", lambda: None)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(main, "get_website_loader", CachedFactory(Resource("loader", fails=True)))
+    monkeypatch.setattr(main, "get_ai_provider", CachedFactory(Resource("provider")))
+
+    async def exercise_lifespan():
+        async with main.lifespan(main.app):
+            pass
+
+    asyncio.run(exercise_lifespan())
+
+    assert events == [
+        "loader_closed",
+        "loader_cache_cleared",
+        "provider_closed",
+        "provider_cache_cleared",
+    ]
+
+
 def test_health_validation_checks_database_and_vector_extension(monkeypatch, tmp_path):
     executed: list[str] = []
 
@@ -239,6 +287,7 @@ def test_health_validation_checks_database_and_vector_extension(monkeypatch, tmp
     monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.com")
     monkeypatch.setenv("ADMIN_BOOTSTRAP_PASSWORD", "production-placeholder-password")
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("ADMIN_SESSION_COOKIE_SECURE", "true")
 
     validate_dependency_health(connection_factory=lambda: Connection())
 
@@ -274,6 +323,7 @@ def test_health_validation_maps_missing_vector_extension_to_safe_error(monkeypat
     monkeypatch.setenv("DATABASE_URL", "postgresql://configured")
     monkeypatch.setenv("OPENAI_API_KEY", "configured")
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("ADMIN_SESSION_COOKIE_SECURE", "true")
 
     with pytest.raises(DependencyHealthError, match="dependencies are unavailable") as raised:
         validate_dependency_health(connection_factory=lambda: Connection())
