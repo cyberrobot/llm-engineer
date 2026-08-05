@@ -11,6 +11,7 @@ import { AdminApiError, type AdminApi, type Administrator } from '../api/adminAp
 
 type State = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 type AuthValue = {
+  api: AdminApi;
   state: State;
   user: Administrator | null;
   login(email: string, password: string): Promise<void>;
@@ -82,8 +83,8 @@ export function AuthProvider({
     setAttempt((value) => value + 1);
   }, []);
   const value = useMemo(
-    () => ({ state, user, login, logout, retry, sessionExpired }),
-    [state, user, login, logout, retry, sessionExpired],
+    () => ({ api, state, user, login, logout, retry, sessionExpired }),
+    [api, state, user, login, logout, retry, sessionExpired],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;

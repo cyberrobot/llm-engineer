@@ -3,6 +3,7 @@ import { useAuth } from './auth/AuthContext';
 import { AdminShell } from './components/AdminShell';
 import { FullPageStatus } from './components/FullPageStatus';
 import { LoginPage } from './components/LoginPage';
+import { AssistantFormPage, AssistantsPage } from './features/assistants/Assistants';
 
 function Protected() {
   const auth = useAuth();
@@ -51,8 +52,10 @@ export default function App() {
         />
         <Route
           path="/admin/assistants"
-          element={<Placeholder>Assistant management is not implemented yet.</Placeholder>}
+          element={<AssistantsPage />}
         />
+        <Route path="/admin/assistants/new" element={<AssistantFormPage mode="create" />} />
+        <Route path="/admin/assistants/:assistantId/edit" element={<AssistantFormPage mode="edit" />} />
         <Route
           path="/admin/knowledge-sources"
           element={<Placeholder>Knowledge source management is not implemented yet.</Placeholder>}
