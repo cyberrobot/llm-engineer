@@ -453,11 +453,12 @@ a trusted request-context facility is available.
 
 External operations are bounded:
 
-- website requests use `INGESTION_TIMEOUT_SECONDS` and retry connection failures at most
-  `INGESTION_HTTP_RETRIES` times (default `2`); validation failures, HTTP responses, malformed HTML,
-  and unsupported content are not retried
-- OpenAI requests use `AI_REQUEST_TIMEOUT` and the SDK's maintained transient-failure policy capped
-  by `AI_MAX_RETRIES`; application validation and configuration failures are never retried
+- website requests and their preliminary DNS resolution use `INGESTION_TIMEOUT_SECONDS`;
+  connection establishment uses HTTPX retries capped by `INGESTION_HTTP_RETRIES`, while ingestion
+  orchestration retries only classified transient failures such as HTTP 429/502/503/504
+- OpenAI requests use `AI_REQUEST_TIMEOUT`; ingestion embedding calls disable SDK retries so the
+  durable ingestion retry policy owns attempts and backoff without compounding them, while other AI
+  workflows retain the SDK policy capped by `AI_MAX_RETRIES`
 - PostgreSQL connections use `DATABASE_CONNECT_TIMEOUT_SECONDS`, while statements use
   `DATABASE_OPERATION_TIMEOUT_SECONDS`
 

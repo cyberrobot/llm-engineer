@@ -1,18 +1,24 @@
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from time import monotonic
+from time import monotonic, sleep
+from typing import TypeVar
 from uuid import UUID
 
 from assistant.application.content_processing_service import ContentProcessingService
+from assistant.application.ingestion_retry import IngestionFailureClassifier, IngestionRetryPolicy
 from assistant.application.knowledge_persistence_service import KnowledgePersistenceService
 from assistant.application.ports.website_loader import WebsiteLoader
+from assistant.domain.document_ingestion_job import IngestionStep
 from assistant.domain.ingestion_job import IngestionJob
 from assistant.domain.ingestion_status import IngestionStatus
 from assistant.infrastructure.repositories.ingestion_job import IngestionJobRepository
+from core.config import IngestionRetrySettings
 from core.metrics import IngestionMetrics, ingestion_metrics
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 class IngestionJobNotFound(LookupError):
@@ -42,12 +48,20 @@ class IngestionService:
         knowledge_persistence_service: KnowledgePersistenceService,
         *,
         metrics: IngestionMetrics = ingestion_metrics,
+        classifier: IngestionFailureClassifier | None = None,
+        retry_policy: IngestionRetryPolicy | None = None,
+        sleeper: Callable[[float], None] = sleep,
     ) -> None:
         self._repository = repository
         self._website_loader = website_loader
         self._content_processing_service = content_processing_service
         self._knowledge_persistence_service = knowledge_persistence_service
         self._metrics = metrics
+        self._classifier = classifier or IngestionFailureClassifier()
+        self._retry_policy = retry_policy or IngestionRetryPolicy(
+            IngestionRetrySettings(1, 0, 1, 0, False)
+        )
+        self._sleeper = sleeper
 
     def start_ingestion(self, source_url: str) -> IngestionJob:
         pipeline_started_at = monotonic()
@@ -82,7 +96,11 @@ class IngestionService:
         try:
             website_started_at = monotonic()
             try:
-                documents = self._website_loader.load(source_url)
+                documents = self._run_stage(
+                    lambda: self._website_loader.load(source_url),
+                    step=IngestionStep.parse,
+                    job_id=job.id,
+                )
             finally:
                 website_loading_duration_ms = self._duration_ms(website_started_at)
 
@@ -93,7 +111,11 @@ class IngestionService:
 
             stage = "knowledge_persistence"
             failure_message = "Knowledge persistence failed."
-            persistence_result = self._knowledge_persistence_service.persist(processing_result)
+            persistence_result = self._run_stage(
+                lambda: self._knowledge_persistence_service.persist(processing_result),
+                step=IngestionStep.embed,
+                job_id=job.id,
+            )
             persistence_duration_ms = persistence_result.duration_ms
         except Exception as exc:
             total_duration_ms = self._duration_ms(pipeline_started_at)
@@ -238,3 +260,27 @@ class IngestionService:
     @staticmethod
     def _duration_ms(started_at: float) -> int:
         return max(0, int((monotonic() - started_at) * 1_000))
+
+    def _run_stage(self, operation: Callable[[], T], *, step: IngestionStep, job_id: UUID) -> T:
+        attempt_number = 1
+        while True:
+            try:
+                return operation()
+            except Exception as exc:
+                failure = self._classifier.classify(exc, step)
+                if not self._retry_policy.should_retry(failure, attempt_number):
+                    raise
+                delay = self._retry_policy.get_delay(attempt_number, failure)
+                attempt_number += 1
+                logger.info(
+                    "ingestion_stage_retry_scheduled",
+                    extra={
+                        "ingestion_job_id": str(job_id),
+                        "step": step.value,
+                        "attempt_number": attempt_number,
+                        "failure_category": failure.category.value,
+                        "failure_code": failure.failure_code,
+                        "delay_seconds": delay,
+                    },
+                )
+                self._sleeper(delay)

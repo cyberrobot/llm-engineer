@@ -17,3 +17,4 @@ prometheus-client
 tenacity
 argon2-cffi
 email-validator
+dnspython

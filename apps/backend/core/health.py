@@ -31,8 +31,14 @@ def validate_dependency_health(*, connection_factory: Callable[[], Any] = get_co
             raise RuntimeError("Required production configuration is missing.")
 
         upload_dir = get_upload_dir()
-        writable_parent = _existing_parent(upload_dir)
-        if not os.access(writable_parent, os.W_OK):
+        resolved_upload_dir = upload_dir.expanduser().resolve()
+        writable_parent = _existing_parent(resolved_upload_dir)
+        if (
+            resolved_upload_dir.exists()
+            and not resolved_upload_dir.is_dir()
+            or not writable_parent.is_dir()
+            or not os.access(writable_parent, os.W_OK)
+        ):
             raise RuntimeError("Upload storage is not writable.")
 
         with connection_factory() as connection:

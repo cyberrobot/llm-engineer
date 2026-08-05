@@ -1,6 +1,9 @@
 import logging
 from collections.abc import Callable
+from time import monotonic
 
+import dns.exception
+import dns.resolver
 import httpx
 import pytest
 
@@ -9,6 +12,7 @@ from assistant.application.ports.website_loader import (
     WebsiteLoadError,
     WebsiteTimeoutError,
 )
+from assistant.infrastructure.ingestion.url_normaliser import resolve_public_addresses
 from assistant.infrastructure.ingestion.website_loader import HttpWebsiteLoader
 
 PUBLIC_IPS = ("93.184.216.34",)
@@ -204,6 +208,37 @@ def test_timeout_on_root_surfaces_application_error():
 
     with pytest.raises(WebsiteTimeoutError, match="timed out"):
         make_loader(handler).load("https://example.com")
+
+
+def test_dns_resolution_is_bounded_and_surfaces_timeout(monkeypatch):
+    observed_lifetimes: list[float] = []
+
+    def timed_out_resolution(_hostname, _record_type, *, lifetime):
+        observed_lifetimes.append(lifetime)
+        raise dns.exception.Timeout
+
+    monkeypatch.setattr(dns.resolver, "resolve", timed_out_resolution)
+    started = monotonic()
+
+    with pytest.raises(TimeoutError, match="resolution timed out"):
+        resolve_public_addresses("example.com", timeout_seconds=0.01)
+
+    assert monotonic() - started < 0.1
+    assert 0 < observed_lifetimes[0] <= 0.01
+
+
+def test_loader_maps_dns_timeout_to_website_timeout():
+    loader = HttpWebsiteLoader(
+        timeout_seconds=1,
+        user_agent="test",
+        max_pages=1,
+        max_response_size=100,
+        client=httpx.Client(transport=httpx.MockTransport(lambda _request: pytest.fail())),
+        resolver=lambda _hostname: (_ for _ in ()).throw(TimeoutError()),
+    )
+
+    with pytest.raises(WebsiteTimeoutError, match="hostname resolution"):
+        loader.load("https://example.com")
 
 
 def test_failed_child_page_does_not_stop_remaining_crawl():

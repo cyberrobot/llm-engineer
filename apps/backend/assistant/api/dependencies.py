@@ -1,5 +1,6 @@
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from functools import lru_cache
 from time import sleep
 from typing import Annotated
@@ -78,6 +79,7 @@ from core.config import (
     DATABASE_URL,
     DISABLE_RATE_LIMITS,
     REDIS_URL,
+    get_ai_settings,
     get_content_processing_settings,
     get_ingestion_retry_settings,
     get_knowledge_persistence_settings,
@@ -92,6 +94,12 @@ from infrastructure.cache.client import redis_client
 def get_ai_provider() -> AIProvider:
     """Provide the configured AI adapter at the application boundary."""
     return create_ai_provider()
+
+
+@lru_cache
+def get_ingestion_ai_provider() -> AIProvider:
+    """Let ingestion orchestration own retries instead of nesting SDK attempts."""
+    return create_ai_provider(replace(get_ai_settings(), max_retries=0))
 
 
 @lru_cache
@@ -288,7 +296,7 @@ def get_knowledge_persistence_repository() -> PostgresKnowledgePersistenceReposi
 
 
 def get_knowledge_persistence_service(
-    embedding_provider: Annotated[AIProvider, Depends(get_ai_provider)],
+    embedding_provider: Annotated[AIProvider, Depends(get_ingestion_ai_provider)],
     repository: Annotated[
         PostgresKnowledgePersistenceRepository,
         Depends(get_knowledge_persistence_repository),
@@ -318,6 +326,20 @@ def get_knowledge_source_service(
     return KnowledgeSourceService(repository, assistants)
 
 
+@lru_cache
+def get_ingestion_failure_classifier() -> IngestionFailureClassifier:
+    return IngestionFailureClassifier()
+
+
+@lru_cache
+def get_ingestion_retry_policy() -> IngestionRetryPolicy:
+    return IngestionRetryPolicy(get_ingestion_retry_settings())
+
+
+def get_ingestion_retry_sleeper() -> Callable[[float], None]:
+    return sleep
+
+
 def get_ingestion_service(
     repository: Annotated[IngestionJobRepository, Depends(get_ingestion_job_repository)],
     website_loader: Annotated[WebsiteLoader, Depends(get_website_loader)],
@@ -327,12 +349,18 @@ def get_ingestion_service(
     knowledge_persistence_service: Annotated[
         KnowledgePersistenceService, Depends(get_knowledge_persistence_service)
     ],
+    classifier: Annotated[IngestionFailureClassifier, Depends(get_ingestion_failure_classifier)],
+    retry_policy: Annotated[IngestionRetryPolicy, Depends(get_ingestion_retry_policy)],
+    sleeper: Annotated[Callable[[float], None], Depends(get_ingestion_retry_sleeper)],
 ) -> IngestionService:
     return IngestionService(
         repository,
         website_loader,
         content_processing_service,
         knowledge_persistence_service,
+        classifier=classifier,
+        retry_policy=retry_policy,
+        sleeper=sleeper,
     )
 
 
@@ -356,20 +384,6 @@ def get_ingestion_pipeline_definition(
         # Only persistence is therefore a reliable cross-process checkpoint today.
         checkpoint_steps=(IngestionStep.persist,),
     )
-
-
-@lru_cache
-def get_ingestion_failure_classifier() -> IngestionFailureClassifier:
-    return IngestionFailureClassifier()
-
-
-@lru_cache
-def get_ingestion_retry_policy() -> IngestionRetryPolicy:
-    return IngestionRetryPolicy(get_ingestion_retry_settings())
-
-
-def get_ingestion_retry_sleeper() -> Callable[[float], None]:
-    return sleep
 
 
 def get_ingestion_pipeline_runner(

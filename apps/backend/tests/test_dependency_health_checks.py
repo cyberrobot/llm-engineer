@@ -147,3 +147,13 @@ def test_upload_storage_check_requires_a_writable_existing_parent(tmp_path):
     assert unhealthy.status is HealthStatus.unhealthy
     assert unhealthy.code is HealthErrorCode.dependency_unavailable
     assert str(Path(tmp_path)) not in unhealthy.model_dump_json()
+
+
+def test_upload_storage_check_rejects_writable_regular_file(tmp_path):
+    configured_path = tmp_path / "uploads"
+    configured_path.write_text("not a directory")
+
+    result = asyncio.run(UploadStorageHealthCheck(configured_path).check())
+
+    assert result.status is HealthStatus.unhealthy
+    assert result.code is HealthErrorCode.dependency_unavailable

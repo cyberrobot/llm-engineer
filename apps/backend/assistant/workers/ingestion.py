@@ -6,9 +6,9 @@ from threading import Event, Thread
 
 from assistant.api.dependencies import (
     build_ingestion_pipeline_runner,
-    get_ai_provider,
     get_content_extractor,
     get_content_processing_service,
+    get_ingestion_ai_provider,
     get_ingestion_failure_classifier,
     get_ingestion_pipeline_definition,
     get_ingestion_retry_policy,
@@ -156,7 +156,7 @@ def _build_runner(repository):
         get_content_extractor(), get_text_cleaner(), get_text_chunker()
     )
     persistence = get_knowledge_persistence_service(
-        get_ai_provider(), get_knowledge_persistence_repository()
+        get_ingestion_ai_provider(), get_knowledge_persistence_repository()
     )
     definition = get_ingestion_pipeline_definition(website_loader, content_processing, persistence)
     return build_ingestion_pipeline_runner(
@@ -225,12 +225,12 @@ def main() -> int:
             if close is not None:
                 close()
             get_website_loader.cache_clear()
-        if get_ai_provider.cache_info().currsize:
-            provider = get_ai_provider()
+        if get_ingestion_ai_provider.cache_info().currsize:
+            provider = get_ingestion_ai_provider()
             close = getattr(provider, "close", None)
             if close is not None:
                 close()
-            get_ai_provider.cache_clear()
+            get_ingestion_ai_provider.cache_clear()
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import CollectorRegistry
 
+from assistant.api.dependencies import get_ingestion_ai_provider
 from assistant.application.ingestion_service import IngestionService
 from assistant.domain.content_processing_result import ContentProcessingResult
 from assistant.domain.knowledge_persistence import KnowledgePersistenceResult
@@ -82,6 +83,17 @@ def test_provider_factory_passes_validated_retry_limit_to_sdk_adapter():
         max_retries=5,
         embedding_model="text-embedding-3-small",
     )
+
+
+def test_ingestion_provider_disables_sdk_retries_so_pipeline_owns_attempts(monkeypatch):
+    get_ingestion_ai_provider.cache_clear()
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    with patch("assistant.api.dependencies.create_ai_provider") as create:
+        get_ingestion_ai_provider()
+
+    assert create.call_args.args[0].max_retries == 0
+    get_ingestion_ai_provider.cache_clear()
 
 
 def test_json_formatter_emits_structured_fields_without_serialising_unapproved_values():

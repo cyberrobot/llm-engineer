@@ -75,8 +75,13 @@ class UploadStorageHealthCheck:
         self._path = path
 
     async def check(self) -> DependencyHealthResult:
-        parent = self._existing_parent(self._path)
-        if not os.access(parent, os.W_OK):
+        target = self._path.expanduser().resolve()
+        if target.exists():
+            ready = target.is_dir() and os.access(target, os.W_OK)
+        else:
+            parent = self._existing_parent(target)
+            ready = parent.is_dir() and os.access(parent, os.W_OK)
+        if not ready:
             return _result(
                 self.name,
                 self.required,

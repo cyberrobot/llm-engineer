@@ -83,7 +83,7 @@ class HttpWebsiteLoader(WebsiteLoader):
         max_response_size: int,
         max_retries: int = 2,
         client: httpx.Client | None = None,
-        resolver: AddressResolver = resolve_public_addresses,
+        resolver: AddressResolver | None = None,
     ) -> None:
         if timeout_seconds <= 0 or max_pages <= 0 or max_response_size <= 0:
             raise ValueError("Website loader limits must be greater than zero.")
@@ -100,7 +100,11 @@ class HttpWebsiteLoader(WebsiteLoader):
             follow_redirects=False,
             transport=httpx.HTTPTransport(retries=max_retries),
         )
-        self._resolver = resolver
+        self._resolver = resolver or (
+            lambda hostname: resolve_public_addresses(
+                hostname, timeout_seconds=self._timeout_seconds
+            )
+        )
 
     def close(self) -> None:
         """Release the internally owned connection pool; injected clients remain caller-owned."""
@@ -108,7 +112,10 @@ class HttpWebsiteLoader(WebsiteLoader):
             self._client.close()
 
     def load(self, url: str) -> list[WebsiteDocument]:
-        root_url = validate_public_url(url, self._resolver)
+        try:
+            root_url = validate_public_url(url, self._resolver)
+        except TimeoutError as exc:
+            raise WebsiteTimeoutError("Website hostname resolution timed out.") from exc
         started_at = monotonic()
         logger.info("Website crawl started", extra={"root_url": root_url})
 
@@ -178,7 +185,10 @@ class HttpWebsiteLoader(WebsiteLoader):
 
     def load_single_page(self, url: str) -> list[WebsiteDocument]:
         """Load exactly the requested page while retaining URL and redirect protections."""
-        root_url = validate_public_url(url, self._resolver)
+        try:
+            root_url = validate_public_url(url, self._resolver)
+        except TimeoutError as exc:
+            raise WebsiteTimeoutError("Website hostname resolution timed out.") from exc
         try:
             return [self._to_document(self._download(root_url, allowed_origin=None))]
         except _PageTimeout as exc:
@@ -194,7 +204,10 @@ class HttpWebsiteLoader(WebsiteLoader):
     def _download(self, url: str, *, allowed_origin: Origin | None) -> _DownloadedPage:
         current_url = url
         for _redirect_count in range(MAX_REDIRECTS + 1):
-            safe_url = validate_public_url(current_url, self._resolver)
+            try:
+                safe_url = validate_public_url(current_url, self._resolver)
+            except TimeoutError as exc:
+                raise _PageTimeout("Website hostname resolution timed out.") from exc
             if allowed_origin is not None and origin_for(safe_url) != allowed_origin:
                 raise _PageFailure("Redirect left the crawl origin.")
             try:

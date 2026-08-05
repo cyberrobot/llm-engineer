@@ -13,7 +13,11 @@ from admin_auth.dependencies import (
 from admin_auth.service import AdministratorAuthenticationService
 from api.openapi import API_CONTRACT_VERSION, create_openapi_schema
 from api.router import api_router
-from assistant.api.dependencies import get_ai_provider, get_website_loader
+from assistant.api.dependencies import (
+    get_ai_provider,
+    get_ingestion_ai_provider,
+    get_website_loader,
+)
 from assistant.api.public_chat_middleware import PublicChatBoundaryMiddleware
 from core.config import get_admin_authentication_settings, validate_startup_configuration
 from core.correlation import RequestCorrelationMiddleware
@@ -49,6 +53,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         _close_cached_dependency(get_website_loader, "website_loader")
+        _close_cached_dependency(get_ingestion_ai_provider, "ingestion_ai_provider")
         _close_cached_dependency(get_ai_provider, "ai_provider")
 
 
