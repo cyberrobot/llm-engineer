@@ -6,9 +6,9 @@ from threading import Event, Thread
 
 from assistant.api.dependencies import (
     build_ingestion_pipeline_runner,
-    get_ai_provider,
     get_content_extractor,
     get_content_processing_service,
+    get_ingestion_ai_provider,
     get_ingestion_failure_classifier,
     get_ingestion_pipeline_definition,
     get_ingestion_retry_policy,
@@ -32,6 +32,7 @@ from assistant.infrastructure.repositories.ingestion_worker import (
 )
 from core.config import DATABASE_URL, get_ingestion_worker_settings, validate_startup_configuration
 from core.logging import configure_logging
+from core.resources import close_cached_dependency
 from infrastructure.database.connection import init_db
 
 logger = logging.getLogger(__name__)
@@ -156,7 +157,7 @@ def _build_runner(repository):
         get_content_extractor(), get_text_cleaner(), get_text_chunker()
     )
     persistence = get_knowledge_persistence_service(
-        get_ai_provider(), get_knowledge_persistence_repository()
+        get_ingestion_ai_provider(), get_knowledge_persistence_repository()
     )
     definition = get_ingestion_pipeline_definition(website_loader, content_processing, persistence)
     return build_ingestion_pipeline_runner(
@@ -219,18 +220,8 @@ def main() -> int:
         worker.run(stop)
         return 0
     finally:
-        if get_website_loader.cache_info().currsize:
-            loader = get_website_loader()
-            close = getattr(loader, "close", None)
-            if close is not None:
-                close()
-            get_website_loader.cache_clear()
-        if get_ai_provider.cache_info().currsize:
-            provider = get_ai_provider()
-            close = getattr(provider, "close", None)
-            if close is not None:
-                close()
-            get_ai_provider.cache_clear()
+        close_cached_dependency(get_website_loader, "website_loader")
+        close_cached_dependency(get_ingestion_ai_provider, "ingestion_ai_provider")
 
 
 if __name__ == "__main__":

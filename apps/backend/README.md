@@ -453,13 +453,17 @@ a trusted request-context facility is available.
 
 External operations are bounded:
 
-- website requests use `INGESTION_TIMEOUT_SECONDS` and retry connection failures at most
-  `INGESTION_HTTP_RETRIES` times (default `2`); validation failures, HTTP responses, malformed HTML,
-  and unsupported content are not retried
-- OpenAI requests use `AI_REQUEST_TIMEOUT` and the SDK's maintained transient-failure policy capped
-  by `AI_MAX_RETRIES`; application validation and configuration failures are never retried
+- website requests and their preliminary DNS resolution use `INGESTION_TIMEOUT_SECONDS`;
+  connection establishment uses HTTPX retries capped by `INGESTION_HTTP_RETRIES`, while ingestion
+  orchestration retries only classified transient failures such as HTTP 429/502/503/504. Each
+  request connects to an address that passed public-network validation while retaining the original
+  hostname for TLS SNI and the HTTP `Host` header.
+- OpenAI requests use `AI_REQUEST_TIMEOUT`; ingestion embedding calls disable SDK retries so the
+  durable ingestion retry policy owns attempts and backoff without compounding them, while other AI
+  workflows retain the SDK policy capped by `AI_MAX_RETRIES`
 - PostgreSQL connections use `DATABASE_CONNECT_TIMEOUT_SECONDS`, while statements use
-  `DATABASE_OPERATION_TIMEOUT_SECONDS`
+  `DATABASE_OPERATION_TIMEOUT_SECONDS`. A transient persistence retry reuses already prepared
+  embeddings rather than calling the embedding provider again.
 
 The provider and website HTTP clients are process singletons and are closed during graceful FastAPI
 shutdown. Database repositories use context-managed connections and cursors, and persistence keeps
@@ -487,11 +491,13 @@ Missing or invalid credentials return `401`, while an authenticated principal wi
 `operations:read` receives `403`. Raw exceptions, hostnames, connection strings, and credentials are
 never returned.
 
-PostgreSQL is registered as required when `DATABASE_URL` is configured. Redis is registered as an
-optional cache check unless `DISABLE_CACHE=true`, so its failure degrades detailed diagnostics but
-does not make readiness fail. OpenAI is a configuration-only optional diagnostic: it verifies that a
-credential is configured without constructing a client or making a completion, embedding, or other
-remote request. Independent checks run concurrently and each is bounded by
+PostgreSQL is registered as required when `DATABASE_URL` is configured; its check validates both
+connectivity and availability of the `vector` extension. Writable upload storage is always required
+for readiness. Redis is registered as an optional cache check unless `DISABLE_CACHE=true`, so its
+failure degrades detailed diagnostics but does not make readiness fail. OpenAI is a
+configuration-only optional diagnostic: it verifies that a credential is configured without
+constructing a client or making a completion, embedding, or other remote request. Independent checks
+run concurrently and each is bounded by
 `HEALTH_CHECK_TIMEOUT_SECONDS` (default `2`, valid range greater than zero through `10` seconds).
 No health result caching is used. Uvicorn completes the FastAPI lifespan startup—including validated
 configuration and configured database initialization—before serving routes, which is the readiness

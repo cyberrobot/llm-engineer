@@ -12,12 +12,17 @@ from admin_auth.dependencies import (
 from admin_auth.service import AdministratorAuthenticationService
 from api.openapi import API_CONTRACT_VERSION, create_openapi_schema
 from api.router import api_router
-from assistant.api.dependencies import get_ai_provider, get_website_loader
+from assistant.api.dependencies import (
+    get_ai_provider,
+    get_ingestion_ai_provider,
+    get_website_loader,
+)
 from assistant.api.public_chat_middleware import PublicChatBoundaryMiddleware
 from core.config import get_admin_authentication_settings, validate_startup_configuration
 from core.correlation import RequestCorrelationMiddleware
 from core.exceptions import register_exception_handlers
 from core.logging import configure_logging
+from core.resources import close_cached_dependency
 from infrastructure.database.connection import init_db
 from shared.dependencies.rate_limit import limiter
 
@@ -45,18 +50,9 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
-        if get_website_loader.cache_info().currsize:
-            loader = get_website_loader()
-            close_loader = getattr(loader, "close", None)
-            if close_loader is not None:
-                close_loader()
-            get_website_loader.cache_clear()
-        if get_ai_provider.cache_info().currsize:
-            provider = get_ai_provider()
-            close_provider = getattr(provider, "close", None)
-            if close_provider is not None:
-                close_provider()
-            get_ai_provider.cache_clear()
+        close_cached_dependency(get_website_loader, "website_loader")
+        close_cached_dependency(get_ingestion_ai_provider, "ingestion_ai_provider")
+        close_cached_dependency(get_ai_provider, "ai_provider")
 
 
 app = FastAPI(

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client import CollectorRegistry
 
+from assistant.api.dependencies import get_ingestion_ai_provider
 from assistant.application.ingestion_service import IngestionService
 from assistant.domain.content_processing_result import ContentProcessingResult
 from assistant.domain.knowledge_persistence import KnowledgePersistenceResult
@@ -83,6 +85,17 @@ def test_provider_factory_passes_validated_retry_limit_to_sdk_adapter():
     )
 
 
+def test_ingestion_provider_disables_sdk_retries_so_pipeline_owns_attempts(monkeypatch):
+    get_ingestion_ai_provider.cache_clear()
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    with patch("assistant.api.dependencies.create_ai_provider") as create:
+        get_ingestion_ai_provider()
+
+    assert create.call_args.args[0].max_retries == 0
+    get_ingestion_ai_provider.cache_clear()
+
+
 def test_json_formatter_emits_structured_fields_without_serialising_unapproved_values():
     record = logging.LogRecord("test", logging.INFO, __file__, 1, "Ingestion started", (), None)
     record.ingestion_job_id = "job-123"
@@ -125,22 +138,28 @@ def test_ingestion_records_success_metrics_for_observable_pipeline_outcomes():
             duration_ms=7,
         )
     )
+    prepared = object()
     persistence = SimpleNamespace(
-        persist=lambda _result: KnowledgePersistenceResult(
-            documents_received=1,
-            documents_created=1,
-            documents_updated=0,
-            documents_unchanged=0,
-            chunks_received=3,
-            chunks_created=3,
-            chunks_updated=0,
-            chunks_unchanged=0,
-            chunks_removed=0,
-            embeddings_generated=3,
-            duration_ms=11,
-            embedding_duration_ms=5,
-            database_duration_ms=6,
-        )
+        prepare=lambda _result: prepared,
+        persist_prepared=lambda value, **_kwargs: (
+            KnowledgePersistenceResult(
+                documents_received=1,
+                documents_created=1,
+                documents_updated=0,
+                documents_unchanged=0,
+                chunks_received=3,
+                chunks_created=3,
+                chunks_updated=0,
+                chunks_unchanged=0,
+                chunks_removed=0,
+                embeddings_generated=3,
+                duration_ms=11,
+                embedding_duration_ms=5,
+                database_duration_ms=6,
+            )
+            if value is prepared
+            else pytest.fail("prepared embeddings were not reused")
+        ),
     )
 
     IngestionService(repository, loader, processor, persistence, metrics=metrics).start_ingestion(
@@ -207,6 +226,53 @@ def test_owned_website_client_is_closed_but_injected_client_is_not():
     close.assert_called_once_with()
 
 
+def test_application_shutdown_closes_remaining_resources_after_one_close_fails(monkeypatch):
+    import main
+
+    events: list[str] = []
+
+    class CachedFactory:
+        def __init__(self, resource):
+            self.resource = resource
+
+        def __call__(self):
+            return self.resource
+
+        def cache_info(self):
+            return SimpleNamespace(currsize=1)
+
+        def cache_clear(self):
+            events.append(f"{self.resource.name}_cache_cleared")
+
+    class Resource:
+        def __init__(self, name, *, fails=False):
+            self.name = name
+            self.fails = fails
+
+        def close(self):
+            events.append(f"{self.name}_closed")
+            if self.fails:
+                raise RuntimeError("sensitive shutdown detail")
+
+    monkeypatch.setattr(main, "validate_startup_configuration", lambda: None)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(main, "get_website_loader", CachedFactory(Resource("loader", fails=True)))
+    monkeypatch.setattr(main, "get_ai_provider", CachedFactory(Resource("provider")))
+
+    async def exercise_lifespan():
+        async with main.lifespan(main.app):
+            pass
+
+    asyncio.run(exercise_lifespan())
+
+    assert events == [
+        "loader_closed",
+        "loader_cache_cleared",
+        "provider_closed",
+        "provider_cache_cleared",
+    ]
+
+
 def test_health_validation_checks_database_and_vector_extension(monkeypatch, tmp_path):
     executed: list[str] = []
 
@@ -239,6 +305,7 @@ def test_health_validation_checks_database_and_vector_extension(monkeypatch, tmp
     monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.com")
     monkeypatch.setenv("ADMIN_BOOTSTRAP_PASSWORD", "production-placeholder-password")
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("ADMIN_SESSION_COOKIE_SECURE", "true")
 
     validate_dependency_health(connection_factory=lambda: Connection())
 
@@ -274,6 +341,7 @@ def test_health_validation_maps_missing_vector_extension_to_safe_error(monkeypat
     monkeypatch.setenv("DATABASE_URL", "postgresql://configured")
     monkeypatch.setenv("OPENAI_API_KEY", "configured")
     monkeypatch.setenv("UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setenv("ADMIN_SESSION_COOKIE_SECURE", "true")
 
     with pytest.raises(DependencyHealthError, match="dependencies are unavailable") as raised:
         validate_dependency_health(connection_factory=lambda: Connection())

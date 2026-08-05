@@ -1,6 +1,9 @@
 import logging
 from collections.abc import Callable
+from time import monotonic
 
+import dns.exception
+import dns.resolver
 import httpx
 import pytest
 
@@ -9,6 +12,7 @@ from assistant.application.ports.website_loader import (
     WebsiteLoadError,
     WebsiteTimeoutError,
 )
+from assistant.infrastructure.ingestion.url_normaliser import resolve_public_addresses
 from assistant.infrastructure.ingestion.website_loader import HttpWebsiteLoader
 
 PUBLIC_IPS = ("93.184.216.34",)
@@ -67,7 +71,10 @@ def test_load_follows_safe_redirect_and_uses_final_url():
 
     documents = make_loader(handler).load("https://example.com")
 
-    assert requested_urls == ["https://example.com/", "https://example.com/docs"]
+    assert requested_urls == [
+        f"https://{PUBLIC_IPS[0]}/",
+        f"https://{PUBLIC_IPS[0]}/docs",
+    ]
     assert [document.url for document in documents] == ["https://example.com/docs"]
 
 
@@ -87,8 +94,14 @@ def test_crawl_removes_fragments_ignores_duplicates_and_unsupported_links():
 
     documents = make_loader(handler).load("https://example.com/#top")
 
-    assert requested_urls == ["https://example.com/", "https://example.com/guide"]
-    assert [document.url for document in documents] == requested_urls
+    assert requested_urls == [
+        f"https://{PUBLIC_IPS[0]}/",
+        f"https://{PUBLIC_IPS[0]}/guide",
+    ]
+    assert [document.url for document in documents] == [
+        "https://example.com/",
+        "https://example.com/guide",
+    ]
 
 
 def test_crawl_stays_on_same_origin():
@@ -105,7 +118,7 @@ def test_crawl_stays_on_same_origin():
         "https://example.com/",
         "https://example.com/local",
     ]
-    assert requested_hosts == ["example.com", "example.com"]
+    assert requested_hosts == [PUBLIC_IPS[0], PUBLIC_IPS[0]]
 
 
 def test_crawl_obeys_page_request_limit_deterministically():
@@ -206,6 +219,37 @@ def test_timeout_on_root_surfaces_application_error():
         make_loader(handler).load("https://example.com")
 
 
+def test_dns_resolution_is_bounded_and_surfaces_timeout(monkeypatch):
+    observed_lifetimes: list[float] = []
+
+    def timed_out_resolution(_hostname, _record_type, *, lifetime):
+        observed_lifetimes.append(lifetime)
+        raise dns.exception.Timeout
+
+    monkeypatch.setattr(dns.resolver, "resolve", timed_out_resolution)
+    started = monotonic()
+
+    with pytest.raises(TimeoutError, match="resolution timed out"):
+        resolve_public_addresses("example.com", timeout_seconds=0.01)
+
+    assert monotonic() - started < 0.1
+    assert 0 < observed_lifetimes[0] <= 0.01
+
+
+def test_loader_maps_dns_timeout_to_website_timeout():
+    loader = HttpWebsiteLoader(
+        timeout_seconds=1,
+        user_agent="test",
+        max_pages=1,
+        max_response_size=100,
+        client=httpx.Client(transport=httpx.MockTransport(lambda _request: pytest.fail())),
+        resolver=lambda _hostname: (_ for _ in ()).throw(TimeoutError()),
+    )
+
+    with pytest.raises(WebsiteTimeoutError, match="hostname resolution"):
+        loader.load("https://example.com")
+
+
 def test_failed_child_page_does_not_stop_remaining_crawl():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/":
@@ -259,7 +303,26 @@ def test_redirect_to_private_host_is_rejected_before_following():
     with pytest.raises(WebsiteLoadError, match="root page"):
         make_loader(handler).load("https://example.com")
 
-    assert requested_urls == ["https://example.com/"]
+    assert requested_urls == [f"https://{PUBLIC_IPS[0]}/"]
+
+
+def test_request_connects_to_validated_address_with_original_host_and_tls_sni():
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["url"] = str(request.url)
+        observed["host"] = request.headers["Host"]
+        observed["sni"] = request.extensions["sni_hostname"]
+        return html_response(request, "<html>safe</html>")
+
+    documents = make_loader(handler, max_pages=1).load("https://example.com/docs")
+
+    assert observed == {
+        "url": f"https://{PUBLIC_IPS[0]}/docs",
+        "host": "example.com",
+        "sni": b"example.com",
+    }
+    assert documents[0].url == "https://example.com/docs"
 
 
 def test_crawl_emits_structured_lifecycle_logs_without_page_contents(caplog):
