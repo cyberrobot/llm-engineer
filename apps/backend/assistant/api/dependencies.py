@@ -3,9 +3,11 @@ from collections.abc import Callable
 from functools import lru_cache
 from time import sleep
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import Depends
 
+from assistant.application.assistant_admin_service import AssistantAdministrationService
 from assistant.application.chat import ChatService
 from assistant.application.content_processing_service import ContentProcessingService
 from assistant.application.ingestion_job_service import DocumentIngestionJobService
@@ -128,6 +130,12 @@ def get_assistant_repository() -> AssistantRepository:
     return InMemoryAssistantRepository()
 
 
+def get_assistant_administration_service(
+    repository: Annotated[AssistantRepository, Depends(get_assistant_repository)],
+) -> AssistantAdministrationService:
+    return AssistantAdministrationService(repository)
+
+
 def get_public_chat_service(
     ai_provider: Annotated[AIProvider, Depends(get_ai_provider)],
     repository: Annotated[KnowledgeRepository, Depends(get_knowledge_repository)],
@@ -135,7 +143,7 @@ def get_public_chat_service(
 ) -> PublicAssistantChatService:
     settings = get_public_assistant_chat_settings()
 
-    def retrieval_factory(assistant_id):
+    def retrieval_factory(assistant_id: UUID) -> RetrievalService:
         return RetrievalService(
             ai_provider,
             repository,

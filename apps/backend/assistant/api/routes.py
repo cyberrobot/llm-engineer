@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from assistant.api.assistant_admin import router as assistant_admin_router
 from assistant.api.audit import router as audit_router
 from assistant.api.chat import router as chat_router
 from assistant.api.ingest import router as ingest_router
@@ -14,6 +15,7 @@ from core.health import DependencyHealthError, validate_dependency_health
 
 router = APIRouter()
 router.include_router(chat_router)
+router.include_router(assistant_admin_router)
 router.include_router(ingest_router)
 router.include_router(ingestion_jobs_router)
 router.include_router(ingestion_status_router)

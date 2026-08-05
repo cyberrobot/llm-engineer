@@ -8,8 +8,8 @@ from uuid import UUID
 from assistant.application.prompt_builder import Prompt, PromptBuilder
 from assistant.application.public_chat_protection import TokenBudget
 from assistant.domain import KnowledgeChunk
-from assistant.domain.assistant import AssistantStatus, AssistantVisibility
-from assistant.domain.assistant_repository import AssistantNotFound, AssistantRepository
+from assistant.domain.assistant import Assistant, AssistantStatus, AssistantVisibility
+from assistant.domain.assistant_repository import AssistantNotFound
 from assistant.schemas.public_chat import PublicChatRequest
 from core.config import PublicAssistantChatSettings, get_public_assistant_chat_settings
 from core.correlation import request_id_context
@@ -28,6 +28,10 @@ GENERIC_INSUFFICIENT_KNOWLEDGE_RESPONSE = (
 
 class ScopedRetrieval(Protocol):
     def retrieve(self, query: str) -> list[KnowledgeChunk]: ...
+
+
+class PublicAssistantLookup(Protocol):
+    def get_by_slug(self, slug: str) -> Assistant: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +166,7 @@ class PublicAssistantChatService:
 
     def __init__(
         self,
-        assistant_repository: AssistantRepository,
+        assistant_repository: PublicAssistantLookup,
         retrieval_factory: Callable[[UUID], ScopedRetrieval],
         provider: AIProvider,
         prompt_builder: PromptBuilder | None = None,

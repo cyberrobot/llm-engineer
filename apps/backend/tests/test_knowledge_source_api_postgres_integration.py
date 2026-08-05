@@ -1,5 +1,6 @@
 import os
-from uuid import UUID
+from datetime import datetime, timedelta, timezone
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -10,7 +11,12 @@ from admin_auth.dependencies import require_administrator_role
 from assistant.api.dependencies import get_knowledge_source_service
 from assistant.api.knowledge_sources import router
 from assistant.application.knowledge_source_service import KnowledgeSourceService
-from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
+from assistant.domain.assistant import (
+    REDMOOR_ASSISTANT_ID,
+    Assistant,
+    AssistantStatus,
+    AssistantVisibility,
+)
 from assistant.infrastructure.repositories.assistant import PostgresAssistantRepository
 from assistant.infrastructure.repositories.knowledge_source import PostgresKnowledgeSourceRepository
 from core.config import DATABASE_URL
@@ -135,3 +141,177 @@ def test_database_backed_api_lifecycle(monkeypatch):
                     (document_id,),
                 )
                 connection.execute("DELETE FROM documents WHERE id=%s", (document_id,))
+
+
+@pytest.mark.parametrize(
+    ("status", "visibility"),
+    [
+        (AssistantStatus.inactive, AssistantVisibility.public),
+        (AssistantStatus.active, AssistantVisibility.private),
+    ],
+)
+def test_administrator_knowledge_sources_ignore_public_lifecycle(monkeypatch, status, visibility):
+    _require_database()
+    monkeypatch.setenv("ADMIN_TRUSTED_ORIGINS", ORIGIN)
+    init_db()
+    assistant_repository = PostgresAssistantRepository()
+    now = datetime(2026, 8, 4, tzinfo=timezone.utc)
+    assistant = Assistant(
+        uuid4(),
+        f"knowledge-lifecycle-{uuid4().hex}",
+        "Knowledge lifecycle",
+        status,
+        visibility,
+        now,
+        now,
+    )
+    assistant_repository.create(assistant)
+    service = KnowledgeSourceService(PostgresKnowledgeSourceRepository(), assistant_repository)
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(router)
+    app.dependency_overrides[get_knowledge_source_service] = lambda: service
+    app.dependency_overrides[require_administrator_role] = lambda: object()
+    client = TestClient(app)
+    base = f"/admin/assistants/{assistant.id}/knowledge-sources"
+    other_assistant = Assistant(
+        uuid4(),
+        f"knowledge-isolation-{uuid4().hex}",
+        "Knowledge isolation",
+        AssistantStatus.active,
+        AssistantVisibility.public,
+        now,
+        now,
+    )
+    assistant_repository.create(other_assistant)
+    other_base = f"/admin/assistants/{other_assistant.id}/knowledge-sources"
+    document_id = source_id = None
+    try:
+        created = client.post(
+            base,
+            headers={"Origin": ORIGIN},
+            json={
+                "source_type": "direct_text",
+                "name": "Lifecycle source",
+                "direct_text": "Lifecycle state must not alter this content.",
+            },
+        )
+        assert created.status_code == 202
+        source_id, document_id = created.json()["id"], created.json()["document_id"]
+        assert client.get(base).status_code == 200
+        assert client.get(f"{base}/{source_id}").status_code == 200
+        disabled = client.patch(
+            f"{base}/{source_id}",
+            headers={"Origin": ORIGIN},
+            json={"retrieval_state": "disabled"},
+        )
+        assert disabled.status_code == 200
+        assert disabled.json()["retrieval_state"] == "disabled"
+        enabled = client.patch(
+            f"{base}/{source_id}",
+            headers={"Origin": ORIGIN},
+            json={"retrieval_state": "enabled"},
+        )
+        assert enabled.status_code == 200
+        assert enabled.json()["retrieval_state"] == "enabled"
+
+        with get_connection() as connection:
+            initial = connection.execute(
+                "SELECT knowledge_sources.id, knowledge_sources.assistant_id, "
+                "knowledge_sources.document_id, knowledge_sources.retrieval_state, "
+                "documents.assistant_id, documents.retrieval_state, "
+                "document_ingestion_jobs.id, document_ingestion_jobs.status "
+                "FROM knowledge_sources "
+                "JOIN documents ON documents.id=knowledge_sources.document_id "
+                "JOIN document_ingestion_jobs "
+                "ON document_ingestion_jobs.document_id=documents.id "
+                "WHERE knowledge_sources.id=%s",
+                (source_id,),
+            ).fetchone()
+        assert initial == (
+            source_id,
+            str(assistant.id),
+            document_id,
+            "enabled",
+            str(assistant.id),
+            "enabled",
+            initial[6],
+            "queued",
+        )
+
+        reingested = client.post(
+            f"{base}/{source_id}/reingestions",
+            headers={"Origin": ORIGIN, "Idempotency-Key": "lifecycle-refresh"},
+        )
+        assert reingested.status_code == 202
+        assert reingested.json()["active_job_reused"] is True
+        assert reingested.json()["latest_ingestion"]["id"] == initial[6]
+        assert reingested.json()["retrieval_state"] == "enabled"
+
+        def assert_other_assistant_cannot_access_source() -> None:
+            assert client.get(f"{other_base}/{source_id}").status_code == 404
+            assert (
+                client.patch(
+                    f"{other_base}/{source_id}",
+                    headers={"Origin": ORIGIN},
+                    json={"retrieval_state": "disabled"},
+                ).status_code
+                == 404
+            )
+            assert (
+                client.post(
+                    f"{other_base}/{source_id}/reingestions",
+                    headers={"Origin": ORIGIN},
+                ).status_code
+                == 404
+            )
+            assert (
+                client.delete(f"{other_base}/{source_id}", headers={"Origin": ORIGIN}).status_code
+                == 404
+            )
+
+        assert_other_assistant_cannot_access_source()
+
+        changed = (
+            assistant.activate(at=now + timedelta(seconds=1))
+            if status is AssistantStatus.inactive
+            else assistant.deactivate(at=now + timedelta(seconds=1))
+        ).change_visibility(
+            AssistantVisibility.private
+            if visibility is AssistantVisibility.public
+            else AssistantVisibility.public,
+            at=now + timedelta(seconds=1),
+        )
+        assistant_repository.update(changed, expected_updated_at=assistant.updated_at)
+        with get_connection() as connection:
+            after_lifecycle_change = connection.execute(
+                "SELECT knowledge_sources.id, knowledge_sources.assistant_id, "
+                "knowledge_sources.document_id, knowledge_sources.retrieval_state, "
+                "documents.assistant_id, documents.retrieval_state, "
+                "document_ingestion_jobs.id, document_ingestion_jobs.status "
+                "FROM knowledge_sources "
+                "JOIN documents ON documents.id=knowledge_sources.document_id "
+                "JOIN document_ingestion_jobs ON document_ingestion_jobs.document_id=documents.id "
+                "WHERE knowledge_sources.id=%s",
+                (source_id,),
+            ).fetchone()
+        assert after_lifecycle_change == initial
+        assert client.get(base).json()["total"] == 1
+        assert client.get(f"{base}/{source_id}").json()["retrieval_state"] == "enabled"
+        assert_other_assistant_cannot_access_source()
+        persisted_assistant = assistant_repository.get_by_id(assistant.id)
+        assert persisted_assistant.status is changed.status
+        assert persisted_assistant.visibility is changed.visibility
+    finally:
+        if document_id is not None:
+            with get_connection() as connection:
+                connection.execute(
+                    "DELETE FROM ingestion_persistence_results WHERE document_id=%s",
+                    (document_id,),
+                )
+                connection.execute("DELETE FROM documents WHERE id=%s", (document_id,))
+        with get_connection() as connection:
+            connection.execute(
+                "DELETE FROM assistants WHERE id = ANY(%s)",
+                ([str(assistant.id), str(other_assistant.id)],),
+            )
