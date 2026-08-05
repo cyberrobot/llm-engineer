@@ -176,8 +176,10 @@ function assistantDetailFrom(value: unknown): AssistantDetail {
   return { ...item, knowledgeSourceCount: Number(value.knowledge_source_count), deletionAllowed: value.deletion_allowed };
 }
 function assistantListFrom(value: unknown): AssistantList {
-  if (!isRecord(value) || !Array.isArray(value.items) || !Number.isInteger(value.total) || !Number.isInteger(value.limit) || !Number.isInteger(value.offset) || Number(value.total) < 0 || Number(value.limit) < 1 || Number(value.offset) < 0) throw new AdminApiError('invalid_response');
-  return { items: value.items.map(assistantFrom), total: Number(value.total), limit: Number(value.limit), offset: Number(value.offset) };
+  if (!isRecord(value) || !Array.isArray(value.items) || !Number.isInteger(value.total) || !Number.isInteger(value.limit) || !Number.isInteger(value.offset)) throw new AdminApiError('invalid_response');
+  const total = Number(value.total), limit = Number(value.limit), offset = Number(value.offset);
+  if (total < 0 || limit < 1 || limit > 100 || offset < 0 || value.items.length > limit || value.items.length > total || (value.items.length > 0 && (offset >= total || offset + value.items.length > total))) throw new AdminApiError('invalid_response');
+  return { items: value.items.map(assistantFrom), total, limit, offset };
 }
 function jsonRequest(method: string, body: unknown, signal?: AbortSignal): RequestInit { return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }; }
 

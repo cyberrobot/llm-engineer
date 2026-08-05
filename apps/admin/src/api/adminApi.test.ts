@@ -147,6 +147,56 @@ describe('admin API', () => {
     await expect(createAdminApi(base).listAssistants()).rejects.toMatchObject({ kind: 'invalid_response' });
   });
 
+  it.each([
+    { items: [assistant], total: 0, limit: 50, offset: 0 },
+    { items: [assistant], total: 1, limit: 101, offset: 0 },
+    { items: [assistant], total: 1, limit: 50, offset: 1 },
+    { items: [assistant, assistant], total: 2, limit: 1, offset: 0 },
+  ])('rejects contradictory assistant pagination metadata', async (body) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(body)));
+    await expect(createAdminApi(base).listAssistants()).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
+  it('uses exact assistant detail, update, and delete contracts', async () => {
+    const detail = { ...assistant, knowledge_source_count: 2, deletion_allowed: false };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json(detail))
+      .mockResolvedValueOnce(Response.json({ ...assistant, name: 'Updated' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = createAdminApi(base);
+
+    await expect(api.getAssistant(assistant.id)).resolves.toMatchObject({
+      id: assistant.id,
+      knowledgeSourceCount: 2,
+      deletionAllowed: false,
+    });
+    await api.updateAssistant(assistant.id, {
+      concurrency_token: assistant.concurrency_token,
+      name: 'Updated',
+      visibility: 'public',
+    });
+    await api.deleteAssistant(assistant.id);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`${base}/admin/assistants/${assistant.id}`);
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ method: 'GET', credentials: 'include' }));
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+      method: 'PATCH',
+      credentials: 'include',
+      body: JSON.stringify({ concurrency_token: assistant.concurrency_token, name: 'Updated', visibility: 'public' }),
+    }));
+    expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ method: 'DELETE', credentials: 'include' }));
+  });
+
+  it.each([
+    { knowledge_source_count: -1, deletion_allowed: true },
+    { knowledge_source_count: 0.5, deletion_allowed: true },
+    { knowledge_source_count: 0, deletion_allowed: 'yes' },
+  ])('rejects malformed assistant detail fields', async (fields) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ ...assistant, ...fields })));
+    await expect(createAdminApi(base).getAssistant(assistant.id)).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
   it('maps assistant conflicts without exposing backend messages', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ detail: { code: 'assistant_slug_conflict', message: 'raw' } }, { status: 409 })));
     await expect(createAdminApi(base).createAssistant({ slug: 'legal-review', name: 'Legal review', status: 'inactive', visibility: 'private' })).rejects.toMatchObject({ kind: 'conflict', code: 'assistant_slug_conflict', message: 'The administrator request could not be completed.' });

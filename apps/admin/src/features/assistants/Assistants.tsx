@@ -154,8 +154,27 @@ export function AssistantsPage() {
       )}
       {page.items.length === 0 && page.total === 0 ? (
         <div className="empty">
-          <h2>No assistants yet</h2>
-          <p>Create the first assistant to get started.</p>
+          {statusFilter || visibilityFilter ? (
+            <>
+              <h2>No matching assistants</h2>
+              <p>Clear the filters to view all assistants.</p>
+              <button
+                onClick={() => {
+                  setPage(null);
+                  setOffset(0);
+                  setStatusFilter('');
+                  setVisibilityFilter('');
+                }}
+              >
+                Clear filters
+              </button>
+            </>
+          ) : (
+            <>
+              <h2>No assistants yet</h2>
+              <p>Create the first assistant to get started.</p>
+            </>
+          )}
         </div>
       ) : (
         <div className="table-wrap">
@@ -496,6 +515,7 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
       </p>
       {formError && (
         <div
+          id="assistant-form-error"
           ref={errorRef}
           tabIndex={-1}
           className={formError === 'Assistant saved.' ? 'success' : 'alert'}
@@ -511,6 +531,7 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
           maxLength={255}
           onChange={(e) => setName(e.target.value)}
           aria-invalid={formError === 'Name is required.'}
+          aria-describedby={formError === 'Name is required.' ? 'assistant-form-error' : undefined}
         />
       </label>
       <label>
@@ -520,6 +541,8 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
           maxLength={100}
           readOnly={mode === 'edit'}
           onChange={(e) => setSlug(e.target.value)}
+          aria-invalid={formError.startsWith('Slug must')}
+          aria-describedby={formError.startsWith('Slug must') ? 'assistant-form-error' : undefined}
         />
       </label>
       <label>

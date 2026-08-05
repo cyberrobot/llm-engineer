@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import App from './App';
-import { AdminApiError, type AdminApi, type Administrator } from './api/adminApi';
+import { AdminApiError, createAdminApi, type AdminApi, type Administrator } from './api/adminApi';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 
 const administrator:Administrator={id:'admin-1',email:'admin@example.test',role:'administrator'};
@@ -11,7 +11,7 @@ const assistant={id:'11111111-1111-4111-8111-111111111111',slug:'legal-review',n
 function deferred<T>(){let resolve!:(value:T)=>void,reject!:(reason?:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}}
 function renderApp(api:AdminApi,path='/admin'){const router=createMemoryRouter([{path:'*',element:<AuthProvider api={api}><App/></AuthProvider>}],{initialEntries:[path]});return render(<RouterProvider router={router}/>)}
 function apiWith(overrides:Partial<AdminApi>={}):AdminApi{return{currentUser:vi.fn().mockResolvedValue(administrator),login:vi.fn().mockResolvedValue(administrator),logout:vi.fn().mockResolvedValue(undefined),listAssistants:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getAssistant:vi.fn(),createAssistant:vi.fn(),updateAssistant:vi.fn(),deleteAssistant:vi.fn(),...overrides}}
-afterEach(()=>vi.restoreAllMocks());
+afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals()});
 
 describe('administrator application workflows',()=>{
   it('hides protected content until session restoration completes',async()=>{const session=deferred<Administrator>();renderApp(apiWith({currentUser:vi.fn(()=>session.promise)}));expect(screen.getByRole('heading',{name:'Restoring your session'})).toBeInTheDocument();expect(screen.queryByText(/Dashboard functionality/)).not.toBeInTheDocument();session.resolve(administrator);expect(await screen.findByText('Dashboard functionality is not implemented yet.')).toBeInTheDocument()});
@@ -71,6 +71,9 @@ describe('administrator application workflows',()=>{
     await userEvent.selectOptions(screen.getByLabelText('Status'),'active');
     await userEvent.selectOptions(await screen.findByLabelText('Visibility'),'private');
     expect(listAssistants).toHaveBeenLastCalledWith({limit:50,offset:0,status:'active',visibility:'private'},expect.any(AbortSignal));
+    expect(await screen.findByRole('heading',{name:'No matching assistants'})).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'Clear filters'}));
+    expect(await screen.findByRole('heading',{name:'No assistants yet'})).toBeInTheDocument();
   });
   it('returns to the preceding page and restores stable focus after deleting the last item',async()=>{
     const pageTwo={...assistant,id:'22222222-2222-4222-8222-222222222222',name:'Page two'};
@@ -127,6 +130,51 @@ describe('administrator application workflows',()=>{
     confirm.mockReturnValue(true);
     await userEvent.click(screen.getByRole('link',{name:'Cancel'}));
     expect(await screen.findByText('No assistants yet')).toBeInTheDocument();
+  });
+  it('associates slug validation with the invalid field',async()=>{
+    renderApp(apiWith(),'/admin/assistants/new');
+    await userEvent.type(await screen.findByLabelText('Name'),'Legal review');
+    await userEvent.type(screen.getByLabelText('Slug'),'Not Safe');
+    await userEvent.click(screen.getByRole('button',{name:'Save assistant'}));
+    expect(screen.getByLabelText('Slug')).toHaveAttribute('aria-invalid','true');
+    expect(screen.getByLabelText('Slug')).toHaveAccessibleDescription('Slug must contain lowercase letters or numbers separated by hyphens.');
+  });
+  it('creates an assistant through the real HTTP boundary and reloads the list',async()=>{
+    const rawAssistant={id:assistant.id,slug:assistant.slug,name:assistant.name,status:assistant.status,visibility:assistant.visibility,created_at:assistant.createdAt,updated_at:assistant.updatedAt,concurrency_token:assistant.concurrencyToken};
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(Response.json({user:administrator}))
+      .mockResolvedValueOnce(Response.json(rawAssistant,{status:201}))
+      .mockResolvedValueOnce(Response.json({items:[rawAssistant],total:1,limit:50,offset:0}));
+    vi.stubGlobal('fetch',fetchMock);
+    renderApp(createAdminApi('https://api.example.test'),'/admin/assistants/new');
+    await userEvent.type(await screen.findByLabelText('Name'),'Legal review');
+    await userEvent.type(screen.getByLabelText('Slug'),'legal-review');
+    await userEvent.click(screen.getByRole('button',{name:'Save assistant'}));
+    expect(await screen.findByText('Legal review')).toBeInTheDocument();
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://api.example.test/admin/assistants');
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({method:'POST',credentials:'include',body:JSON.stringify({name:'Legal review',slug:'legal-review',status:'inactive',visibility:'private'})}));
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('https://api.example.test/admin/assistants?limit=50&offset=0');
+  });
+  it('updates status and deletes through the real HTTP boundary',async()=>{
+    const rawAssistant={id:assistant.id,slug:assistant.slug,name:assistant.name,status:assistant.status,visibility:assistant.visibility,created_at:assistant.createdAt,updated_at:assistant.updatedAt,concurrency_token:assistant.concurrencyToken};
+    const activeAssistant={...rawAssistant,status:'active',updated_at:'2026-08-05T10:00:00Z',concurrency_token:'2026-08-05T10:00:00Z'};
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(Response.json({user:administrator}))
+      .mockResolvedValueOnce(Response.json({items:[rawAssistant],total:1,limit:50,offset:0}))
+      .mockResolvedValueOnce(Response.json(activeAssistant))
+      .mockResolvedValueOnce(Response.json({items:[activeAssistant],total:1,limit:50,offset:0}))
+      .mockResolvedValueOnce(new Response(null,{status:204}))
+      .mockResolvedValueOnce(Response.json({items:[],total:0,limit:50,offset:0}));
+    vi.stubGlobal('fetch',fetchMock);
+    renderApp(createAdminApi('https://api.example.test'),'/admin/assistants');
+    await userEvent.click(await screen.findByRole('button',{name:'Activate Legal review'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    await screen.findByRole('button',{name:'Deactivate Legal review'});
+    await userEvent.click(screen.getByRole('button',{name:'Delete Legal review'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    expect(await screen.findByRole('heading',{name:'No assistants yet'})).toBeInTheDocument();
+    expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({method:'PATCH',credentials:'include',body:JSON.stringify({concurrency_token:assistant.concurrencyToken,status:'active'})}));
+    expect(fetchMock.mock.calls[4]?.[1]).toEqual(expect.objectContaining({method:'DELETE',credentials:'include'}));
   });
   it('hides protected content when an authenticated request reports an expired session',async()=>{
     function ExpireSession(){const auth=useAuth();return <button onClick={auth.sessionExpired}>Expire session</button>}
