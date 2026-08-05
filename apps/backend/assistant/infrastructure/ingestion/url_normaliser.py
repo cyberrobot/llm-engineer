@@ -1,7 +1,10 @@
 import ipaddress
-import socket
 from collections.abc import Callable, Iterable
+from time import monotonic
 from urllib.parse import SplitResult, urljoin, urlsplit, urlunsplit
+
+import dns.exception
+import dns.resolver
 
 from assistant.application.ports.website_loader import InvalidWebsiteUrl
 
@@ -9,13 +12,26 @@ AddressResolver = Callable[[str], Iterable[str]]
 Origin = tuple[str, str, int]
 
 
-def resolve_public_addresses(hostname: str) -> tuple[str, ...]:
+def resolve_public_addresses(hostname: str, *, timeout_seconds: float = 5) -> tuple[str, ...]:
     """Resolve all addresses for a hostname without making an HTTP request."""
-    try:
-        records = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        raise InvalidWebsiteUrl("Website hostname could not be resolved.") from exc
-    return tuple(dict.fromkeys(str(record[4][0]) for record in records))
+    if timeout_seconds <= 0:
+        raise ValueError("DNS resolution timeout must be greater than zero.")
+    deadline = monotonic() + timeout_seconds
+    addresses: list[str] = []
+    for record_type in ("A", "AAAA"):
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Website hostname resolution timed out.")
+        try:
+            answer = dns.resolver.resolve(hostname, record_type, lifetime=remaining)
+        except dns.exception.Timeout as exc:
+            raise TimeoutError("Website hostname resolution timed out.") from exc
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoNameservers) as exc:
+            raise InvalidWebsiteUrl("Website hostname could not be resolved.") from exc
+        except dns.resolver.NoAnswer:
+            continue
+        addresses.extend(str(item) for item in answer)
+    return tuple(dict.fromkeys(addresses))
 
 
 def normalise_url(url: str, *, base_url: str | None = None) -> str:
@@ -50,6 +66,14 @@ def normalise_url(url: str, *, base_url: str | None = None) -> str:
 
 def validate_public_url(url: str, resolver: AddressResolver) -> str:
     """Validate the URL and ensure every resolved address is publicly routable."""
+    normalised, _addresses = validate_public_url_addresses(url, resolver)
+    return normalised
+
+
+def validate_public_url_addresses(
+    url: str, resolver: AddressResolver
+) -> tuple[str, tuple[str, ...]]:
+    """Return a canonical URL and the exact public addresses validated for connection."""
     normalised = normalise_url(url)
     hostname = urlsplit(normalised).hostname
     if hostname is None:  # Defensive: normalise_url already enforces this.
@@ -68,6 +92,8 @@ def validate_public_url(url: str, resolver: AddressResolver) -> str:
             addresses = tuple(resolver(lowered_hostname))
         except InvalidWebsiteUrl:
             raise
+        except TimeoutError:
+            raise
         except (OSError, ValueError) as exc:
             raise InvalidWebsiteUrl("Website hostname could not be resolved.") from exc
 
@@ -79,7 +105,7 @@ def validate_public_url(url: str, resolver: AddressResolver) -> str:
         raise InvalidWebsiteUrl("Website hostname resolved to an invalid address.") from exc
     if any(not address.is_global for address in parsed_addresses):
         raise InvalidWebsiteUrl("Website URL must resolve to a public network address.")
-    return normalised
+    return normalised, tuple(str(address) for address in parsed_addresses)
 
 
 def origin_for(url: str) -> Origin:

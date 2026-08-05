@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from assistant.api.dependencies import get_ingestion_service
 from assistant.application.content_processing_service import ContentProcessingService
+from assistant.application.ingestion_retry import IngestionFailureClassifier, IngestionRetryPolicy
 from assistant.application.ingestion_service import IngestionService
 from assistant.application.knowledge_persistence_service import KnowledgePersistenceService
 from assistant.application.retrieval_service import RetrievalService
@@ -40,7 +41,7 @@ from assistant.infrastructure.vector_store import (
     PgVectorStore,
     VectorRecord,
 )
-from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS
+from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS, IngestionRetrySettings
 from infrastructure.database.connection import get_connection, init_db
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "content_processing"
@@ -265,6 +266,85 @@ def test_repeating_unchanged_ingestion_does_not_duplicate_knowledge_or_embedding
         item.id for item in knowledge.chunks["https://example.com/knowledge"]
     ] == initial_chunk_ids
     assert len(provider.batch_calls) == 1
+
+
+def test_synchronous_ingestion_retries_transient_website_status_once():
+    requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            return httpx.Response(503, request=request)
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/html"},
+            content=(FIXTURE_DIR / "business_homepage.html").read_bytes(),
+            request=request,
+        )
+
+    jobs = InMemoryIngestionJobRepository()
+    knowledge = InMemoryKnowledgePersistenceRepository()
+    provider = DeterministicEmbeddingProvider()
+    loader = HttpWebsiteLoader(
+        timeout_seconds=1,
+        user_agent="test",
+        max_pages=1,
+        max_response_size=1024 * 1024,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        resolver=lambda _hostname: PUBLIC_IPS,
+    )
+    delays: list[float] = []
+    service = IngestionService(
+        jobs,
+        loader,
+        processing_service(),
+        persistence_service(provider, knowledge),
+        classifier=IngestionFailureClassifier(),
+        retry_policy=IngestionRetryPolicy(IngestionRetrySettings(2, 0, 1, 0, False)),
+        sleeper=delays.append,
+    )
+
+    job = service.start_ingestion("https://example.com/knowledge")
+
+    assert job.status.value == "completed"
+    assert requests == 2
+    assert delays == [0]
+
+
+def test_synchronous_database_retry_reuses_prepared_embeddings():
+    class TransientRepository(InMemoryKnowledgePersistenceRepository):
+        def __init__(self):
+            super().__init__()
+            self.write_attempts = 0
+
+        def replace_document(self, document, chunks, **kwargs):
+            self.write_attempts += 1
+            if self.write_attempts == 1:
+                raise psycopg.OperationalError("temporary database failure")
+            return super().replace_document(document, chunks, **kwargs)
+
+    jobs = InMemoryIngestionJobRepository()
+    knowledge = TransientRepository()
+    provider = DeterministicEmbeddingProvider()
+    delays: list[float] = []
+    html = (FIXTURE_DIR / "business_homepage.html").read_text()
+    service = IngestionService(
+        jobs,
+        website_loader(html),
+        processing_service(),
+        persistence_service(provider, knowledge),
+        classifier=IngestionFailureClassifier(),
+        retry_policy=IngestionRetryPolicy(IngestionRetrySettings(2, 0, 1, 0, False)),
+        sleeper=delays.append,
+    )
+
+    job = service.start_ingestion("https://example.com/knowledge")
+
+    assert job.status.value == "completed"
+    assert knowledge.write_attempts == 2
+    assert len(provider.batch_calls) == 1
+    assert delays == [0]
 
 
 def test_database_backed_ingestion_is_immediately_retrievable_and_idempotent():

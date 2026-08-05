@@ -32,7 +32,9 @@ def ingestion_client() -> Iterator[tuple[TestClient, InMemoryIngestionJobReposit
         duration_ms=1,
     )
     persistence = Mock()
-    persistence.persist.return_value = KnowledgePersistenceResult(
+    prepared = object()
+    persistence.prepare.return_value = prepared
+    persistence.persist_prepared.return_value = KnowledgePersistenceResult(
         documents_received=1,
         documents_created=1,
         documents_updated=0,
