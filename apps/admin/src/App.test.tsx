@@ -3,11 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import App from './App';
-import { AdminApiError, createAdminApi, type AdminApi, type Administrator } from './api/adminApi';
+import { AdminApiError, createAdminApi, type AdminApi, type Administrator, type Assistant } from './api/adminApi';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 
 const administrator:Administrator={id:'admin-1',email:'admin@example.test',role:'administrator'};
-const assistant={id:'11111111-1111-4111-8111-111111111111',slug:'legal-review',name:'Legal review',status:'inactive' as const,visibility:'private' as const,createdAt:'2026-08-05T09:00:00Z',updatedAt:'2026-08-05T09:00:00Z',concurrencyToken:'2026-08-05T09:00:00Z'};
+const assistant:Assistant={id:'11111111-1111-4111-8111-111111111111',slug:'legal-review',name:'Legal review',status:'inactive',visibility:'private',createdAt:'2026-08-05T09:00:00Z',updatedAt:'2026-08-05T09:00:00Z',concurrencyToken:'2026-08-05T09:00:00Z'};
 function deferred<T>(){let resolve!:(value:T)=>void,reject!:(reason?:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}}
 function renderApp(api:AdminApi,path='/admin'){const router=createMemoryRouter([{path:'*',element:<AuthProvider api={api}><App/></AuthProvider>}],{initialEntries:[path]});return render(<RouterProvider router={router}/>)}
 function apiWith(overrides:Partial<AdminApi>={}):AdminApi{return{currentUser:vi.fn().mockResolvedValue(administrator),login:vi.fn().mockResolvedValue(administrator),logout:vi.fn().mockResolvedValue(undefined),listAssistants:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getAssistant:vi.fn(),createAssistant:vi.fn(),updateAssistant:vi.fn(),deleteAssistant:vi.fn(),...overrides}}
@@ -29,6 +29,23 @@ describe('administrator application workflows',()=>{
     expect(await screen.findByText('No assistants yet')).toBeInTheDocument();
     expect(createAssistant).toHaveBeenCalledWith({name:'Legal review',slug:'legal-review',status:'inactive',visibility:'private'});
   });
+  it('prevents duplicate creates and submits selected enum values',async()=>{
+    const request=deferred<typeof assistant>();
+    const createAssistant=vi.fn(()=>request.promise);
+    renderApp(apiWith({createAssistant}),'/admin/assistants/new');
+    await userEvent.type(await screen.findByLabelText('Name'),'Legal review');
+    await userEvent.type(screen.getByLabelText('Slug'),'legal-review');
+    await userEvent.selectOptions(screen.getByLabelText('Status'),'active');
+    await userEvent.selectOptions(screen.getByLabelText('Visibility'),'public');
+    const save=screen.getByRole('button',{name:'Save assistant'});
+    await userEvent.click(save);
+    expect(screen.getByRole('button',{name:'Saving…'})).toBeDisabled();
+    await userEvent.click(screen.getByRole('button',{name:'Saving…'}));
+    expect(createAssistant).toHaveBeenCalledOnce();
+    expect(createAssistant).toHaveBeenCalledWith({name:'Legal review',slug:'legal-review',status:'active',visibility:'public'});
+    request.resolve({...assistant,status:'active',visibility:'public'});
+    expect(await screen.findByText('No assistants yet')).toBeInTheDocument();
+  });
   it('retains create values and errors without redirecting after a failed save',async()=>{
     renderApp(apiWith({createAssistant:vi.fn().mockRejectedValue(new AdminApiError('conflict','assistant_slug_conflict'))}),'/admin/assistants/new');
     await userEvent.type(await screen.findByLabelText('Name'),'Legal review');
@@ -48,6 +65,29 @@ describe('administrator application workflows',()=>{
     await userEvent.click(screen.getByRole('button',{name:'Save assistant'}));
     expect(await screen.findByRole('alert')).toHaveTextContent('Assistant saved.');
     expect(screen.getByRole('heading',{name:'Edit assistant'})).toBeInTheDocument();
+  });
+  it('prevents duplicate updates while saving',async()=>{
+    const request=deferred<typeof assistant>();
+    const updateAssistant=vi.fn(()=>request.promise);
+    renderApp(apiWith({getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),updateAssistant}),`/admin/assistants/${assistant.id}/edit`);
+    const name=await screen.findByLabelText('Name');
+    await userEvent.clear(name);
+    await userEvent.type(name,'Updated name');
+    await userEvent.click(screen.getByRole('button',{name:'Save assistant'}));
+    expect(screen.getByRole('button',{name:'Saving…'})).toBeDisabled();
+    await userEvent.click(screen.getByRole('button',{name:'Saving…'}));
+    expect(updateAssistant).toHaveBeenCalledOnce();
+    request.resolve({...assistant,name:'Updated name'});
+    expect(await screen.findByRole('alert')).toHaveTextContent('Assistant saved.');
+  });
+  it('retains form values after backend validation rejection',async()=>{
+    renderApp(apiWith({createAssistant:vi.fn().mockRejectedValue(new AdminApiError('invalid_request'))}),'/admin/assistants/new');
+    await userEvent.type(await screen.findByLabelText('Name'),'Legal review');
+    await userEvent.type(screen.getByLabelText('Slug'),'legal-review');
+    await userEvent.click(screen.getByRole('button',{name:'Save assistant'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('request could not be completed');
+    expect(screen.getByLabelText('Name')).toHaveValue('Legal review');
+    expect(screen.getByLabelText('Slug')).toHaveValue('legal-review');
   });
   it('invalidates the authenticated session when a create mutation returns 401',async()=>{
     renderApp(apiWith({createAssistant:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated'))}),'/admin/assistants/new');
@@ -119,6 +159,26 @@ describe('administrator application workflows',()=>{
     await userEvent.click(await screen.findByRole('button',{name:'Activate Legal review'}));
     await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
     expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();
+  });
+  it('confirms public deactivation and retains confirmed state after failure',async()=>{
+    const activePublic={...assistant,status:'active' as const,visibility:'public' as const};
+    const updateAssistant=vi.fn().mockRejectedValue(new AdminApiError('network'));
+    renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[activePublic],total:1,limit:50,offset:0}),updateAssistant}),'/admin/assistants');
+    await userEvent.click(await screen.findByRole('button',{name:'Deactivate Legal review'}));
+    expect(screen.getByRole('dialog')).toHaveTextContent('may make the assistant unavailable through public interfaces');
+    await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('backend could not be reached');
+    expect(screen.getByRole('cell',{name:'Active'})).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Deactivate Legal review'})).toBeInTheDocument();
+    expect(updateAssistant).toHaveBeenCalledWith(assistant.id,{concurrency_token:assistant.concurrencyToken,status:'inactive'});
+  });
+  it('keeps the delete dialog open after a dependency conflict',async()=>{
+    renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0}),deleteAssistant:vi.fn().mockRejectedValue(new AdminApiError('conflict','assistant_has_dependencies'))}),'/admin/assistants');
+    await userEvent.click(await screen.findByRole('button',{name:'Delete Legal review'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('dependent records');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('Legal review')).toBeInTheDocument();
   });
   it('warns before discarding a dirty form',async()=>{
     const confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
