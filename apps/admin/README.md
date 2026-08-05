@@ -1,6 +1,12 @@
 # Redmoor Admin
 
-Private React application foundation for Redmoor administration. It currently provides cookie-backed administrator login, session restoration, logout, protected routing, and honest Dashboard, Assistants, and Knowledge Sources placeholders. Management workflows, account management, ingestion, evaluations, metrics, and operations are explicitly out of scope.
+Private React application for Redmoor administration. It provides cookie-backed administrator authentication and Assistant management for the supported identity and access fields. Knowledge Sources remains a placeholder; ingestion, evaluations, metrics, and operations are out of scope.
+
+## Assistant management
+
+Authenticated administrators can list and create Assistants at `/admin/assistants`, create at `/admin/assistants/new`, and edit at `/admin/assistants/:assistantId/edit`. The UI uses the protected backend `/admin/assistants` contract and supports only name, immutable slug, active/inactive status, and public/private visibility. Creation defaults to inactive/private. Updates use the backend concurrency token; deletion remains subject to seeded-assistant and dependency restrictions.
+
+The feature deliberately excludes knowledge-source assignment, prompts, retrieval configuration, widget settings, preview, analytics, duplication, and bulk actions. Expired sessions return to login, malformed successful responses are rejected, and slug/update conflicts are presented without raw backend details.
 
 ## Local development
 
@@ -12,7 +18,7 @@ The app checks `GET /admin/auth/me` before showing protected content. A confirme
 
 ## Commands
 
-Run `npm run dev:admin`, `npm run lint --workspace @ai-discovery-assistant/admin`, `npm run typecheck --workspace @ai-discovery-assistant/admin`, `npm run test:admin`, `npm run build:admin`, or `npm run storybook --workspace @ai-discovery-assistant/admin` from the repository root.
+Run `npm run dev:admin`, `npm run lint:admin`, `npm run typecheck --workspace @ai-discovery-assistant/admin`, `npm run test:admin`, `npm run build:admin`, or `npm run build-storybook --workspace=apps/admin` from the repository root.
 
 ## Troubleshooting
 

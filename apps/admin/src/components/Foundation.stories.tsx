@@ -12,13 +12,22 @@ const user: Administrator = {
   email: 'admin@example.test',
   role: 'administrator',
 };
+const assistantMethods = {
+  listAssistants: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
+  getAssistant: async () => { throw new AdminApiError('not_found'); },
+  createAssistant: async () => { throw new AdminApiError('invalid_request'); },
+  updateAssistant: async () => { throw new AdminApiError('invalid_request'); },
+  deleteAssistant: async () => undefined,
+};
 
 const authenticatedApi: AdminApi = {
+  ...assistantMethods,
   currentUser: async () => user,
   login: async () => user,
   logout: async () => undefined,
 };
 const unauthenticatedApi: AdminApi = {
+  ...assistantMethods,
   currentUser: async () => {
     throw new AdminApiError('unauthenticated');
   },
@@ -26,11 +35,13 @@ const unauthenticatedApi: AdminApi = {
   logout: async () => undefined,
 };
 const pendingApi: AdminApi = {
+  ...assistantMethods,
   currentUser: () => new Promise<Administrator>(() => undefined),
   login: () => new Promise<Administrator>(() => undefined),
   logout: async () => undefined,
 };
 const restorationFailureApi: AdminApi = {
+  ...assistantMethods,
   currentUser: async () => {
     throw new AdminApiError('network');
   },
