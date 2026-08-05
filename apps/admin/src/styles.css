@@ -242,6 +242,13 @@ td {
   flex-wrap: wrap;
   gap: 0.7rem;
 }
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+}
 .link-button,
 .danger-link {
   background: none;
@@ -322,6 +329,10 @@ dialog::backdrop {
     padding: 1.25rem;
   }
   .page-intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .pagination {
     align-items: flex-start;
     flex-direction: column;
   }

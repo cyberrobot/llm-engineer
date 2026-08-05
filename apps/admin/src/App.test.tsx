@@ -1,15 +1,17 @@
 import { render,screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
-import { describe,expect,it,vi } from 'vitest';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { afterEach,describe,expect,it,vi } from 'vitest';
 import App from './App';
 import { AdminApiError, type AdminApi, type Administrator } from './api/adminApi';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 
 const administrator:Administrator={id:'admin-1',email:'admin@example.test',role:'administrator'};
+const assistant={id:'11111111-1111-4111-8111-111111111111',slug:'legal-review',name:'Legal review',status:'inactive' as const,visibility:'private' as const,createdAt:'2026-08-05T09:00:00Z',updatedAt:'2026-08-05T09:00:00Z',concurrencyToken:'2026-08-05T09:00:00Z'};
 function deferred<T>(){let resolve!:(value:T)=>void,reject!:(reason?:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}}
-function renderApp(api:AdminApi,path='/admin'){return render(<MemoryRouter initialEntries={[path]}><AuthProvider api={api}><App/></AuthProvider></MemoryRouter>)}
+function renderApp(api:AdminApi,path='/admin'){const router=createMemoryRouter([{path:'*',element:<AuthProvider api={api}><App/></AuthProvider>}],{initialEntries:[path]});return render(<RouterProvider router={router}/>)}
 function apiWith(overrides:Partial<AdminApi>={}):AdminApi{return{currentUser:vi.fn().mockResolvedValue(administrator),login:vi.fn().mockResolvedValue(administrator),logout:vi.fn().mockResolvedValue(undefined),listAssistants:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getAssistant:vi.fn(),createAssistant:vi.fn(),updateAssistant:vi.fn(),deleteAssistant:vi.fn(),...overrides}}
+afterEach(()=>vi.restoreAllMocks());
 
 describe('administrator application workflows',()=>{
   it('hides protected content until session restoration completes',async()=>{const session=deferred<Administrator>();renderApp(apiWith({currentUser:vi.fn(()=>session.promise)}));expect(screen.getByRole('heading',{name:'Restoring your session'})).toBeInTheDocument();expect(screen.queryByText(/Dashboard functionality/)).not.toBeInTheDocument();session.resolve(administrator);expect(await screen.findByText('Dashboard functionality is not implemented yet.')).toBeInTheDocument()});
@@ -19,7 +21,7 @@ describe('administrator application workflows',()=>{
   it('preserves email and safely reports invalid credentials',async()=>{renderApp(apiWith({currentUser:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated')),login:vi.fn().mockRejectedValue(new AdminApiError('invalid_credentials'))}),'/login');await userEvent.type(await screen.findByLabelText('Email address'),'admin@example.test');await userEvent.type(screen.getByLabelText('Password'),'wrong{Enter}');expect(await screen.findByRole('alert')).toHaveTextContent('email or password is invalid');expect(screen.getByLabelText('Email address')).toHaveValue('admin@example.test');expect(screen.getByLabelText('Password')).toHaveValue('')});
   it('renders shell landmarks and logs out even when the session is already expired',async()=>{const logout=vi.fn().mockResolvedValue(undefined);renderApp(apiWith({logout}));expect(await screen.findByRole('navigation',{name:'Primary'})).toBeInTheDocument();expect(screen.getByText('admin@example.test')).toBeInTheDocument();await userEvent.click(screen.getByRole('button',{name:'Sign out'}));expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();expect(logout).toHaveBeenCalledOnce()});
   it('returns to the assistants page after creating an assistant',async()=>{
-    const createAssistant=vi.fn().mockResolvedValue({id:'11111111-1111-4111-8111-111111111111',slug:'legal-review',name:'Legal review',status:'inactive',visibility:'private',createdAt:'2026-08-05T09:00:00Z',updatedAt:'2026-08-05T09:00:00Z',concurrencyToken:'2026-08-05T09:00:00Z'});
+    const createAssistant=vi.fn().mockResolvedValue(assistant);
     renderApp(apiWith({createAssistant}),'/admin/assistants/new');
     await userEvent.type(await screen.findByLabelText('Name'),'Legal review');
     await userEvent.type(screen.getByLabelText('Slug'),'legal-review');
@@ -27,9 +29,73 @@ describe('administrator application workflows',()=>{
     expect(await screen.findByText('No assistants yet')).toBeInTheDocument();
     expect(createAssistant).toHaveBeenCalledWith({name:'Legal review',slug:'legal-review',status:'inactive',visibility:'private'});
   });
+  it('retains create values and errors without redirecting after a failed save',async()=>{
+    renderApp(apiWith({createAssistant:vi.fn().mockRejectedValue(new AdminApiError('conflict','assistant_slug_conflict'))}),'/admin/assistants/new');
+    await userEvent.type(await screen.findByLabelText('Name'),'Legal review');
+    await userEvent.type(screen.getByLabelText('Slug'),'legal-review');
+    await userEvent.click(screen.getByRole('button',{name:'Save assistant'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('slug is already in use');
+    expect(screen.getByLabelText('Name')).toHaveValue('Legal review');
+    expect(screen.getByRole('heading',{name:'Create assistant'})).toBeInTheDocument();
+  });
+  it('keeps the edit page open after a successful update',async()=>{
+    const updateAssistant=vi.fn().mockResolvedValue({...assistant,name:'Updated name',updatedAt:'2026-08-05T10:00:00Z',concurrencyToken:'2026-08-05T10:00:00Z'});
+    renderApp(apiWith({getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),updateAssistant}),`/admin/assistants/${assistant.id}/edit`);
+    const name=await screen.findByLabelText('Name');
+    await userEvent.clear(name);
+    await userEvent.type(name,'Updated name');
+    await userEvent.click(screen.getByRole('button',{name:'Save assistant'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Assistant saved.');
+    expect(screen.getByRole('heading',{name:'Edit assistant'})).toBeInTheDocument();
+  });
+  it('invalidates the authenticated session when a create mutation returns 401',async()=>{
+    renderApp(apiWith({createAssistant:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated'))}),'/admin/assistants/new');
+    await userEvent.type(await screen.findByLabelText('Name'),'Legal review');
+    await userEvent.type(screen.getByLabelText('Slug'),'legal-review');
+    await userEvent.click(screen.getByRole('button',{name:'Save assistant'}));
+    expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();
+  });
+  it('pages through the complete assistant collection using backend offsets',async()=>{
+    const listAssistants=vi.fn().mockResolvedValueOnce({items:[assistant],total:51,limit:50,offset:0}).mockResolvedValueOnce({items:[{...assistant,id:'22222222-2222-4222-8222-222222222222',name:'Page two'}],total:51,limit:50,offset:50});
+    renderApp(apiWith({listAssistants}),'/admin/assistants');
+    expect(await screen.findByText('Showing 1–1 of 51')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'Next'}));
+    expect(await screen.findByText('Page two')).toBeInTheDocument();
+    expect(listAssistants).toHaveBeenLastCalledWith({limit:50,offset:50},expect.any(AbortSignal));
+  });
+  it('retries a failed assistant detail request and links not-found routes to the list',async()=>{
+    const getAssistant=vi.fn().mockRejectedValueOnce(new AdminApiError('network')).mockResolvedValueOnce({...assistant,knowledgeSourceCount:0,deletionAllowed:true});
+    renderApp(apiWith({getAssistant}),`/admin/assistants/${assistant.id}/edit`);
+    await userEvent.click(await screen.findByRole('button',{name:'Try again'}));
+    expect(await screen.findByDisplayValue('Legal review')).toBeInTheDocument();
+    expect(getAssistant).toHaveBeenCalledTimes(2);
+  });
+  it('links an unknown assistant back to the assistants list',async()=>{
+    renderApp(apiWith({getAssistant:vi.fn().mockRejectedValue(new AdminApiError('not_found','assistant_not_found'))}),`/admin/assistants/${assistant.id}/edit`);
+    const link=await screen.findByRole('link',{name:'Return to assistants'});
+    expect(link).toHaveAttribute('href','/admin/assistants');
+  });
+  it('invalidates the session when a status mutation returns 401',async()=>{
+    renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0}),updateAssistant:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated'))}),'/admin/assistants');
+    await userEvent.click(await screen.findByRole('button',{name:'Activate Legal review'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();
+  });
+  it('warns before discarding a dirty form',async()=>{
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
+    renderApp(apiWith(),'/admin/assistants/new');
+    await userEvent.type(await screen.findByLabelText('Name'),'Unsaved');
+    await userEvent.click(screen.getByRole('link',{name:'Cancel'}));
+    expect(confirm).toHaveBeenCalledWith('Discard your unsaved assistant changes?');
+    expect(screen.getByDisplayValue('Unsaved')).toBeInTheDocument();
+    confirm.mockReturnValue(true);
+    await userEvent.click(screen.getByRole('link',{name:'Cancel'}));
+    expect(await screen.findByText('No assistants yet')).toBeInTheDocument();
+  });
   it('hides protected content when an authenticated request reports an expired session',async()=>{
     function ExpireSession(){const auth=useAuth();return <button onClick={auth.sessionExpired}>Expire session</button>}
-    render(<MemoryRouter initialEntries={['/admin']}><AuthProvider api={apiWith()} initialUser={administrator}><ExpireSession/><App/></AuthProvider></MemoryRouter>);
+    const router=createMemoryRouter([{path:'*',element:<AuthProvider api={apiWith()} initialUser={administrator}><ExpireSession/><App/></AuthProvider>}],{initialEntries:['/admin']});
+    render(<RouterProvider router={router}/>);
     expect(screen.getByText('Dashboard functionality is not implemented yet.')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button',{name:'Expire session'}));
     expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();

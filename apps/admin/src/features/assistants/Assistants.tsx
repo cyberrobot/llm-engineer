@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import {
+  Link,
+  unstable_usePrompt as usePrompt,
+  useBeforeUnload,
+  useNavigate,
+  useParams,
+} from 'react-router-dom';
 import {
   AdminApiError,
   type Assistant,
@@ -43,21 +49,27 @@ export function Badge({
 
 export function AssistantsPage() {
   const { api } = useAuth();
-  const [items, setItems] = useState<Assistant[] | null>(null);
+  const [page, setPage] = useState<{
+    items: Assistant[];
+    total: number;
+    limit: number;
+    offset: number;
+  } | null>(null);
   const [error, setError] = useState<unknown>();
   const [attempt, setAttempt] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [action, setAction] = useState<Assistant>();
   useSessionError(error);
   useEffect(() => {
     const controller = new AbortController();
     api
-      .listAssistants({}, controller.signal)
-      .then((x) => setItems(x.items))
+      .listAssistants({ limit: 50, offset }, controller.signal)
+      .then(setPage)
       .catch((e) => {
         if (e?.name !== 'AbortError') setError(e);
       });
     return () => controller.abort();
-  }, [api, attempt]);
+  }, [api, attempt, offset]);
   if (error)
     return (
       <State
@@ -65,12 +77,12 @@ export function AssistantsPage() {
         text={message(error)}
         action={() => {
           setError(undefined);
-          setItems(null);
+          setPage(null);
           setAttempt((x) => x + 1);
         }}
       />
     );
-  if (!items) return <p role="status">Loading assistants…</p>;
+  if (!page) return <p role="status">Loading assistants…</p>;
   return (
     <section className="feature">
       <div className="page-intro">
@@ -82,7 +94,7 @@ export function AssistantsPage() {
           Create assistant
         </Link>
       </div>
-      {items.length === 0 ? (
+      {page.items.length === 0 && page.total === 0 ? (
         <div className="empty">
           <h2>No assistants yet</h2>
           <p>Create the first assistant to get started.</p>
@@ -101,7 +113,7 @@ export function AssistantsPage() {
               </tr>
             </thead>
             <tbody>
-              {items.map((a) => (
+              {page.items.map((a) => (
                 <tr key={a.id}>
                   <td>{a.name}</td>
                   <td>
@@ -118,12 +130,14 @@ export function AssistantsPage() {
                     <Link to={`/admin/assistants/${a.id}/edit`}>Edit</Link>
                     <button
                       className="link-button"
+                      aria-label={`${a.status === 'active' ? 'Deactivate' : 'Activate'} ${a.name}`}
                       onClick={() => setAction(a)}
                     >
                       {a.status === 'active' ? 'Deactivate' : 'Activate'}
                     </button>
                     <button
                       className="danger-link"
+                      aria-label={`Delete ${a.name}`}
                       onClick={() =>
                         setAction({ ...a, name: `DELETE:${a.name}` })
                       }
@@ -136,6 +150,34 @@ export function AssistantsPage() {
             </tbody>
           </table>
         </div>
+      )}
+      {page.total > page.limit && (
+        <nav className="pagination" aria-label="Assistants pages">
+          <p>
+            Showing {page.offset + 1}–
+            {Math.min(page.offset + page.items.length, page.total)} of {page.total}
+          </p>
+          <div className="actions">
+            <button
+              disabled={page.offset === 0}
+              onClick={() => {
+                setPage(null);
+                setOffset(Math.max(0, page.offset - page.limit));
+              }}
+            >
+              Previous
+            </button>
+            <button
+              disabled={page.offset + page.items.length >= page.total}
+              onClick={() => {
+                setPage(null);
+                setOffset(page.offset + page.limit);
+              }}
+            >
+              Next
+            </button>
+          </div>
+        </nav>
       )}{' '}
       {action && (
         <ActionDialog
@@ -155,16 +197,19 @@ function State({
   title,
   text,
   action,
+  link,
 }: {
   title: string;
   text: string;
   action?: () => void;
+  link?: { label: string; to: string };
 }) {
   return (
     <section className="empty" role="alert">
       <h2>{title}</h2>
       <p>{text}</p>
       {action && <button onClick={action}>Try again</button>}
+      {link && <Link to={link.to}>{link.label}</Link>}
     </section>
   );
 }
@@ -177,7 +222,7 @@ function ActionDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const { api } = useAuth();
+  const auth = useAuth();
   const ref = useRef<HTMLDialogElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -188,14 +233,18 @@ function ActionDialog({
     setPending(true);
     setError('');
     try {
-      if (deleting) await api.deleteAssistant(assistant.id);
+      if (deleting) await auth.api.deleteAssistant(assistant.id);
       else
-        await api.updateAssistant(assistant.id, {
+        await auth.api.updateAssistant(assistant.id, {
           concurrency_token: assistant.concurrencyToken,
           status: assistant.status === 'active' ? 'inactive' : 'active',
         });
       onDone();
     } catch (e) {
+      if (e instanceof AdminApiError && e.kind === 'unauthenticated') {
+        auth.sessionExpired();
+        return;
+      }
       setError(
         e instanceof AdminApiError && e.kind === 'conflict'
           ? e.code === 'assistant_has_dependencies'
@@ -245,18 +294,40 @@ function ActionDialog({
 }
 
 export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
-  const { api } = useAuth();
+  const auth = useAuth();
+  const { api } = auth;
   const { assistantId } = useParams();
   const nav = useNavigate();
   const [detail, setDetail] = useState<AssistantDetail>();
   const [loadError, setLoadError] = useState<unknown>();
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [status, setStatus] = useState<AssistantStatus>('inactive');
   const [visibility, setVisibility] = useState<AssistantVisibility>('private');
   const [pending, setPending] = useState(false);
   const [formError, setFormError] = useState('');
+  const [leavingAfterCreate, setLeavingAfterCreate] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
+  const dirty = detail
+    ? name !== detail.name ||
+      status !== detail.status ||
+      visibility !== detail.visibility
+    : name !== '' || slug !== '' || status !== 'inactive' || visibility !== 'private';
+  const shouldBlock = dirty && !leavingAfterCreate;
+  usePrompt({
+    message: 'Discard your unsaved assistant changes?',
+    when: shouldBlock,
+  });
+  useBeforeUnload(
+    (event) => {
+      if (shouldBlock) event.preventDefault();
+    },
+    { capture: true },
+  );
+  useEffect(() => {
+    if (leavingAfterCreate) nav('/admin/assistants');
+  }, [leavingAfterCreate, nav]);
   useSessionError(loadError);
   useEffect(() => {
     if (mode === 'create' || !assistantId) return;
@@ -274,7 +345,7 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
         if (e?.name !== 'AbortError') setLoadError(e);
       });
     return () => c.abort();
-  }, [api, assistantId, mode]);
+  }, [api, assistantId, loadAttempt, mode]);
   if (
     mode === 'edit' &&
     loadError instanceof AdminApiError &&
@@ -284,10 +355,20 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
       <State
         title="Assistant not found"
         text="The requested assistant does not exist."
+        link={{ label: 'Return to assistants', to: '/admin/assistants' }}
       />
     );
   if (mode === 'edit' && loadError)
-    return <State title="Unable to load assistant" text={message(loadError)} />;
+    return (
+      <State
+        title="Unable to load assistant"
+        text={message(loadError)}
+        action={() => {
+          setLoadError(undefined);
+          setLoadAttempt((value) => value + 1);
+        }}
+      />
+    );
   if (mode === 'edit' && !detail)
     return <p role="status">Loading assistant…</p>;
   async function submit(e: FormEvent) {
@@ -314,6 +395,7 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
           status,
           visibility,
         });
+        setLeavingAfterCreate(true);
       } else if (detail) {
         const updated = await api.updateAssistant(detail.id, {
           concurrency_token: detail.concurrencyToken,
@@ -326,7 +408,7 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
       }
     } catch (err) {
       if (err instanceof AdminApiError && err.kind === 'unauthenticated')
-        return;
+        return auth.sessionExpired();
       setFormError(
         err instanceof AdminApiError && err.code === 'assistant_slug_conflict'
           ? 'That slug is already in use.'
@@ -338,7 +420,6 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
       errorRef.current?.focus();
     } finally {
       setPending(false);
-      nav('/admin/assistants');
     }
   }
   return (
