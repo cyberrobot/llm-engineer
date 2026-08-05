@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review GitHub PR"
+  short_description: "Measure PR completion against its specification"
+  default_prompt: "Use $gh-review-pr to review this PR against its specification and report completion, gaps, and approvability."
