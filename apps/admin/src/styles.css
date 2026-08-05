@@ -200,6 +200,22 @@ select:focus-visible,
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.filters label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 700;
+}
+.filters select {
+  padding: 0.55rem;
+  border: 1px solid #80918b;
+  border-radius: 0.4rem;
+}
 .button {
   text-decoration: none;
   display: inline-block;

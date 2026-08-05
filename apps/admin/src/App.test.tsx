@@ -35,6 +35,7 @@ describe('administrator application workflows',()=>{
     await userEvent.type(screen.getByLabelText('Slug'),'legal-review');
     await userEvent.click(screen.getByRole('button',{name:'Save assistant'}));
     expect(await screen.findByRole('alert')).toHaveTextContent('slug is already in use');
+    expect(screen.getByRole('alert')).toHaveFocus();
     expect(screen.getByLabelText('Name')).toHaveValue('Legal review');
     expect(screen.getByRole('heading',{name:'Create assistant'})).toBeInTheDocument();
   });
@@ -61,7 +62,42 @@ describe('administrator application workflows',()=>{
     expect(await screen.findByText('Showing 1–1 of 51')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button',{name:'Next'}));
     expect(await screen.findByText('Page two')).toBeInTheDocument();
-    expect(listAssistants).toHaveBeenLastCalledWith({limit:50,offset:50},expect.any(AbortSignal));
+    expect(listAssistants).toHaveBeenLastCalledWith({limit:50,offset:50,status:undefined,visibility:undefined},expect.any(AbortSignal));
+  });
+  it('filters assistants through the supported backend contract',async()=>{
+    const listAssistants=vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0});
+    renderApp(apiWith({listAssistants}),'/admin/assistants');
+    await screen.findByText('No assistants yet');
+    await userEvent.selectOptions(screen.getByLabelText('Status'),'active');
+    await userEvent.selectOptions(await screen.findByLabelText('Visibility'),'private');
+    expect(listAssistants).toHaveBeenLastCalledWith({limit:50,offset:0,status:'active',visibility:'private'},expect.any(AbortSignal));
+  });
+  it('returns to the preceding page and restores stable focus after deleting the last item',async()=>{
+    const pageTwo={...assistant,id:'22222222-2222-4222-8222-222222222222',name:'Page two'};
+    const listAssistants=vi.fn()
+      .mockResolvedValueOnce({items:[assistant],total:51,limit:50,offset:0})
+      .mockResolvedValueOnce({items:[pageTwo],total:51,limit:50,offset:50})
+      .mockResolvedValueOnce({items:[],total:50,limit:50,offset:50})
+      .mockResolvedValueOnce({items:[assistant],total:50,limit:50,offset:0});
+    renderApp(apiWith({listAssistants,deleteAssistant:vi.fn().mockResolvedValue(undefined)}),'/admin/assistants');
+    await userEvent.click(await screen.findByRole('button',{name:'Next'}));
+    await userEvent.click(await screen.findByRole('button',{name:'Delete Page two'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    const notice=await screen.findByRole('status');
+    expect(notice).toHaveTextContent('Assistant deleted. List refreshed.');
+    expect(notice).toHaveFocus();
+    expect(await screen.findByText('Legal review')).toBeInTheDocument();
+    expect(listAssistants).toHaveBeenLastCalledWith({limit:50,offset:0,status:undefined,visibility:undefined},expect.any(AbortSignal));
+  });
+  it('maps protected and already-deleted assistants to their contractual outcomes',async()=>{
+    const deleteAssistant=vi.fn().mockRejectedValueOnce(new AdminApiError('conflict','protected_assistant')).mockRejectedValueOnce(new AdminApiError('not_found','assistant_not_found'));
+    const listAssistants=vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0});
+    renderApp(apiWith({listAssistants,deleteAssistant}),'/admin/assistants');
+    await userEvent.click(await screen.findByRole('button',{name:'Delete Legal review'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('seeded assistant is protected');
+    await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
+    expect(await screen.findByRole('status')).toHaveTextContent('Assistant deleted. List refreshed.');
   });
   it('retries a failed assistant detail request and links not-found routes to the list',async()=>{
     const getAssistant=vi.fn().mockRejectedValueOnce(new AdminApiError('network')).mockResolvedValueOnce({...assistant,knowledgeSourceCount:0,deletionAllowed:true});

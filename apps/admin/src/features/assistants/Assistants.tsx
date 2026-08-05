@@ -58,18 +58,39 @@ export function AssistantsPage() {
   const [error, setError] = useState<unknown>();
   const [attempt, setAttempt] = useState(0);
   const [offset, setOffset] = useState(0);
+  const [statusFilter, setStatusFilter] = useState<AssistantStatus | ''>('');
+  const [visibilityFilter, setVisibilityFilter] = useState<AssistantVisibility | ''>('');
   const [action, setAction] = useState<Assistant>();
+  const [notice, setNotice] = useState('');
+  const noticeRef = useRef<HTMLParagraphElement>(null);
   useSessionError(error);
+  useEffect(() => {
+    if (notice) noticeRef.current?.focus();
+  }, [notice]);
   useEffect(() => {
     const controller = new AbortController();
     api
-      .listAssistants({ limit: 50, offset }, controller.signal)
-      .then(setPage)
+      .listAssistants(
+        {
+          limit: 50,
+          offset,
+          status: statusFilter || undefined,
+          visibility: visibilityFilter || undefined,
+        },
+        controller.signal,
+      )
+      .then((result) => {
+        if (result.items.length === 0 && offset > 0 && offset >= result.total) {
+          setOffset(result.total === 0 ? 0 : Math.floor((result.total - 1) / result.limit) * result.limit);
+          return;
+        }
+        setPage(result);
+      })
       .catch((e) => {
         if (e?.name !== 'AbortError') setError(e);
       });
     return () => controller.abort();
-  }, [api, attempt, offset]);
+  }, [api, attempt, offset, statusFilter, visibilityFilter]);
   if (error)
     return (
       <State
@@ -94,6 +115,43 @@ export function AssistantsPage() {
           Create assistant
         </Link>
       </div>
+      <div className="filters" aria-label="Filter assistants">
+        <label>
+          Status
+          <select
+            value={statusFilter}
+            onChange={(event) => {
+              setPage(null);
+              setOffset(0);
+              setStatusFilter(event.target.value as AssistantStatus | '');
+            }}
+          >
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </label>
+        <label>
+          Visibility
+          <select
+            value={visibilityFilter}
+            onChange={(event) => {
+              setPage(null);
+              setOffset(0);
+              setVisibilityFilter(event.target.value as AssistantVisibility | '');
+            }}
+          >
+            <option value="">All visibilities</option>
+            <option value="public">Public</option>
+            <option value="private">Private</option>
+          </select>
+        </label>
+      </div>
+      {notice && (
+        <p ref={noticeRef} tabIndex={-1} className="success" role="status">
+          {notice}
+        </p>
+      )}
       {page.items.length === 0 && page.total === 0 ? (
         <div className="empty">
           <h2>No assistants yet</h2>
@@ -183,8 +241,9 @@ export function AssistantsPage() {
         <ActionDialog
           assistant={action}
           onClose={() => setAction(undefined)}
-          onDone={() => {
+          onDone={(deleted) => {
             setAction(undefined);
+            setNotice(deleted ? 'Assistant deleted. List refreshed.' : 'Assistant status updated.');
             setAttempt((x) => x + 1);
           }}
         />
@@ -220,7 +279,7 @@ function ActionDialog({
 }: {
   assistant: Assistant;
   onClose: () => void;
-  onDone: () => void;
+  onDone: (deleted: boolean) => void;
 }) {
   const auth = useAuth();
   const ref = useRef<HTMLDialogElement>(null);
@@ -239,16 +298,22 @@ function ActionDialog({
           concurrency_token: assistant.concurrencyToken,
           status: assistant.status === 'active' ? 'inactive' : 'active',
         });
-      onDone();
+      onDone(deleting);
     } catch (e) {
       if (e instanceof AdminApiError && e.kind === 'unauthenticated') {
         auth.sessionExpired();
+        return;
+      }
+      if (deleting && e instanceof AdminApiError && e.kind === 'not_found') {
+        onDone(true);
         return;
       }
       setError(
         e instanceof AdminApiError && e.kind === 'conflict'
           ? e.code === 'assistant_has_dependencies'
             ? 'This assistant cannot be deleted while it has dependent records.'
+            : e.code === 'protected_assistant'
+              ? 'This seeded assistant is protected and cannot be deleted.'
             : 'The assistant changed on the server. Refresh and try again.'
           : message(e),
       );
@@ -309,6 +374,9 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
   const [formError, setFormError] = useState('');
   const [leavingAfterCreate, setLeavingAfterCreate] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (formError) errorRef.current?.focus();
+  }, [formError]);
   const dirty = detail
     ? name !== detail.name ||
       status !== detail.status ||
@@ -376,14 +444,12 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
     setFormError('');
     if (!name.trim()) {
       setFormError('Name is required.');
-      errorRef.current?.focus();
       return;
     }
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
       setFormError(
         'Slug must contain lowercase letters or numbers separated by hyphens.',
       );
-      errorRef.current?.focus();
       return;
     }
     setPending(true);
@@ -417,7 +483,6 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
             ? 'This assistant was updated elsewhere. Reload before saving again.'
             : message(err),
       );
-      errorRef.current?.focus();
     } finally {
       setPending(false);
     }
