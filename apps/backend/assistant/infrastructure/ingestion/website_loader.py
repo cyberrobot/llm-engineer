@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from time import monotonic
-from urllib.parse import urljoin
+from urllib.parse import SplitResult, urljoin, urlsplit, urlunsplit
 
 import httpx
 
@@ -23,6 +23,7 @@ from assistant.infrastructure.ingestion.url_normaliser import (
     origin_for,
     resolve_public_addresses,
     validate_public_url,
+    validate_public_url_addresses,
 )
 
 logger = logging.getLogger(__name__)
@@ -205,20 +206,26 @@ class HttpWebsiteLoader(WebsiteLoader):
         current_url = url
         for _redirect_count in range(MAX_REDIRECTS + 1):
             try:
-                safe_url = validate_public_url(current_url, self._resolver)
+                safe_url, addresses = validate_public_url_addresses(current_url, self._resolver)
             except TimeoutError as exc:
                 raise _PageTimeout("Website hostname resolution timed out.") from exc
             if allowed_origin is not None and origin_for(safe_url) != allowed_origin:
                 raise _PageFailure("Redirect left the crawl origin.")
+            parsed_safe_url = urlsplit(safe_url)
+            if parsed_safe_url.hostname is None:  # Defensive: validation requires a hostname.
+                raise _PageFailure("Website URL did not include a hostname.")
             try:
                 with self._client.stream(
                     "GET",
-                    safe_url,
+                    self._pinned_url(safe_url, addresses[0]),
                     headers={
                         "User-Agent": self._user_agent,
                         "Accept": "text/html,application/xhtml+xml",
+                        "Host": parsed_safe_url.netloc,
+                        "Connection": "close",
                     },
                     timeout=self._timeout_seconds,
+                    extensions={"sni_hostname": parsed_safe_url.hostname.encode("ascii")},
                 ) as response:
                     if response.is_redirect:
                         location = response.headers.get("Location")
@@ -257,7 +264,7 @@ class HttpWebsiteLoader(WebsiteLoader):
                     except (LookupError, UnicodeDecodeError):
                         html = bytes(body).decode("utf-8", errors="replace")
                     return _DownloadedPage(
-                        url=str(response.url),
+                        url=safe_url,
                         status_code=response.status_code,
                         content_type=content_type,
                         html=html,
@@ -268,6 +275,13 @@ class HttpWebsiteLoader(WebsiteLoader):
             except httpx.HTTPError as exc:
                 raise _PageFailure("Website request failed.") from exc
         raise _PageFailure("Website exceeded the redirect limit.")
+
+    @staticmethod
+    def _pinned_url(url: str, address: str) -> str:
+        parsed = urlsplit(url)
+        display_address = f"[{address}]" if ":" in address else address
+        netloc = display_address if parsed.port is None else f"{display_address}:{parsed.port}"
+        return urlunsplit(SplitResult(parsed.scheme, netloc, parsed.path, parsed.query, ""))
 
     def _enqueue_links(
         self,

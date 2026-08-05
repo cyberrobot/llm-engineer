@@ -138,22 +138,28 @@ def test_ingestion_records_success_metrics_for_observable_pipeline_outcomes():
             duration_ms=7,
         )
     )
+    prepared = object()
     persistence = SimpleNamespace(
-        persist=lambda _result: KnowledgePersistenceResult(
-            documents_received=1,
-            documents_created=1,
-            documents_updated=0,
-            documents_unchanged=0,
-            chunks_received=3,
-            chunks_created=3,
-            chunks_updated=0,
-            chunks_unchanged=0,
-            chunks_removed=0,
-            embeddings_generated=3,
-            duration_ms=11,
-            embedding_duration_ms=5,
-            database_duration_ms=6,
-        )
+        prepare=lambda _result: prepared,
+        persist_prepared=lambda value, **_kwargs: (
+            KnowledgePersistenceResult(
+                documents_received=1,
+                documents_created=1,
+                documents_updated=0,
+                documents_unchanged=0,
+                chunks_received=3,
+                chunks_created=3,
+                chunks_updated=0,
+                chunks_unchanged=0,
+                chunks_removed=0,
+                embeddings_generated=3,
+                duration_ms=11,
+                embedding_duration_ms=5,
+                database_duration_ms=6,
+            )
+            if value is prepared
+            else pytest.fail("prepared embeddings were not reused")
+        ),
     )
 
     IngestionService(repository, loader, processor, persistence, metrics=metrics).start_ingestion(

@@ -71,7 +71,10 @@ def test_load_follows_safe_redirect_and_uses_final_url():
 
     documents = make_loader(handler).load("https://example.com")
 
-    assert requested_urls == ["https://example.com/", "https://example.com/docs"]
+    assert requested_urls == [
+        f"https://{PUBLIC_IPS[0]}/",
+        f"https://{PUBLIC_IPS[0]}/docs",
+    ]
     assert [document.url for document in documents] == ["https://example.com/docs"]
 
 
@@ -91,8 +94,14 @@ def test_crawl_removes_fragments_ignores_duplicates_and_unsupported_links():
 
     documents = make_loader(handler).load("https://example.com/#top")
 
-    assert requested_urls == ["https://example.com/", "https://example.com/guide"]
-    assert [document.url for document in documents] == requested_urls
+    assert requested_urls == [
+        f"https://{PUBLIC_IPS[0]}/",
+        f"https://{PUBLIC_IPS[0]}/guide",
+    ]
+    assert [document.url for document in documents] == [
+        "https://example.com/",
+        "https://example.com/guide",
+    ]
 
 
 def test_crawl_stays_on_same_origin():
@@ -109,7 +118,7 @@ def test_crawl_stays_on_same_origin():
         "https://example.com/",
         "https://example.com/local",
     ]
-    assert requested_hosts == ["example.com", "example.com"]
+    assert requested_hosts == [PUBLIC_IPS[0], PUBLIC_IPS[0]]
 
 
 def test_crawl_obeys_page_request_limit_deterministically():
@@ -294,7 +303,26 @@ def test_redirect_to_private_host_is_rejected_before_following():
     with pytest.raises(WebsiteLoadError, match="root page"):
         make_loader(handler).load("https://example.com")
 
-    assert requested_urls == ["https://example.com/"]
+    assert requested_urls == [f"https://{PUBLIC_IPS[0]}/"]
+
+
+def test_request_connects_to_validated_address_with_original_host_and_tls_sni():
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed["url"] = str(request.url)
+        observed["host"] = request.headers["Host"]
+        observed["sni"] = request.extensions["sni_hostname"]
+        return html_response(request, "<html>safe</html>")
+
+    documents = make_loader(handler, max_pages=1).load("https://example.com/docs")
+
+    assert observed == {
+        "url": f"https://{PUBLIC_IPS[0]}/docs",
+        "host": "example.com",
+        "sni": b"example.com",
+    }
+    assert documents[0].url == "https://example.com/docs"
 
 
 def test_crawl_emits_structured_lifecycle_logs_without_page_contents(caplog):

@@ -32,6 +32,7 @@ from assistant.infrastructure.repositories.ingestion_worker import (
 )
 from core.config import DATABASE_URL, get_ingestion_worker_settings, validate_startup_configuration
 from core.logging import configure_logging
+from core.resources import close_cached_dependency
 from infrastructure.database.connection import init_db
 
 logger = logging.getLogger(__name__)
@@ -219,18 +220,8 @@ def main() -> int:
         worker.run(stop)
         return 0
     finally:
-        if get_website_loader.cache_info().currsize:
-            loader = get_website_loader()
-            close = getattr(loader, "close", None)
-            if close is not None:
-                close()
-            get_website_loader.cache_clear()
-        if get_ingestion_ai_provider.cache_info().currsize:
-            provider = get_ingestion_ai_provider()
-            close = getattr(provider, "close", None)
-            if close is not None:
-                close()
-            get_ingestion_ai_provider.cache_clear()
+        close_cached_dependency(get_website_loader, "website_loader")
+        close_cached_dependency(get_ingestion_ai_provider, "ingestion_ai_provider")
 
 
 if __name__ == "__main__":

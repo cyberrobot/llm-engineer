@@ -111,9 +111,17 @@ class IngestionService:
 
             stage = "knowledge_persistence"
             failure_message = "Knowledge persistence failed."
-            persistence_result = self._run_stage(
-                lambda: self._knowledge_persistence_service.persist(processing_result),
+            persistence_started_at = monotonic()
+            prepared = self._run_stage(
+                lambda: self._knowledge_persistence_service.prepare(processing_result),
                 step=IngestionStep.embed,
+                job_id=job.id,
+            )
+            persistence_result = self._run_stage(
+                lambda: self._knowledge_persistence_service.persist_prepared(
+                    prepared, started_at=persistence_started_at
+                ),
+                step=IngestionStep.persist,
                 job_id=job.id,
             )
             persistence_duration_ms = persistence_result.duration_ms

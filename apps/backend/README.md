@@ -455,12 +455,15 @@ External operations are bounded:
 
 - website requests and their preliminary DNS resolution use `INGESTION_TIMEOUT_SECONDS`;
   connection establishment uses HTTPX retries capped by `INGESTION_HTTP_RETRIES`, while ingestion
-  orchestration retries only classified transient failures such as HTTP 429/502/503/504
+  orchestration retries only classified transient failures such as HTTP 429/502/503/504. Each
+  request connects to an address that passed public-network validation while retaining the original
+  hostname for TLS SNI and the HTTP `Host` header.
 - OpenAI requests use `AI_REQUEST_TIMEOUT`; ingestion embedding calls disable SDK retries so the
   durable ingestion retry policy owns attempts and backoff without compounding them, while other AI
   workflows retain the SDK policy capped by `AI_MAX_RETRIES`
 - PostgreSQL connections use `DATABASE_CONNECT_TIMEOUT_SECONDS`, while statements use
-  `DATABASE_OPERATION_TIMEOUT_SECONDS`
+  `DATABASE_OPERATION_TIMEOUT_SECONDS`. A transient persistence retry reuses already prepared
+  embeddings rather than calling the embedding provider again.
 
 The provider and website HTTP clients are process singletons and are closed during graceful FastAPI
 shutdown. Database repositories use context-managed connections and cursors, and persistence keeps

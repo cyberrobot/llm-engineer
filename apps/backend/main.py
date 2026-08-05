@@ -1,4 +1,3 @@
-import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -23,10 +22,9 @@ from core.config import get_admin_authentication_settings, validate_startup_conf
 from core.correlation import RequestCorrelationMiddleware
 from core.exceptions import register_exception_handlers
 from core.logging import configure_logging
+from core.resources import close_cached_dependency
 from infrastructure.database.connection import init_db
 from shared.dependencies.rate_limit import limiter
-
-logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -52,26 +50,9 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
-        _close_cached_dependency(get_website_loader, "website_loader")
-        _close_cached_dependency(get_ingestion_ai_provider, "ingestion_ai_provider")
-        _close_cached_dependency(get_ai_provider, "ai_provider")
-
-
-def _close_cached_dependency(factory, resource_name: str) -> None:
-    if not factory.cache_info().currsize:
-        return
-    try:
-        resource = factory()
-        close_resource = getattr(resource, "close", None)
-        if close_resource is not None:
-            close_resource()
-    except Exception:
-        logger.exception(
-            "application_resource_cleanup_failed",
-            extra={"reason": resource_name},
-        )
-    finally:
-        factory.cache_clear()
+        close_cached_dependency(get_website_loader, "website_loader")
+        close_cached_dependency(get_ingestion_ai_provider, "ingestion_ai_provider")
+        close_cached_dependency(get_ai_provider, "ai_provider")
 
 
 app = FastAPI(

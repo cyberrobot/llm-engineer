@@ -312,6 +312,41 @@ def test_synchronous_ingestion_retries_transient_website_status_once():
     assert delays == [0]
 
 
+def test_synchronous_database_retry_reuses_prepared_embeddings():
+    class TransientRepository(InMemoryKnowledgePersistenceRepository):
+        def __init__(self):
+            super().__init__()
+            self.write_attempts = 0
+
+        def replace_document(self, document, chunks, **kwargs):
+            self.write_attempts += 1
+            if self.write_attempts == 1:
+                raise psycopg.OperationalError("temporary database failure")
+            return super().replace_document(document, chunks, **kwargs)
+
+    jobs = InMemoryIngestionJobRepository()
+    knowledge = TransientRepository()
+    provider = DeterministicEmbeddingProvider()
+    delays: list[float] = []
+    html = (FIXTURE_DIR / "business_homepage.html").read_text()
+    service = IngestionService(
+        jobs,
+        website_loader(html),
+        processing_service(),
+        persistence_service(provider, knowledge),
+        classifier=IngestionFailureClassifier(),
+        retry_policy=IngestionRetryPolicy(IngestionRetrySettings(2, 0, 1, 0, False)),
+        sleeper=delays.append,
+    )
+
+    job = service.start_ingestion("https://example.com/knowledge")
+
+    assert job.status.value == "completed"
+    assert knowledge.write_attempts == 2
+    assert len(provider.batch_calls) == 1
+    assert delays == [0]
+
+
 def test_database_backed_ingestion_is_immediately_retrievable_and_idempotent():
     if not DATABASE_URL:
         pytest.skip("DATABASE_URL is not configured")

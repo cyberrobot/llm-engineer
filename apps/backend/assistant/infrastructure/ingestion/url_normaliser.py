@@ -66,6 +66,14 @@ def normalise_url(url: str, *, base_url: str | None = None) -> str:
 
 def validate_public_url(url: str, resolver: AddressResolver) -> str:
     """Validate the URL and ensure every resolved address is publicly routable."""
+    normalised, _addresses = validate_public_url_addresses(url, resolver)
+    return normalised
+
+
+def validate_public_url_addresses(
+    url: str, resolver: AddressResolver
+) -> tuple[str, tuple[str, ...]]:
+    """Return a canonical URL and the exact public addresses validated for connection."""
     normalised = normalise_url(url)
     hostname = urlsplit(normalised).hostname
     if hostname is None:  # Defensive: normalise_url already enforces this.
@@ -97,7 +105,7 @@ def validate_public_url(url: str, resolver: AddressResolver) -> str:
         raise InvalidWebsiteUrl("Website hostname resolved to an invalid address.") from exc
     if any(not address.is_global for address in parsed_addresses):
         raise InvalidWebsiteUrl("Website URL must resolve to a public network address.")
-    return normalised
+    return normalised, tuple(str(address) for address in parsed_addresses)
 
 
 def origin_for(url: str) -> Origin:
