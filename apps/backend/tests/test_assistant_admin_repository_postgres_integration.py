@@ -339,8 +339,8 @@ def test_indirect_ingestion_records_are_covered_by_document_parent_dependency() 
         slug=f"indirect-{uuid4().hex}", created_at=datetime(2026, 8, 4, tzinfo=timezone.utc)
     )
     document_id, job_id = str(uuid4()), str(uuid4())
-    repository.create(target)
     try:
+        repository.create(target)
         with get_connection() as connection:
             connection.execute(
                 "INSERT INTO documents (id,doc_type,assistant_id) VALUES (%s,'text',%s)",
@@ -368,10 +368,15 @@ def test_indirect_ingestion_records_are_covered_by_document_parent_dependency() 
         assert repository.dependency_summary(target.id).has_dependencies is True
         with get_connection() as connection:
             connection.execute("DELETE FROM documents WHERE id=%s", (document_id,))
+        with get_connection() as connection:
+            assert connection.execute(
+                "SELECT count(*) FROM documents WHERE id=%s", (document_id,)
+            ).fetchone() == (0,)
             assert connection.execute(
                 "SELECT count(*) FROM document_ingestion_jobs WHERE id=%s", (job_id,)
             ).fetchone() == (0,)
-            with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            with get_connection() as connection:
                 connection.execute(
                     "INSERT INTO ingestion_step_executions "
                     "(ingestion_job_id,step,attempt_number,status,started_at) "
@@ -379,6 +384,8 @@ def test_indirect_ingestion_records_are_covered_by_document_parent_dependency() 
                     (job_id,),
                 )
         repository.delete(target.id)
+        with pytest.raises(AssistantNotFound):
+            repository.get_by_id(target.id)
     finally:
         with get_connection() as connection:
             connection.execute("DELETE FROM documents WHERE id=%s", (document_id,))
