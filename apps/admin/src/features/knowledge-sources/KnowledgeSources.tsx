@@ -242,7 +242,8 @@ export function KnowledgeSourcesPage() {
         <div className="source-grid">
           {page.items.map((source) => (
             <article className="source-card" key={source.id}>
-              <h2><Link to={`/admin/assistants/${assistant.id}/knowledge/${source.id}`}>{source.name}</Link></h2>
+              <h2>{source.name}</h2>
+              <Link to={`/admin/assistants/${assistant.id}/knowledge/${source.id}`}>View details for {source.name}</Link>
               <p>{source.sourceType === 'direct_text' ? 'Direct text' : `Web page · ${new URL(source.url!).hostname}`}</p>
               <div className="actions">
                 <SourceBadge value={source.retrievalState} />
@@ -436,6 +437,7 @@ export function KnowledgeSourceDetailPage() {
   const [notice, setNotice] = useState(() => operationNotice(location.state, sourceId));
   const [selected, setSelected] = useState<SelectedAction>();
   const noticeRef = useRef<HTMLParagraphElement>(null);
+  const focusCreationNotice = useRef(Boolean(operationNotice(location.state, sourceId)));
   useSessionError(error);
 
   useEffect(() => {
@@ -451,8 +453,11 @@ export function KnowledgeSourceDetailPage() {
   }, [assistantId, sourceId, auth.api, attempt]);
 
   useEffect(() => {
-    if (notice && document.activeElement === document.body) noticeRef.current?.focus();
-  }, [notice]);
+    if (assistant && source && notice && focusCreationNotice.current) {
+      focusCreationNotice.current = false;
+      noticeRef.current?.focus();
+    }
+  }, [assistant, notice, source]);
 
   useEffect(() => {
     if (operationNotice(location.state, sourceId)) {

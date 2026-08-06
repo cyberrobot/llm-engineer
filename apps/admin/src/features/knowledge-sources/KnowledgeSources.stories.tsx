@@ -225,6 +225,9 @@ export const QueuedCreationResult: Story = {
       <KnowledgeSourceDetailPage />
     </Frame>
   ),
+  play: async ({ canvasElement }) => {
+    await expect(await within(canvasElement).findByRole('status')).toHaveFocus();
+  },
 };
 export const ReusedCreationResult: Story = {
   render: () => (
@@ -235,6 +238,9 @@ export const ReusedCreationResult: Story = {
       <KnowledgeSourceDetailPage />
     </Frame>
   ),
+  play: async ({ canvasElement }) => {
+    await expect(await within(canvasElement).findByRole('status')).toHaveFocus();
+  },
 };
 export const ReingestionConfirmation: Story = {
   render: () => <Frame path={detailPath} route={detailRoute}><KnowledgeSourceDetailPage /></Frame>,

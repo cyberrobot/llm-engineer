@@ -9,7 +9,8 @@ import { AuthProvider, useAuth } from './auth/AuthContext';
 const administrator:Administrator={id:'admin-1',email:'admin@example.test',role:'administrator'};
 const assistant:Assistant={id:'11111111-1111-4111-8111-111111111111',slug:'legal-review',name:'Legal review',status:'inactive',visibility:'private',createdAt:'2026-08-05T09:00:00Z',updatedAt:'2026-08-05T09:00:00Z',concurrencyToken:'2026-08-05T09:00:00Z'};
 function deferred<T>(){let resolve!:(value:T)=>void,reject!:(reason?:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}}
-function renderApp(api:AdminApi,path='/admin'){const router=createMemoryRouter([{path:'*',element:<AuthProvider api={api}><App/></AuthProvider>}],{initialEntries:[path]});return render(<RouterProvider router={router}/>)}
+type TestLocation=string|{pathname:string;state:unknown};
+function renderApp(api:AdminApi,path:TestLocation='/admin'){const router=createMemoryRouter([{path:'*',element:<AuthProvider api={api}><App/></AuthProvider>}],{initialEntries:[path]});return{...render(<RouterProvider router={router}/>),router}}
 const source:KnowledgeSource={id:'22222222-2222-4222-8222-222222222222',assistantId:assistant.id,sourceType:'direct_text',name:'Policy guide',retrievalState:'enabled',url:null,directText:null,documentId:'document-1',createdAt:'2026-08-05T09:00:00Z',updatedAt:'2026-08-05T09:00:00Z',latestIngestion:{id:'33333333-3333-4333-8333-333333333333',status:'completed',currentStep:null,createdAt:'2026-08-05T09:00:00Z',startedAt:'2026-08-05T09:01:00Z',completedAt:'2026-08-05T09:02:00Z',failureCode:null,failureMessage:null},activeJobReused:false};
 function apiWith(overrides:Partial<AdminApi>={}):AdminApi{return{currentUser:vi.fn().mockResolvedValue(administrator),login:vi.fn().mockResolvedValue(administrator),logout:vi.fn().mockResolvedValue(undefined),listAssistants:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getAssistant:vi.fn(),createAssistant:vi.fn(),updateAssistant:vi.fn(),deleteAssistant:vi.fn(),listKnowledgeSources:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getKnowledgeSource:vi.fn(),createKnowledgeSource:vi.fn(),updateKnowledgeSourceRetrieval:vi.fn(),reingestKnowledgeSource:vi.fn(),deleteKnowledgeSource:vi.fn(),...overrides}}
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals()});
@@ -259,9 +260,19 @@ describe('administrator application workflows',()=>{
     expect(screen.queryByText('Fictional policy.')).not.toBeInTheDocument();
   });
 
+  it('names the list detail action with its operation and source',async()=>{
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      listKnowledgeSources:vi.fn().mockResolvedValue({items:[source],total:1,limit:50,offset:0}),
+    }),`/admin/assistants/${assistant.id}/knowledge`);
+    const detail=await screen.findByRole('link',{name:'View details for Policy guide'});
+    expect(detail).toHaveAttribute('href',`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+  });
+
   it('creates direct-text knowledge without submitting URL fields',async()=>{
+    const storage=vi.spyOn(Storage.prototype,'setItem');
     const createKnowledgeSource=vi.fn().mockResolvedValue({...source,directText:'Fictional policy.',latestIngestion:{...source.latestIngestion!,status:'queued' as const,startedAt:null,completedAt:null}});
-    renderApp(apiWith({getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),createKnowledgeSource,getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'})}),`/admin/assistants/${assistant.id}/knowledge/new`);
+    const {router}=renderApp(apiWith({getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),createKnowledgeSource,getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'})}),`/admin/assistants/${assistant.id}/knowledge/new`);
     await userEvent.type(await screen.findByLabelText('Name'),'Policy guide');
     await userEvent.type(screen.getByLabelText('Content'),'Fictional policy.');
     await userEvent.click(screen.getByRole('button',{name:'Add knowledge source'}));
@@ -269,6 +280,41 @@ describe('administrator application workflows',()=>{
     expect(await screen.findByRole('heading',{name:'Policy guide'})).toBeInTheDocument();
     expect(screen.getByText('Fictional policy.')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Ingestion queued.');
+    expect(router.state.location.pathname).toBe(`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    expect(router.state.location.pathname).not.toContain('Fictional');
+    expect(storage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['queued','Ingestion queued.'],
+    ['reused','An existing source or active ingestion job was reused.'],
+  ] as const)('focuses a %s creation result only after authoritative detail mounts',async(outcome,message)=>{
+    const detail=deferred<KnowledgeSource>();
+    const {router}=renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn(()=>detail.promise),
+    }),{
+      pathname:`/admin/assistants/${assistant.id}/knowledge/${source.id}`,
+      state:{sourceOperation:{sourceId:source.id,outcome}},
+    });
+    expect(await screen.findByRole('status')).toHaveTextContent('Loading knowledge source');
+    detail.resolve({...source,directText:'Fictional policy.'});
+    const notice=await screen.findByText(message);
+    expect(notice).toHaveAttribute('role','status');
+    expect(notice).toHaveFocus();
+    expect(router.state.location.pathname).toBe(`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    expect(router.state.location.search).toBe('');
+    expect(router.state.location.state).toBeNull();
+  });
+
+  it('does not fabricate a creation result on direct detail navigation',async()=>{
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'}),
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    await screen.findByRole('heading',{name:'Policy guide'});
+    expect(screen.queryByText('Ingestion queued.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/existing source or active ingestion job was reused/i)).not.toBeInTheDocument();
   });
 
   it('confirms retrieval changes, re-ingestion, and guarded deletion',async()=>{
@@ -387,5 +433,209 @@ describe('administrator application workflows',()=>{
     expect(screen.getByText('Completed')).toBeInTheDocument();
     expect(screen.getByText('fetch_failed')).toBeInTheDocument();
     expect(screen.getByText(/previous committed knowledge remains available/i)).toBeInTheDocument();
+  });
+
+  it('retries and manually refreshes the knowledge list',async()=>{
+    const listKnowledgeSources=vi.fn()
+      .mockRejectedValueOnce(new AdminApiError('network'))
+      .mockResolvedValueOnce({items:[],total:0,limit:50,offset:0})
+      .mockResolvedValueOnce({items:[source],total:1,limit:50,offset:0});
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      listKnowledgeSources,
+    }),`/admin/assistants/${assistant.id}/knowledge`);
+    expect(await screen.findByRole('heading',{name:'Unable to load knowledge'})).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'Try again'}));
+    expect(await screen.findByRole('heading',{name:'No knowledge sources yet'})).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'Refresh'}));
+    expect(await screen.findByRole('heading',{name:'Policy guide'})).toBeInTheDocument();
+    expect(listKnowledgeSources).toHaveBeenCalledTimes(3);
+  });
+
+  it('uses safe not-found states for unknown assistants and Assistant-scoped sources',async()=>{
+    const first=renderApp(apiWith({
+      getAssistant:vi.fn().mockRejectedValue(new AdminApiError('not_found','assistant_not_found')),
+    }),`/admin/assistants/${assistant.id}/knowledge`);
+    expect(await screen.findByRole('heading',{name:'Assistant not found'})).toBeInTheDocument();
+    first.unmount();
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockRejectedValue(new AdminApiError('not_found','knowledge_source_not_found')),
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    expect(await screen.findByRole('heading',{name:'Knowledge source not found'})).toBeInTheDocument();
+    expect(screen.getByText('The requested source does not exist for this Assistant.')).toBeInTheDocument();
+  });
+
+  it('corrects an invalid final page after deletion and restores stable focus',async()=>{
+    const firstPage=Array.from({length:50},(_,index)=>({...source,id:`source-${index}`,name:`Policy ${index + 1}`}));
+    const offsets:number[]=[];
+    let deleted=false;
+    const listKnowledgeSources=vi.fn(async(_assistantId:string,options?:{limit?:number;offset?:number})=>{
+      const offset=options?.offset??0;
+      offsets.push(offset);
+      if(offset===50)return deleted
+        ? {items:[],total:50,limit:50,offset:50}
+        : {items:[{...source,name:'Last policy'}],total:51,limit:50,offset:50};
+      return {items:firstPage,total:deleted?50:51,limit:50,offset:0};
+    });
+    const getAssistant=vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:51,deletionAllowed:false});
+    renderApp(apiWith({getAssistant,listKnowledgeSources,deleteKnowledgeSource:vi.fn(async()=>{deleted=true;})}),`/admin/assistants/${assistant.id}/knowledge`);
+    await screen.findByRole('heading',{name:'Policy 1'});
+    await userEvent.click(screen.getByRole('button',{name:'Next'}));
+    await screen.findByRole('heading',{name:'Last policy'});
+    await userEvent.click(screen.getByRole('button',{name:'Delete Last policy'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm deletion'}));
+    await screen.findByRole('heading',{name:'Policy 1'});
+    expect(offsets).toEqual([0,50,50,0]);
+    expect(getAssistant).toHaveBeenCalledTimes(4);
+    expect(screen.getByRole('link',{name:'Add knowledge source'})).toHaveFocus();
+  });
+
+  it.each([
+    ['ftp://example.test/guide','HTTP or HTTPS'],
+    ['https://user:secret@example.test/guide','without credentials'],
+    ['https://example.test/guide#private','without credentials or a fragment'],
+  ])('rejects an unsafe source URL before mutation: %s',async(url,message)=>{
+    const createKnowledgeSource=vi.fn();
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      createKnowledgeSource,
+    }),`/admin/assistants/${assistant.id}/knowledge/new`);
+    await userEvent.type(await screen.findByLabelText('Name'),'Public guide');
+    await userEvent.click(screen.getByLabelText('Web page URL'));
+    await userEvent.type(screen.getByLabelText('URL'),url);
+    await userEvent.click(screen.getByRole('button',{name:'Add knowledge source'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    expect(screen.getByRole('alert')).toHaveFocus();
+    expect(createKnowledgeSource).not.toHaveBeenCalled();
+  });
+
+  it('requires non-whitespace content and exposes bounded creation controls',async()=>{
+    renderApp(apiWith({getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true})}),`/admin/assistants/${assistant.id}/knowledge/new`);
+    const name=await screen.findByLabelText('Name');
+    const content=screen.getByLabelText('Content');
+    expect(name).toHaveAttribute('maxlength','255');
+    expect(content).toHaveAttribute('maxlength','100000');
+    await userEvent.type(name,'Policy guide');
+    await userEvent.type(content,'   ');
+    await userEvent.click(screen.getByRole('button',{name:'Add knowledge source'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Content is required.');
+    expect(screen.getByLabelText('Content')).toHaveValue('   ');
+  });
+
+  it('prevents duplicate creation while the first submission is pending',async()=>{
+    const request=deferred<KnowledgeSource>();
+    const createKnowledgeSource=vi.fn(()=>request.promise);
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      createKnowledgeSource,
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'}),
+    }),`/admin/assistants/${assistant.id}/knowledge/new`);
+    await userEvent.type(await screen.findByLabelText('Name'),'Policy guide');
+    await userEvent.type(screen.getByLabelText('Content'),'Fictional policy.');
+    await userEvent.click(screen.getByRole('button',{name:'Add knowledge source'}));
+    const pending=screen.getByRole('button',{name:'Adding…'});
+    expect(pending).toBeDisabled();
+    await userEvent.click(pending);
+    expect(createKnowledgeSource).toHaveBeenCalledOnce();
+    request.resolve({...source,directText:'Fictional policy.'});
+    expect(await screen.findByRole('heading',{name:'Policy guide'})).toBeInTheDocument();
+  });
+
+  it('warns before discarding a dirty knowledge form',async()=>{
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
+    const {router}=renderApp(apiWith({getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true})}),`/admin/assistants/${assistant.id}/knowledge/new`);
+    await userEvent.type(await screen.findByLabelText('Name'),'Draft policy');
+    await userEvent.click(screen.getByRole('link',{name:'Cancel'}));
+    expect(confirm).toHaveBeenCalledWith('Discard your unsaved knowledge source?');
+    expect(router.state.location.pathname).toBe(`/admin/assistants/${assistant.id}/knowledge/new`);
+    expect(screen.getByLabelText('Name')).toHaveValue('Draft policy');
+  });
+
+  it('keeps confirmed retrieval state after a forbidden mutation',async()=>{
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'}),
+      updateKnowledgeSourceRetrieval:vi.fn().mockRejectedValue(new AdminApiError('forbidden')),
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    await userEvent.click(await screen.findByRole('button',{name:'Disable Policy guide'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm disable'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('permission');
+    await userEvent.click(screen.getByRole('button',{name:'Cancel'}));
+    expect(screen.getByRole('button',{name:'Disable Policy guide'})).toBeInTheDocument();
+  });
+
+  it.each([
+    ['enabled','Disable','disabled'],
+    ['disabled','Enable','enabled'],
+  ] as const)('reconciles and restores focus after changing %s retrieval',async(initial,label,next)=>{
+    const updateKnowledgeSourceRetrieval=vi.fn().mockResolvedValue({...source,retrievalState:next,directText:'Fictional policy.'});
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,retrievalState:initial,directText:'Fictional policy.'}),
+      updateKnowledgeSourceRetrieval,
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    await userEvent.click(await screen.findByRole('button',{name:`${label} Policy guide`}));
+    await userEvent.click(screen.getByRole('button',{name:`Confirm ${label.toLowerCase()}`}));
+    const restored=await screen.findByRole('button',{name:`${next==='enabled'?'Disable':'Enable'} Policy guide`});
+    expect(updateKnowledgeSourceRetrieval).toHaveBeenCalledWith(assistant.id,source.id,next);
+    expect(screen.getByRole('status')).toHaveTextContent(`Retrieval ${next}.`);
+    expect(restored).toHaveFocus();
+  });
+
+  it('prevents duplicate re-ingestion while pending and reports idempotency conflicts',async()=>{
+    const request=deferred<KnowledgeSource>();
+    const reingestKnowledgeSource=vi.fn(()=>request.promise);
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'}),
+      reingestKnowledgeSource,
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    await userEvent.click(await screen.findByRole('button',{name:'Re-ingest Policy guide'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm re-ingestion'}));
+    expect(screen.getByRole('button',{name:'Working…'})).toBeDisabled();
+    expect(screen.getByRole('button',{name:'Cancel'})).toBeDisabled();
+    await userEvent.click(screen.getByRole('button',{name:'Working…'}));
+    expect(reingestKnowledgeSource).toHaveBeenCalledOnce();
+    request.reject(new AdminApiError('conflict','idempotency_key_conflict'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Refresh authoritative state');
+    expect(reingestKnowledgeSource).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['unauthenticated',true],
+    ['forbidden',false],
+  ] as const)('handles a knowledge mutation %s without corrupting session state',async(kind,expires)=>{
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'}),
+      updateKnowledgeSourceRetrieval:vi.fn().mockRejectedValue(new AdminApiError(kind)),
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    await userEvent.click(await screen.findByRole('button',{name:'Disable Policy guide'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm disable'}));
+    if(expires){
+      expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();
+    }else{
+      expect(await screen.findByRole('alert')).toHaveTextContent('permission');
+      expect(screen.getByText('admin@example.test')).toBeInTheDocument();
+    }
+  });
+
+  it('restores dialog focus after Escape and after dismissing a recoverable failure',async()=>{
+    const updateKnowledgeSourceRetrieval=vi.fn().mockRejectedValue(new AdminApiError('network'));
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'}),
+      updateKnowledgeSourceRetrieval,
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    const trigger=await screen.findByRole('button',{name:'Disable Policy guide'});
+    await userEvent.click(trigger);
+    await userEvent.keyboard('{Escape}');
+    expect(trigger).toHaveFocus();
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole('button',{name:'Confirm disable'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('backend could not be reached');
+    await userEvent.click(screen.getByRole('button',{name:'Cancel'}));
+    expect(trigger).toHaveFocus();
   });
 });

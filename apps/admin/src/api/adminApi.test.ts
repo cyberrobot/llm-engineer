@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createAdminApi } from './adminApi';
+import { AdminApiError, createAdminApi } from './adminApi';
 
 const base = 'https://api.example.test';
 
@@ -374,5 +374,87 @@ describe('admin API', () => {
     await expect(api.createKnowledgeSource(assistant.id, { source_type: 'direct_text', name: 'Policy guide', direct_text: 'Fictional policy.' }, 'create-key')).rejects.toMatchObject({ kind: 'invalid_response' });
     await expect(api.reingestKnowledgeSource(assistant.id, source.id, 'reingest-key')).rejects.toMatchObject({ kind: 'invalid_response' });
     await expect(api.deleteKnowledgeSource(assistant.id, source.id)).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
+  it.each(['list', 'detail'] as const)('forwards cancellation for knowledge %s reads', async (operation) => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = createAdminApi(base);
+    const request = operation === 'list'
+      ? api.listKnowledgeSources(assistant.id, { limit: 25, offset: 0 }, controller.signal)
+      : api.getKnowledgeSource(assistant.id, source.id, controller.signal);
+
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    controller.abort();
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it.each([
+    [401, undefined, 'unauthenticated'],
+    [403, undefined, 'forbidden'],
+    [404, 'knowledge_source_not_found', 'not_found'],
+    [422, 'validation_failed', 'invalid_request'],
+    [409, 'idempotency_key_conflict', 'conflict'],
+    [409, 'active_ingestion', 'conflict'],
+    [503, 'provider_secret', 'server'],
+  ] as const)('maps knowledge failure %s/%s safely', async (status, code, kind) => {
+    const raw = '<html>provider token and database trace</html>';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ detail: { code, message: raw }, provider_payload: raw }, { status })));
+
+    const error = await createAdminApi(base).getKnowledgeSource(assistant.id, source.id)
+      .then(() => undefined, (caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AdminApiError);
+    expect(error).toMatchObject({
+      kind,
+      code: status === 404 || status === 409 ? code : undefined,
+      message: 'The administrator request could not be completed.',
+    });
+    expect(JSON.stringify(error)).not.toContain('provider token');
+    expect(String(error)).not.toContain('database trace');
+  });
+
+  it.each([
+    ['invalid JSON', new Response('provider stack', { status: 200 })],
+    ['malformed success', Response.json({ ...source, direct_text: 'Fictional policy.', assistant_id: '44444444-4444-4444-8444-444444444444' })],
+  ])('maps knowledge %s to a safe invalid response', async (_scenario, response) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+    await expect(createAdminApi(base).getKnowledgeSource(assistant.id, source.id)).rejects.toMatchObject({
+      kind: 'invalid_response',
+      message: 'The administrator request could not be completed.',
+    });
+  });
+
+  it.each([
+    ['direct_text', 'enabled'],
+    ['direct_text', 'disabled'],
+    ['url', 'enabled'],
+    ['url', 'disabled'],
+  ] as const)('accepts %s sources in the %s retrieval state', async (source_type, retrieval_state) => {
+    const body = source_type === 'url'
+      ? { ...source, source_type, retrieval_state, url: 'https://example.test/guide', direct_text: null }
+      : { ...source, source_type, retrieval_state, url: null, direct_text: 'Fictional policy.' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(body)));
+    await expect(createAdminApi(base).getKnowledgeSource(assistant.id, source.id)).resolves.toMatchObject({
+      sourceType: source_type,
+      retrievalState: retrieval_state,
+    });
+  });
+
+  it('preserves supplied re-ingestion keys across retry and independent operations', async () => {
+    const detail = { ...source, direct_text: 'Fictional policy.' };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(Response.json(detail, { status: 202 })));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = createAdminApi(base);
+
+    await api.reingestKnowledgeSource(assistant.id, source.id, 'same-reingestion-key');
+    await api.reingestKnowledgeSource(assistant.id, source.id, 'same-reingestion-key');
+    await api.reingestKnowledgeSource(assistant.id, source.id, 'independent-reingestion-key');
+
+    expect(fetchMock.mock.calls.map((call) => (call[1]?.headers as Record<string, string>)['Idempotency-Key']))
+      .toEqual(['same-reingestion-key', 'same-reingestion-key', 'independent-reingestion-key']);
   });
 });
