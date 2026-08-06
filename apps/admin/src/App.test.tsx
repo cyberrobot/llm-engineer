@@ -3,14 +3,15 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import App from './App';
-import { AdminApiError, createAdminApi, type AdminApi, type Administrator, type Assistant } from './api/adminApi';
+import { AdminApiError, createAdminApi, type AdminApi, type Administrator, type Assistant, type KnowledgeSource } from './api/adminApi';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 
 const administrator:Administrator={id:'admin-1',email:'admin@example.test',role:'administrator'};
 const assistant:Assistant={id:'11111111-1111-4111-8111-111111111111',slug:'legal-review',name:'Legal review',status:'inactive',visibility:'private',createdAt:'2026-08-05T09:00:00Z',updatedAt:'2026-08-05T09:00:00Z',concurrencyToken:'2026-08-05T09:00:00Z'};
 function deferred<T>(){let resolve!:(value:T)=>void,reject!:(reason?:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}}
 function renderApp(api:AdminApi,path='/admin'){const router=createMemoryRouter([{path:'*',element:<AuthProvider api={api}><App/></AuthProvider>}],{initialEntries:[path]});return render(<RouterProvider router={router}/>)}
-function apiWith(overrides:Partial<AdminApi>={}):AdminApi{return{currentUser:vi.fn().mockResolvedValue(administrator),login:vi.fn().mockResolvedValue(administrator),logout:vi.fn().mockResolvedValue(undefined),listAssistants:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getAssistant:vi.fn(),createAssistant:vi.fn(),updateAssistant:vi.fn(),deleteAssistant:vi.fn(),...overrides}}
+const source:KnowledgeSource={id:'22222222-2222-4222-8222-222222222222',assistantId:assistant.id,sourceType:'direct_text',name:'Policy guide',retrievalState:'enabled',url:null,directText:null,documentId:'document-1',createdAt:'2026-08-05T09:00:00Z',updatedAt:'2026-08-05T09:00:00Z',latestIngestion:{id:'33333333-3333-4333-8333-333333333333',status:'completed',currentStep:null,createdAt:'2026-08-05T09:00:00Z',startedAt:'2026-08-05T09:01:00Z',completedAt:'2026-08-05T09:02:00Z',failureCode:null,failureMessage:null},activeJobReused:false};
+function apiWith(overrides:Partial<AdminApi>={}):AdminApi{return{currentUser:vi.fn().mockResolvedValue(administrator),login:vi.fn().mockResolvedValue(administrator),logout:vi.fn().mockResolvedValue(undefined),listAssistants:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getAssistant:vi.fn(),createAssistant:vi.fn(),updateAssistant:vi.fn(),deleteAssistant:vi.fn(),listKnowledgeSources:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getKnowledgeSource:vi.fn(),createKnowledgeSource:vi.fn(),updateKnowledgeSourceRetrieval:vi.fn(),reingestKnowledgeSource:vi.fn(),deleteKnowledgeSource:vi.fn(),...overrides}}
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals()});
 
 describe('administrator application workflows',()=>{
@@ -244,5 +245,65 @@ describe('administrator application workflows',()=>{
     await userEvent.click(screen.getByRole('button',{name:'Expire session'}));
     expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();
     expect(screen.queryByText('Dashboard functionality is not implemented yet.')).not.toBeInTheDocument();
+  });
+
+  it('selects an assistant from the knowledge entry point and lists only its source summaries',async()=>{
+    const listAssistants=vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0});
+    const listKnowledgeSources=vi.fn().mockResolvedValue({items:[source],total:1,limit:50,offset:0});
+    renderApp(apiWith({listAssistants,listKnowledgeSources,getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false})}),'/admin/knowledge-sources');
+    await userEvent.click(await screen.findByRole('link',{name:'Manage knowledge for Legal review'}));
+    expect(await screen.findByRole('heading',{name:'Policy guide'})).toBeInTheDocument();
+    expect(screen.getByText('Direct text')).toBeInTheDocument();
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(listKnowledgeSources).toHaveBeenCalledWith(assistant.id,{limit:50,offset:0},expect.any(AbortSignal));
+    expect(screen.queryByText('Fictional policy.')).not.toBeInTheDocument();
+  });
+
+  it('creates direct-text knowledge without submitting URL fields',async()=>{
+    const createKnowledgeSource=vi.fn().mockResolvedValue({...source,directText:'Fictional policy.',latestIngestion:{...source.latestIngestion!,status:'queued' as const,startedAt:null,completedAt:null}});
+    renderApp(apiWith({getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),createKnowledgeSource,getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'})}),`/admin/assistants/${assistant.id}/knowledge/new`);
+    await userEvent.type(await screen.findByLabelText('Name'),'Policy guide');
+    await userEvent.type(screen.getByLabelText('Content'),'Fictional policy.');
+    await userEvent.click(screen.getByRole('button',{name:'Add knowledge source'}));
+    expect(createKnowledgeSource).toHaveBeenCalledWith(assistant.id,{source_type:'direct_text',name:'Policy guide',direct_text:'Fictional policy.'});
+    expect(await screen.findByRole('heading',{name:'Policy guide'})).toBeInTheDocument();
+    expect(screen.getByText('Fictional policy.')).toBeInTheDocument();
+  });
+
+  it('confirms retrieval changes, re-ingestion, and guarded deletion',async()=>{
+    const updateKnowledgeSourceRetrieval=vi.fn().mockResolvedValue({...source,retrievalState:'disabled'});
+    const reingestKnowledgeSource=vi.fn().mockResolvedValue({...source,activeJobReused:true,latestIngestion:{...source.latestIngestion!,status:'running',currentStep:'embed'}});
+    const deleteKnowledgeSource=vi.fn().mockRejectedValue(new AdminApiError('conflict','active_ingestion'));
+    renderApp(apiWith({getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'}),updateKnowledgeSourceRetrieval,reingestKnowledgeSource,deleteKnowledgeSource}),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    await userEvent.click(await screen.findByRole('button',{name:'Disable Policy guide'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm disable'}));
+    expect(await screen.findByText('Retrieval disabled.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'Re-ingest Policy guide'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm re-ingestion'}));
+    expect(await screen.findByText('The active ingestion job was reused.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'Delete Policy guide'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm deletion'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('cannot be deleted while ingestion is active');
+    expect(deleteKnowledgeSource).toHaveBeenCalledOnce();
+  });
+
+  it('creates knowledge through the real credentialed HTTP boundary',async()=>{
+    const rawAssistant={id:assistant.id,slug:assistant.slug,name:assistant.name,status:assistant.status,visibility:assistant.visibility,created_at:assistant.createdAt,updated_at:assistant.updatedAt,concurrency_token:assistant.concurrencyToken,knowledge_source_count:0,deletion_allowed:true};
+    const rawSource={id:source.id,assistant_id:assistant.id,source_type:'direct_text',name:'Policy guide',retrieval_state:'enabled',url:null,direct_text:'Fictional policy.',document_id:'document-1',created_at:source.createdAt,updated_at:source.updatedAt,latest_ingestion:{id:source.latestIngestion!.id,status:'queued',current_step:null,created_at:source.latestIngestion!.createdAt,started_at:null,completed_at:null,failure_code:null,failure_message:null},active_job_reused:false};
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(Response.json({user:administrator}))
+      .mockResolvedValueOnce(Response.json(rawAssistant))
+      .mockResolvedValueOnce(Response.json(rawSource,{status:202}))
+      .mockResolvedValueOnce(Response.json(rawAssistant))
+      .mockResolvedValueOnce(Response.json(rawSource));
+    vi.stubGlobal('fetch',fetchMock);
+    renderApp(createAdminApi('https://api.example.test'),`/admin/assistants/${assistant.id}/knowledge/new`);
+    await userEvent.type(await screen.findByLabelText('Name'),'Policy guide');
+    await userEvent.type(screen.getByLabelText('Content'),'Fictional policy.');
+    await userEvent.click(screen.getByRole('button',{name:'Add knowledge source'}));
+    expect(await screen.findByRole('heading',{name:'Policy guide'})).toBeInTheDocument();
+    expect(screen.getByText('Fictional policy.')).toBeInTheDocument();
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(`https://api.example.test/admin/assistants/${assistant.id}/knowledge-sources`);
+    expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({method:'POST',credentials:'include',body:JSON.stringify({source_type:'direct_text',name:'Policy guide',direct_text:'Fictional policy.'}),headers:expect.objectContaining({'Idempotency-Key':expect.any(String)})}));
   });
 });

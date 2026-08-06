@@ -18,6 +18,12 @@ const assistantMethods = {
   createAssistant: async () => { throw new AdminApiError('invalid_request'); },
   updateAssistant: async () => { throw new AdminApiError('invalid_request'); },
   deleteAssistant: async () => undefined,
+  listKnowledgeSources: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
+  getKnowledgeSource: async () => { throw new AdminApiError('not_found'); },
+  createKnowledgeSource: async () => { throw new AdminApiError('invalid_request'); },
+  updateKnowledgeSourceRetrieval: async () => { throw new AdminApiError('invalid_request'); },
+  reingestKnowledgeSource: async () => { throw new AdminApiError('invalid_request'); },
+  deleteKnowledgeSource: async () => undefined,
 };
 
 const authenticatedApi: AdminApi = {

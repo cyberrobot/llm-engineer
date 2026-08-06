@@ -201,4 +201,85 @@ describe('admin API', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ detail: { code: 'assistant_slug_conflict', message: 'raw' } }, { status: 409 })));
     await expect(createAdminApi(base).createAssistant({ slug: 'legal-review', name: 'Legal review', status: 'inactive', visibility: 'private' })).rejects.toMatchObject({ kind: 'conflict', code: 'assistant_slug_conflict', message: 'The administrator request could not be completed.' });
   });
+
+  const source = {
+    id: '22222222-2222-4222-8222-222222222222',
+    assistant_id: assistant.id,
+    source_type: 'direct_text',
+    name: 'Policy guide',
+    retrieval_state: 'enabled',
+    url: null,
+    direct_text: null,
+    document_id: 'document-1',
+    created_at: '2026-08-04T00:00:00Z',
+    updated_at: '2026-08-04T00:00:00Z',
+    latest_ingestion: {
+      id: '33333333-3333-4333-8333-333333333333',
+      status: 'queued',
+      current_step: null,
+      created_at: '2026-08-04T00:00:00Z',
+      started_at: null,
+      completed_at: null,
+      failure_code: null,
+      failure_message: null,
+    },
+    active_job_reused: false,
+  };
+
+  it('uses exact assistant-scoped knowledge source contracts', async () => {
+    const detail = { ...source, direct_text: 'Fictional policy.' };
+    const disabled = { ...detail, retrieval_state: 'disabled' };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ items: [source], total: 1, limit: 25, offset: 0 }))
+      .mockResolvedValueOnce(Response.json(detail))
+      .mockResolvedValueOnce(Response.json(detail, { status: 202 }))
+      .mockResolvedValueOnce(Response.json(disabled))
+      .mockResolvedValueOnce(Response.json({ ...detail, active_job_reused: true }, { status: 202 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('crypto', { randomUUID: () => 'operation-key' });
+    const api = createAdminApi(base);
+
+    await api.listKnowledgeSources(assistant.id, { limit: 25 });
+    await api.getKnowledgeSource(assistant.id, source.id);
+    await api.createKnowledgeSource(assistant.id, {
+      source_type: 'direct_text', name: 'Policy guide', direct_text: 'Fictional policy.',
+    });
+    await api.updateKnowledgeSourceRetrieval(assistant.id, source.id, 'disabled');
+    await api.reingestKnowledgeSource(assistant.id, source.id);
+    await api.deleteKnowledgeSource(assistant.id, source.id);
+
+    const path = `${base}/admin/assistants/${assistant.id}/knowledge-sources`;
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`${path}?limit=25&offset=0`);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`${path}/${source.id}`);
+    expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({
+      method: 'POST', credentials: 'include',
+      headers: expect.objectContaining({ 'Idempotency-Key': 'operation-key' }),
+      body: JSON.stringify({ source_type: 'direct_text', name: 'Policy guide', direct_text: 'Fictional policy.' }),
+    }));
+    expect(fetchMock.mock.calls[3]?.[1]).toEqual(expect.objectContaining({
+      method: 'PATCH', body: JSON.stringify({ retrieval_state: 'disabled' }),
+    }));
+    expect(fetchMock.mock.calls[4]?.[0]).toBe(`${path}/${source.id}/reingestions`);
+    expect(fetchMock.mock.calls[4]?.[1]).toEqual(expect.objectContaining({
+      method: 'POST', headers: expect.objectContaining({ 'Idempotency-Key': 'operation-key' }),
+    }));
+    expect(fetchMock.mock.calls[5]?.[1]).toEqual(expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  it.each([
+    { ...source, assistant_id: '44444444-4444-4444-8444-444444444444' },
+    { ...source, source_type: 'file' },
+    { ...source, retrieval_state: 'pending' },
+    { ...source, direct_text: 'list content must be omitted' },
+    { ...source, latest_ingestion: { ...source.latest_ingestion, status: 'unknown' } },
+  ])('rejects malformed or cross-assistant knowledge list responses', async (item) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ items: [item], total: 1, limit: 50, offset: 0 })));
+    await expect(createAdminApi(base).listKnowledgeSources(assistant.id)).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
+  it('requires direct text in protected direct-text detail responses', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(source)));
+    await expect(createAdminApi(base).getKnowledgeSource(assistant.id, source.id)).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
 });

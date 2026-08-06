@@ -11,6 +11,7 @@ const base: AdminApi = {
   currentUser: async()=>({id:'admin',email:'admin@example.test',role:'administrator'}), login:async()=>({id:'admin',email:'admin@example.test',role:'administrator'}), logout:async()=>undefined,
   listAssistants:async()=>({items:[item,{...item,id:'22222222-2222-4222-8222-222222222222',slug:'support',name:'Support',status:'active',visibility:'public'}],total:2,limit:50,offset:0}),
   getAssistant:async()=>({...item,knowledgeSourceCount:0,deletionAllowed:true}),createAssistant:async()=>item,updateAssistant:async()=>item,deleteAssistant:async()=>undefined,
+  listKnowledgeSources:async()=>({items:[],total:0,limit:50,offset:0}),getKnowledgeSource:async()=>{throw new AdminApiError('not_found')},createKnowledgeSource:async()=>{throw new AdminApiError('invalid_request')},updateKnowledgeSourceRetrieval:async()=>{throw new AdminApiError('invalid_request')},reingestKnowledgeSource:async()=>{throw new AdminApiError('invalid_request')},deleteKnowledgeSource:async()=>undefined,
 };
 function Frame({api=base,path='/admin/assistants',children}:{api?:AdminApi;path?:string;children:ReactNode}){const router=createMemoryRouter([{path:'*',element:<AuthProvider api={api} initialUser={{id:'admin',email:'admin@example.test',role:'administrator'}}>{children}</AuthProvider>}],{initialEntries:[path]});return <RouterProvider router={router}/>}
 const meta={title:'Assistants/Management'} satisfies Meta; export default meta; type Story=StoryObj;

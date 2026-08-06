@@ -8,6 +8,18 @@ const links = [
   ['/admin/knowledge-sources', 'Knowledge Sources'],
 ] as const;
 
+function titleFor(pathname: string) {
+  if (pathname.startsWith('/admin/assistants')) {
+    if (pathname.includes('/knowledge/') && pathname.endsWith('/new')) return 'Add knowledge source';
+    if (pathname.includes('/knowledge/')) return 'Knowledge source details';
+    if (pathname.endsWith('/knowledge')) return 'Knowledge & retrieval';
+    if (pathname.endsWith('/new')) return 'Create assistant';
+    if (pathname.endsWith('/edit')) return 'Edit assistant';
+    return 'Assistants';
+  }
+  return links.find(([path]) => path === pathname)?.[1] ?? 'Page not found';
+}
+
 export function AdminShell() {
   const auth = useAuth();
   const user = auth.user!;
@@ -15,13 +27,7 @@ export function AdminShell() {
   const location = useLocation();
   const heading = useRef<HTMLHeadingElement>(null);
   const [open, setOpen] = useState(false);
-  const pageTitle = location.pathname.startsWith('/admin/assistants')
-    ? location.pathname.endsWith('/new')
-      ? 'Create assistant'
-      : location.pathname.endsWith('/edit')
-        ? 'Edit assistant'
-        : 'Assistants'
-    : links.find(([path]) => path === location.pathname)?.[1] ?? 'Page not found';
+  const pageTitle = titleFor(location.pathname);
 
   useEffect(() => {
     heading.current?.focus();
