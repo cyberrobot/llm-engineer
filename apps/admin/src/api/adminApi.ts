@@ -166,8 +166,8 @@ export function createAdminApi(baseUrl: string): AdminApi {
       if (!response.ok) return failure(response, 'assistant');
       return knowledgeSourceFrom(await successfulJson(response), assistantId, true);
     },
-    async createKnowledgeSource(assistantId, input, signal) {
-      const response = await request(baseUrl, knowledgePath(assistantId), jsonRequest('POST', input, signal, { 'Idempotency-Key': crypto.randomUUID() }));
+    async createKnowledgeSource(assistantId, input, idempotencyKey, signal) {
+      const response = await request(baseUrl, knowledgePath(assistantId), jsonRequest('POST', input, signal, { 'Idempotency-Key': idempotencyKey }));
       if (!response.ok) return failure(response, 'assistant');
       if (response.status !== 202) throw new AdminApiError('invalid_response');
       return knowledgeSourceFrom(await successfulJson(response), assistantId, true);
@@ -177,9 +177,9 @@ export function createAdminApi(baseUrl: string): AdminApi {
       if (!response.ok) return failure(response, 'assistant');
       return knowledgeSourceFrom(await successfulJson(response), assistantId, true);
     },
-    async reingestKnowledgeSource(assistantId, sourceId, signal) {
+    async reingestKnowledgeSource(assistantId, sourceId, idempotencyKey, signal) {
       const response = await request(baseUrl, `${knowledgePath(assistantId)}/${encodeURIComponent(sourceId)}/reingestions`, {
-        method: 'POST', signal, headers: { 'Idempotency-Key': crypto.randomUUID() },
+        method: 'POST', signal, headers: { 'Idempotency-Key': idempotencyKey },
       });
       if (!response.ok) return failure(response, 'assistant');
       if (response.status !== 202) throw new AdminApiError('invalid_response');
@@ -282,8 +282,8 @@ export interface AdminApi {
   deleteAssistant(id: string, signal?: AbortSignal): Promise<void>;
   listKnowledgeSources(assistantId: string, options?: { limit?: number; offset?: number }, signal?: AbortSignal): Promise<KnowledgeSourceList>;
   getKnowledgeSource(assistantId: string, sourceId: string, signal?: AbortSignal): Promise<KnowledgeSource>;
-  createKnowledgeSource(assistantId: string, input: CreateKnowledgeSource, signal?: AbortSignal): Promise<KnowledgeSource>;
+  createKnowledgeSource(assistantId: string, input: CreateKnowledgeSource, idempotencyKey: string, signal?: AbortSignal): Promise<KnowledgeSource>;
   updateKnowledgeSourceRetrieval(assistantId: string, sourceId: string, retrievalState: RetrievalState, signal?: AbortSignal): Promise<KnowledgeSource>;
-  reingestKnowledgeSource(assistantId: string, sourceId: string, signal?: AbortSignal): Promise<KnowledgeSource>;
+  reingestKnowledgeSource(assistantId: string, sourceId: string, idempotencyKey: string, signal?: AbortSignal): Promise<KnowledgeSource>;
   deleteKnowledgeSource(assistantId: string, sourceId: string, signal?: AbortSignal): Promise<void>;
 }

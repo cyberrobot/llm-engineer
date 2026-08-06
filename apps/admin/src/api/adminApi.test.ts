@@ -237,16 +237,15 @@ describe('admin API', () => {
       .mockResolvedValueOnce(Response.json({ ...detail, active_job_reused: true }, { status: 202 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
-    vi.stubGlobal('crypto', { randomUUID: () => 'operation-key' });
     const api = createAdminApi(base);
 
     await api.listKnowledgeSources(assistant.id, { limit: 25 });
     await api.getKnowledgeSource(assistant.id, source.id);
     await api.createKnowledgeSource(assistant.id, {
       source_type: 'direct_text', name: 'Policy guide', direct_text: 'Fictional policy.',
-    });
+    }, 'create-key');
     await api.updateKnowledgeSourceRetrieval(assistant.id, source.id, 'disabled');
-    await api.reingestKnowledgeSource(assistant.id, source.id);
+    await api.reingestKnowledgeSource(assistant.id, source.id, 'reingest-key');
     await api.deleteKnowledgeSource(assistant.id, source.id);
 
     const path = `${base}/admin/assistants/${assistant.id}/knowledge-sources`;
@@ -254,7 +253,7 @@ describe('admin API', () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe(`${path}/${source.id}`);
     expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({
       method: 'POST', credentials: 'include',
-      headers: expect.objectContaining({ 'Idempotency-Key': 'operation-key' }),
+      headers: expect.objectContaining({ 'Idempotency-Key': 'create-key' }),
       body: JSON.stringify({ source_type: 'direct_text', name: 'Policy guide', direct_text: 'Fictional policy.' }),
     }));
     expect(fetchMock.mock.calls[3]?.[1]).toEqual(expect.objectContaining({
@@ -262,9 +261,24 @@ describe('admin API', () => {
     }));
     expect(fetchMock.mock.calls[4]?.[0]).toBe(`${path}/${source.id}/reingestions`);
     expect(fetchMock.mock.calls[4]?.[1]).toEqual(expect.objectContaining({
-      method: 'POST', headers: expect.objectContaining({ 'Idempotency-Key': 'operation-key' }),
+      method: 'POST', headers: expect.objectContaining({ 'Idempotency-Key': 'reingest-key' }),
     }));
     expect(fetchMock.mock.calls[5]?.[1]).toEqual(expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  it('preserves caller-owned keys for identical retries and independent operations', async () => {
+    const detail = { ...source, direct_text: 'Fictional policy.' };
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(Response.json(detail, { status: 202 })));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = createAdminApi(base);
+    const input = { source_type: 'direct_text' as const, name: 'Policy guide', direct_text: 'Fictional policy.' };
+
+    await api.createKnowledgeSource(assistant.id, input, 'same-key');
+    await api.createKnowledgeSource(assistant.id, input, 'same-key');
+    await api.createKnowledgeSource(assistant.id, input, 'new-operation-key');
+
+    expect(fetchMock.mock.calls.map((call) => (call[1]?.headers as Record<string, string>)['Idempotency-Key']))
+      .toEqual(['same-key', 'same-key', 'new-operation-key']);
   });
 
   it.each([
@@ -281,5 +295,84 @@ describe('admin API', () => {
   it('requires direct text in protected direct-text detail responses', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(source)));
     await expect(createAdminApi(base).getKnowledgeSource(assistant.id, source.id)).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
+  it('uses the exact URL creation body and validates its returned canonical URL', async () => {
+    const urlSource = { ...source, source_type: 'url', url: 'https://example.test/guide', direct_text: null };
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(urlSource, { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createAdminApi(base).createKnowledgeSource(assistant.id, {
+      source_type: 'url', name: 'Public guide', url: 'https://example.test/guide',
+    }, 'url-operation-key')).resolves.toMatchObject({
+      sourceType: 'url', url: 'https://example.test/guide', directText: null,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${base}/admin/assistants/${assistant.id}/knowledge-sources`,
+      expect.objectContaining({
+        credentials: 'include',
+        method: 'POST',
+        headers: expect.objectContaining({ 'Idempotency-Key': 'url-operation-key' }),
+        body: JSON.stringify({ source_type: 'url', name: 'Public guide', url: 'https://example.test/guide' }),
+      }),
+    );
+  });
+
+  it.each([
+    'ftp://example.test/guide',
+    'https://user:secret@example.test/guide',
+    'https://example.test/guide#private',
+  ])('rejects unsafe URL source responses: %s', async (url) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ ...source, source_type: 'url', url, direct_text: null })));
+    await expect(createAdminApi(base).getKnowledgeSource(assistant.id, source.id)).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
+  it.each(['queued', 'pending', 'running', 'completed', 'failed', 'cancelled'] as const)(
+    'accepts supported ingestion status %s', async (status) => {
+      const detail = { ...source, direct_text: 'Fictional policy.', latest_ingestion: { ...source.latest_ingestion, status } };
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(detail)));
+      await expect(createAdminApi(base).getKnowledgeSource(assistant.id, source.id)).resolves.toMatchObject({ latestIngestion: { status } });
+    },
+  );
+
+  it.each(['parse', 'chunk', 'embed', 'persist'] as const)(
+    'accepts supported ingestion step %s', async (current_step) => {
+      const detail = { ...source, direct_text: 'Fictional policy.', latest_ingestion: { ...source.latest_ingestion, current_step } };
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(detail)));
+      await expect(createAdminApi(base).getKnowledgeSource(assistant.id, source.id)).resolves.toMatchObject({ latestIngestion: { currentStep: current_step } });
+    },
+  );
+
+  it.each([
+    { ...source, id: 'not-a-uuid', direct_text: 'Fictional policy.' },
+    { ...source, created_at: '2026-08-04', direct_text: 'Fictional policy.' },
+    { ...source, direct_text: 'Fictional policy.', latest_ingestion: { ...source.latest_ingestion, started_at: 12 } },
+    { ...source, direct_text: 'Fictional policy.', latest_ingestion: { ...source.latest_ingestion, completed_at: 'not-a-time' } },
+  ])('rejects malformed source identifiers, timestamps, and nullable job fields', async (body) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(body)));
+    await expect(createAdminApi(base).getKnowledgeSource(assistant.id, source.id)).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
+  it.each([
+    { items: [source], total: 0, limit: 50, offset: 0 },
+    { items: [source], total: 1, limit: 0, offset: 0 },
+    { items: [source], total: 1, limit: 50, offset: 1 },
+  ])('rejects contradictory knowledge pagination metadata', async (body) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(body)));
+    await expect(createAdminApi(base).listKnowledgeSources(assistant.id)).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
+  it('enforces 202 mutation and 204 deletion statuses', async () => {
+    const detail = { ...source, direct_text: 'Fictional policy.' };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json(detail, { status: 200 }))
+      .mockResolvedValueOnce(Response.json(detail, { status: 200 }))
+      .mockResolvedValueOnce(Response.json({}, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = createAdminApi(base);
+
+    await expect(api.createKnowledgeSource(assistant.id, { source_type: 'direct_text', name: 'Policy guide', direct_text: 'Fictional policy.' }, 'create-key')).rejects.toMatchObject({ kind: 'invalid_response' });
+    await expect(api.reingestKnowledgeSource(assistant.id, source.id, 'reingest-key')).rejects.toMatchObject({ kind: 'invalid_response' });
+    await expect(api.deleteKnowledgeSource(assistant.id, source.id)).rejects.toMatchObject({ kind: 'invalid_response' });
   });
 });

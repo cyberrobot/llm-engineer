@@ -12,7 +12,9 @@ The Assistant identity form deliberately excludes knowledge-source fields, promp
 
 Select an Assistant at `/admin/knowledge-sources` or open `/admin/assistants/:assistantId/knowledge`. Administrators can add direct text of up to 100,000 characters or one absolute HTTP(S) web page, inspect the latest asynchronous ingestion state, enable or disable the committed source for retrieval, request re-ingestion, and delete a source when ingestion is not active.
 
-Source creation and re-ingestion use idempotency keys. A repeated request may reuse an existing canonical source or active job. Disabling retrieval preserves indexed content but excludes it from answers; enabling restores the currently committed representation without forcing re-ingestion. Failed re-ingestion does not imply that the previous committed representation was removed.
+Source creation and re-ingestion use idempotency keys. If a network or server failure leaves an operation's outcome unknown, retrying the identical operation reuses its original key; changing any creation field starts a new logical operation with a new key. The interface reports whether creation or re-ingestion queued a new job or reused an existing canonical source or active job. Disabling retrieval preserves indexed content but excludes it from answers; enabling restores the currently committed representation without forcing re-ingestion.
+
+Source detail includes the source timestamps and the complete supported lifecycle of its latest ingestion job. A failed ingestion retains its safe failure detail and may be retried after the underlying source is available; failure does not imply that the previous committed representation was removed.
 
 Knowledge is strictly Assistant-scoped. List responses never contain direct-text bodies, successful responses are runtime validated, and source content is not written to browser storage or URLs. Cross-Assistant source identifiers use the same not-found presentation as unknown sources.
 
