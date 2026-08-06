@@ -2,8 +2,9 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
+from threading import Barrier
 from typing import Any
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import psycopg
 import pytest
@@ -98,6 +99,24 @@ def failing_connection_factory(statement_fragment: str):
             yield FailAfterStatementConnection(connection, statement_fragment)
 
     return factory
+
+
+class CoordinatedKnowledgePersistenceRepository(PostgresKnowledgePersistenceRepository):
+    """Pause once after the real duplicate read so concurrent writers share its result."""
+
+    def __init__(self, barrier: Barrier) -> None:
+        super().__init__()
+        self._barrier = barrier
+        self.coordination_count = 0
+
+    def find_document_by_source_url(
+        self, source_url: str, *, assistant_id: UUID
+    ) -> KnowledgeDocumentRecord | None:
+        document = super().find_document_by_source_url(source_url, assistant_id=assistant_id)
+        if self.coordination_count == 0:
+            self.coordination_count += 1
+            self._barrier.wait(timeout=5)
+        return document
 
 
 def persistence_service(
@@ -431,10 +450,12 @@ def test_concurrent_duplicate_writes_leave_one_document_and_one_chunk():
     require_database()
     init_db()
     source_url = f"https://example.com/concurrent-{uuid4()}"
+    barrier = Barrier(2)
+    repositories = [CoordinatedKnowledgePersistenceRepository(barrier) for _ in range(2)]
 
-    def write() -> str:
-        service, _ = persistence_service()
-        result = service.persist(
+    def write(repository: PostgresKnowledgePersistenceRepository):
+        service, _ = persistence_service(repository)
+        return service.persist(
             processed(
                 source_url,
                 version="concurrent-v1",
@@ -442,11 +463,10 @@ def test_concurrent_duplicate_writes_leave_one_document_and_one_chunk():
                 title="Concurrent guide",
             )
         )
-        return "created" if result.documents_created else "unchanged"
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            actions = list(executor.map(lambda _: write(), range(2)))
+            results = list(executor.map(write, repositories))
 
         with get_connection() as connection:
             counts = connection.execute(
@@ -458,7 +478,13 @@ def test_concurrent_duplicate_writes_leave_one_document_and_one_chunk():
                 (source_url,),
             ).fetchone()
 
-        assert sorted(actions) == ["created", "unchanged"]
+        assert [repository.coordination_count for repository in repositories] == [1, 1]
+        assert sorted(result.documents_created for result in results) == [0, 1]
+        assert sorted(result.documents_unchanged for result in results) == [0, 1]
+        assert all(result.documents_received == 1 for result in results)
+        assert all(result.chunks_received == 1 for result in results)
+        assert sorted(result.chunks_created for result in results) == [0, 1]
+        assert sorted(result.chunks_unchanged for result in results) == [0, 1]
         assert counts == (1, 1)
         assert role_filtered_texts(source_url, "user") == ["Concurrent persistence knowledge"]
     finally:
@@ -570,6 +596,19 @@ def test_pipeline_persistence_rolls_back_reindex_and_replays_one_committed_resul
             embedding_batch_size=100,
         )
         committed = healthy_service.persist_prepared(prepared, command=command)
+        assert committed.documents_received == 1
+        assert committed.documents_created == 0
+        assert committed.documents_updated == 1
+        assert committed.documents_unchanged == 0
+        assert committed.chunks_received == 1
+        assert committed.chunks_created == 1
+        assert committed.chunks_updated == 0
+        assert committed.chunks_unchanged == 0
+        assert committed.chunks_removed == 1
+        assert committed.embeddings_generated == 1
+        assert committed.duration_ms >= 0
+        assert committed.embedding_duration_ms >= 0
+        assert committed.database_duration_ms >= 0
         reconstructed = healthy_service.prepare(
             processed(source_url, version="v2", texts=["New replacement knowledge"]),
             force_replace=True,
