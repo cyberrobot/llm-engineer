@@ -632,6 +632,11 @@ ruff format --check .
 python -m mypy .
 ```
 
+PostgreSQL/pgvector persistence verification can remain optional for local unit-only work. Set
+`KNOWLEDGE_PERSISTENCE_POSTGRES_REQUIRED=true` when running
+`tests/test_knowledge_persistence_integration.py` in CI or release verification; in that mode a
+missing `DATABASE_URL` or unavailable PostgreSQL service fails the suite instead of skipping it.
+
 ## Assistant-scoped knowledge
 
 Knowledge is partitioned by the persistent `Assistant` domain entity. The built-in initial
