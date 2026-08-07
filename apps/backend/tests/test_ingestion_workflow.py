@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
@@ -12,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from assistant.api.dependencies import get_ingestion_service
+from assistant.application.chat import ChatService
 from assistant.application.content_processing_service import ContentProcessingService
 from assistant.application.ingestion_retry import IngestionFailureClassifier, IngestionRetryPolicy
 from assistant.application.ingestion_service import IngestionService
@@ -41,7 +43,9 @@ from assistant.infrastructure.vector_store import (
     PgVectorStore,
     VectorRecord,
 )
+from assistant.schemas import ChatRequest
 from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS, IngestionRetrySettings
+from infrastructure.ai.providers import AIProvider
 from infrastructure.database.connection import get_connection, init_db
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "content_processing"
@@ -61,6 +65,24 @@ class DeterministicEmbeddingProvider:
     def generate_embedding(self, *, text: str) -> list[float]:
         self.query_calls.append(text)
         return [1.0] + [0.0] * (self.dimensions - 1)
+
+
+class RecordingCompletionProvider(AIProvider):
+    def __init__(self) -> None:
+        self.user_prompt: str | None = None
+
+    @property
+    def name(self) -> str:
+        return "test"
+
+    @property
+    def model(self) -> str:
+        return "test-model"
+
+    def generate_response(self, *, system_prompt: str, user_prompt: str) -> str:
+        assert system_prompt
+        self.user_prompt = user_prompt
+        return "Grounded response"
 
 
 class InMemoryKnowledgePersistenceRepository:
@@ -139,6 +161,42 @@ def website_loader(html: str) -> HttpWebsiteLoader:
         client=httpx.Client(transport=httpx.MockTransport(handler)),
         resolver=lambda _hostname: PUBLIC_IPS,
     )
+
+
+def sequenced_website_loader(documents: list[str]) -> HttpWebsiteLoader:
+    responses = iter(documents)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/html; charset=utf-8"},
+            content=next(responses).encode(),
+            request=request,
+        )
+
+    return HttpWebsiteLoader(
+        timeout_seconds=2,
+        user_agent="ingestion-workflow-test/1.0",
+        max_pages=1,
+        max_response_size=1024 * 1024,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        resolver=lambda _hostname: PUBLIC_IPS,
+    )
+
+
+def require_database() -> None:
+    required = os.getenv("KNOWLEDGE_PERSISTENCE_POSTGRES_REQUIRED") == "true"
+    if not DATABASE_URL:
+        if required:
+            pytest.fail("DATABASE_URL is required for ingestion workflow PostgreSQL tests")
+        pytest.skip("DATABASE_URL is not configured")
+    try:
+        with psycopg.connect(DATABASE_URL, connect_timeout=2) as connection:
+            connection.execute("SELECT 1")
+    except psycopg.OperationalError as exc:
+        if required:
+            pytest.fail(f"Required PostgreSQL test database is unavailable: {exc}")
+        pytest.skip(f"PostgreSQL test database is unavailable: {exc}")
 
 
 def processing_service(*, min_document_length: int = 40) -> ContentProcessingService:
@@ -347,14 +405,8 @@ def test_synchronous_database_retry_reuses_prepared_embeddings():
     assert delays == [0]
 
 
-def test_database_backed_ingestion_is_immediately_retrievable_and_idempotent():
-    if not DATABASE_URL:
-        pytest.skip("DATABASE_URL is not configured")
-    try:
-        with psycopg.connect(DATABASE_URL, connect_timeout=2) as connection:
-            connection.execute("SELECT 1")
-    except psycopg.OperationalError as exc:
-        pytest.skip(f"PostgreSQL test database is unavailable: {exc}")
+def test_database_backed_ingestion_replaces_changed_content_and_supplies_chat_context():
+    require_database()
 
     from main import app
 
@@ -362,9 +414,11 @@ def test_database_backed_ingestion_is_immediately_retrievable_and_idempotent():
     source_url = f"https://example.com/workflow-{uuid4()}"
     jobs = PostgresIngestionJobRepository()
     provider = DeterministicEmbeddingProvider(EMBEDDING_VECTOR_DIMENSIONS)
+    initial_html = (FIXTURE_DIR / "business_homepage.html").read_text()
+    changed_html = (FIXTURE_DIR / "service_page.html").read_text()
     service = IngestionService(
         jobs,
-        website_loader((FIXTURE_DIR / "business_homepage.html").read_text()),
+        sequenced_website_loader([initial_html, initial_html, changed_html]),
         processing_service(),
         KnowledgePersistenceService(
             provider,
@@ -380,6 +434,7 @@ def test_database_backed_ingestion_is_immediately_retrievable_and_idempotent():
         client = TestClient(app, raise_server_exceptions=False)
         first = client.post("/assistant/knowledge/ingestions", json={"url": source_url})
         second = client.post("/assistant/knowledge/ingestions", json={"url": source_url})
+        changed = client.post("/assistant/knowledge/ingestions", json={"url": source_url})
 
         assert first.status_code == 201
         assert first.json()["status"] == "completed"
@@ -387,11 +442,15 @@ def test_database_backed_ingestion_is_immediately_retrievable_and_idempotent():
         assert second.status_code == 201
         assert second.json()["status"] == "completed"
         assert second.json()["chunksCreated"] == 0
-        for body in (first.json(), second.json()):
+        assert changed.status_code == 201
+        assert changed.json()["status"] == "completed"
+        assert changed.json()["chunksCreated"] >= 1
+        for body in (first.json(), second.json(), changed.json()):
             stored_job = jobs.get(UUID(body["jobId"]))
             assert stored_job is not None
             assert stored_job.status.value == "completed"
-        assert len(provider.batch_calls) == 1
+        assert len(provider.batch_calls) == 2
+        assert any("grounded assistants" in text for text in provider.batch_calls[1])
 
         with get_connection() as connection:
             document_count, chunk_count = connection.execute(
@@ -403,18 +462,36 @@ def test_database_backed_ingestion_is_immediately_retrievable_and_idempotent():
                 (source_url,),
             ).fetchone()
         assert document_count == 1
-        assert chunk_count == first.json()["chunksCreated"]
+        assert chunk_count == changed.json()["chunksCreated"]
 
-        retrieved = RetrievalService(
+        retrieval = RetrievalService(
             provider,
             VectorKnowledgeRepository(PgVectorStore()),
             assistant_id=REDMOOR_ASSISTANT_ID,
             limit=1000,
             min_score=0.99,
-        ).retrieve("What does Northstar Digital do?")
+        )
+        retrieved = retrieval.retrieve("What does Northstar Digital build?")
         matching = [chunk for chunk in retrieved if chunk.document.source_uri == source_url]
         assert matching
-        assert any("modernise important services" in chunk.content for chunk in matching)
+        assert any("grounded assistants" in chunk.content for chunk in matching)
+        assert all("modernise important services" not in chunk.content for chunk in matching)
+        assert {chunk.document.title for chunk in matching} == {
+            "AI Integration | Northstar Digital"
+        }
+
+        completion_provider = RecordingCompletionProvider()
+        chat_response = ChatService(completion_provider, retrieval).chat(
+            ChatRequest(message="What does Northstar Digital build?")
+        )
+
+        assert completion_provider.user_prompt is not None
+        assert "grounded assistants" in completion_provider.user_prompt
+        assert "modernise important services" not in completion_provider.user_prompt
+        assert chat_response.message == "Grounded response"
+        source_titles = [source.title for source in chat_response.sources]
+        assert "AI Integration | Northstar Digital" in source_titles
+        assert "Northstar Digital" not in source_titles
     finally:
         app.dependency_overrides.pop(get_ingestion_service, None)
         with get_connection() as connection:

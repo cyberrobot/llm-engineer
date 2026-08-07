@@ -151,7 +151,15 @@ unchanged rerun therefore completes with zero newly created chunks while retaini
 indexed knowledge and avoiding duplicate embedding requests. Loader, processing, or persistence
 failures transition the running job to failed and return a generic application error without
 exposing upstream, provider, or database exceptions. Pipeline logs include stage and total timings,
-counts, and job identifiers, but never raw HTML, cleaned text, chunk contents, or embeddings.
+counts, job identifiers, and at most the source origin; they never include URL paths, queries,
+fragments, raw HTML, cleaned text, chunk contents, or embeddings.
+
+Job-state writes are reconciled by reloading the job after an ambiguous repository error. A write
+that committed before raising is accepted only when the durable state matches the intended running
+or completed transition. If the final completion write did not commit, the durable running job is
+marked failed where possible; already committed knowledge is not rolled back or embedded again. A
+later unchanged ingestion safely reuses that knowledge through the normal persistence idempotency
+rules.
 
 The endpoint intentionally remains synchronous. Background workers, scheduling, and whole-job
 retries are outside this workflow.
