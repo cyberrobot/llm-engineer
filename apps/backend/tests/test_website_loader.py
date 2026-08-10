@@ -60,6 +60,25 @@ def test_load_returns_untouched_html_and_metadata_for_valid_website():
     assert document.retrieved_at.tzinfo is not None
 
 
+def test_loader_logs_origins_without_paths_queries_or_fragments(caplog):
+    loader = make_loader(lambda request: html_response(request, "<html>safe</html>"))
+
+    with caplog.at_level(logging.INFO):
+        documents = loader.load(
+            "https://example.com/private/path-secret?token=query-secret#fragment-secret"
+        )
+
+    assert documents[0].url == "https://example.com/private/path-secret?token=query-secret"
+    logged_urls = [
+        value
+        for record in caplog.records
+        for field in ("root_url", "source_url", "page_url")
+        if isinstance(value := getattr(record, field, None), str)
+    ]
+    assert logged_urls
+    assert set(logged_urls) == {"https://example.com"}
+
+
 def test_load_follows_safe_redirect_and_uses_final_url():
     requested_urls: list[str] = []
 

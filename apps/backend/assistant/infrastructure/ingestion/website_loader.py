@@ -15,6 +15,7 @@ from assistant.application.ports.website_loader import (
     WebsiteLoadError,
     WebsiteTimeoutError,
 )
+from assistant.application.safe_url import safe_url_origin
 from assistant.domain.website_document import WebsiteDocument
 from assistant.infrastructure.ingestion.url_normaliser import (
     AddressResolver,
@@ -118,7 +119,7 @@ class HttpWebsiteLoader(WebsiteLoader):
         except TimeoutError as exc:
             raise WebsiteTimeoutError("Website hostname resolution timed out.") from exc
         started_at = monotonic()
-        logger.info("Website crawl started", extra={"root_url": root_url})
+        logger.info("Website crawl started", extra={"root_url": safe_url_origin(root_url)})
 
         try:
             root_page = self._download(root_url, allowed_origin=None)
@@ -140,7 +141,10 @@ class HttpWebsiteLoader(WebsiteLoader):
         loaded_urls = {root_page.url}
         logger.info(
             "Website page loaded",
-            extra={"page_url": root_page.url, "status_code": root_page.status_code},
+            extra={
+                "page_url": safe_url_origin(root_page.url),
+                "status_code": root_page.status_code,
+            },
         )
 
         queue: deque[str] = deque()
@@ -158,7 +162,10 @@ class HttpWebsiteLoader(WebsiteLoader):
                 pages_skipped += 1
                 logger.warning(
                     "Website page skipped",
-                    extra={"page_url": page_url, "reason": type(exc).__name__},
+                    extra={
+                        "page_url": safe_url_origin(page_url),
+                        "reason": type(exc).__name__,
+                    },
                 )
                 continue
 
@@ -169,14 +176,17 @@ class HttpWebsiteLoader(WebsiteLoader):
             documents.append(self._to_document(page))
             logger.info(
                 "Website page loaded",
-                extra={"page_url": page.url, "status_code": page.status_code},
+                extra={
+                    "page_url": safe_url_origin(page.url),
+                    "status_code": page.status_code,
+                },
             )
             self._enqueue_links(page, crawl_origin, queue, seen)
 
         logger.info(
             "Website crawl completed",
             extra={
-                "root_url": root_url,
+                "root_url": safe_url_origin(root_url),
                 "pages_loaded": len(documents),
                 "pages_skipped": pages_skipped,
                 "duration_seconds": monotonic() - started_at,
@@ -296,7 +306,10 @@ class HttpWebsiteLoader(WebsiteLoader):
         except (
             Exception
         ):  # HTMLParser can reject malformed declarations; the document remains valid output.
-            logger.warning("Website link discovery skipped", extra={"page_url": page.url})
+            logger.warning(
+                "Website link discovery skipped",
+                extra={"page_url": safe_url_origin(page.url)},
+            )
             return
 
         for href in parser.links:
@@ -310,7 +323,10 @@ class HttpWebsiteLoader(WebsiteLoader):
             queue.append(discovered_url)
             logger.info(
                 "Website page discovered",
-                extra={"source_url": page.url, "page_url": discovered_url},
+                extra={
+                    "source_url": safe_url_origin(page.url),
+                    "page_url": safe_url_origin(discovered_url),
+                },
             )
 
     @staticmethod
@@ -328,7 +344,10 @@ class HttpWebsiteLoader(WebsiteLoader):
     def _log_failed_crawl(root_url: str, started_at: float) -> None:
         logger.error(
             "Website crawl failed",
-            extra={"root_url": root_url, "duration_seconds": monotonic() - started_at},
+            extra={
+                "root_url": safe_url_origin(root_url),
+                "duration_seconds": monotonic() - started_at,
+            },
         )
 
     @staticmethod
