@@ -33,7 +33,7 @@ class SemanticTextChunker(TextChunker):
     def chunk(self, document: CleanDocument) -> list[KnowledgeChunk]:
         units = self._units(document.text)
         base_chunks = self._pack(units)
-        base_chunks = self._rebalance_small_tail(base_chunks)
+        base_chunks = self._normalise_minimum_size(base_chunks)
         overlapped = self._apply_overlap(base_chunks)
         return [
             KnowledgeChunk.create(
@@ -143,30 +143,116 @@ class SemanticTextChunker(TextChunker):
             for index in range(0, len(text), self._chunk_size)
         ]
 
-    def _rebalance_small_tail(self, chunks: list[_Unit]) -> list[_Unit]:
-        if len(chunks) < 2 or len(chunks[-1].text) >= self._min_chunk_size:
-            return chunks
-        previous, tail = chunks[-2:]
-        separator = "\n\n"
-        if len(previous.text) + len(separator) + len(tail.text) <= self._chunk_size:
-            return [
-                *chunks[:-2],
-                _Unit(previous.text + separator + tail.text, previous.heading_path),
-            ]
-        needed = self._min_chunk_size - len(tail.text)
-        if len(previous.text) - needed < self._min_chunk_size:
-            return chunks
-        boundary = len(previous.text) - needed
-        moved = previous.text[boundary:]
-        shortened = previous.text[:boundary].rstrip()
-        extended = f"{moved.lstrip()} {tail.text}".strip()
-        if shortened and len(extended) <= self._chunk_size:
-            return [
-                *chunks[:-2],
-                _Unit(shortened, previous.heading_path),
-                _Unit(extended, tail.heading_path),
-            ]
-        return chunks
+    def _normalise_minimum_size(self, chunks: list[_Unit]) -> list[_Unit]:
+        """Best-effort minimum-size normalisation across the full ordered sequence."""
+        normalised = list(chunks)
+        index = 0
+        while index < len(normalised):
+            current = normalised[index]
+            if len(current.text) >= self._min_chunk_size or len(normalised) == 1:
+                index += 1
+                continue
+
+            if (
+                index > 0
+                and self._combined_length(normalised[index - 1], current) <= self._chunk_size
+            ):
+                normalised[index - 1] = self._merge(normalised[index - 1], current)
+                del normalised[index]
+                index = max(0, index - 1)
+                continue
+
+            if (
+                index + 1 < len(normalised)
+                and self._combined_length(current, normalised[index + 1]) <= self._chunk_size
+            ):
+                normalised[index] = self._merge(current, normalised[index + 1])
+                del normalised[index + 1]
+                continue
+
+            if index > 0:
+                redistributed = self._redistribute_from_previous(normalised[index - 1], current)
+                if redistributed is not None:
+                    normalised[index - 1], normalised[index] = redistributed
+                    index += 1
+                    continue
+
+            if index + 1 < len(normalised):
+                redistributed = self._redistribute_from_following(current, normalised[index + 1])
+                if redistributed is not None:
+                    normalised[index], normalised[index + 1] = redistributed
+                    index += 1
+                    continue
+
+            index += 1
+        return normalised
+
+    @staticmethod
+    def _combined_length(left: _Unit, right: _Unit) -> int:
+        return len(left.text) + 2 + len(right.text)
+
+    @staticmethod
+    def _merge(left: _Unit, right: _Unit) -> _Unit:
+        # The earliest heading path deterministically describes merged ordered content.
+        return _Unit(f"{left.text}\n\n{right.text}", left.heading_path)
+
+    def _redistribute_from_previous(
+        self, previous: _Unit, current: _Unit
+    ) -> tuple[_Unit, _Unit] | None:
+        needed = self._min_chunk_size - len(current.text)
+        maximum = min(
+            len(previous.text) - self._min_chunk_size,
+            self._chunk_size - len(current.text) - 2,
+        )
+        split = self._split_suffix(previous.text, needed, maximum)
+        if split is None:
+            return None
+        shortened, moved = split
+        extended = f"{moved}\n\n{current.text}"
+        if len(shortened) < self._min_chunk_size or len(extended) > self._chunk_size:
+            return None
+        return _Unit(shortened, previous.heading_path), _Unit(extended, current.heading_path)
+
+    def _redistribute_from_following(
+        self, current: _Unit, following: _Unit
+    ) -> tuple[_Unit, _Unit] | None:
+        needed = self._min_chunk_size - len(current.text)
+        maximum = min(
+            len(following.text) - self._min_chunk_size,
+            self._chunk_size - len(current.text) - 2,
+        )
+        split = self._split_prefix(following.text, needed, maximum)
+        if split is None:
+            return None
+        moved, shortened = split
+        extended = f"{current.text}\n\n{moved}"
+        if len(shortened) < self._min_chunk_size or len(extended) > self._chunk_size:
+            return None
+        return _Unit(extended, current.heading_path), _Unit(shortened, following.heading_path)
+
+    @staticmethod
+    def _split_suffix(text: str, minimum: int, maximum: int) -> tuple[str, str] | None:
+        if minimum <= 0 or maximum < minimum:
+            return None
+        lower = len(text) - maximum
+        upper = len(text) - minimum
+        for boundary in range(upper, lower - 1, -1):
+            if boundary > 0 and (text[boundary - 1].isspace() or text[boundary].isspace()):
+                left, right = text[:boundary].rstrip(), text[boundary:].lstrip()
+                if minimum <= len(right) <= maximum and left:
+                    return left, right
+        return None
+
+    @staticmethod
+    def _split_prefix(text: str, minimum: int, maximum: int) -> tuple[str, str] | None:
+        if minimum <= 0 or maximum < minimum:
+            return None
+        for boundary in range(minimum, maximum + 1):
+            if boundary < len(text) and (text[boundary - 1].isspace() or text[boundary].isspace()):
+                left, right = text[:boundary].rstrip(), text[boundary:].lstrip()
+                if minimum <= len(left) <= maximum and right:
+                    return left, right
+        return None
 
     def _apply_overlap(self, chunks: list[_Unit]) -> list[_Unit]:
         if self._overlap == 0 or len(chunks) < 2:

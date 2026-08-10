@@ -11,7 +11,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "content_processing"
 RETRIEVED_AT = datetime(2026, 7, 29, 9, 0, tzinfo=timezone.utc)
 
 
-def website_load_result() -> list[WebsiteDocument]:
+def loaded_documents() -> list[WebsiteDocument]:
     return [
         WebsiteDocument(
             url=f"https://example.com/{name.removesuffix('.html')}",
@@ -32,7 +32,9 @@ def test_raw_website_documents_are_transformed_to_clean_ordered_chunks_without_s
         SemanticTextChunker(chunk_size=120, overlap=20, min_chunk_size=20),
     )
 
-    result = service.process(website_load_result())
+    documents = loaded_documents()
+    result = service.process(documents)
+    repeated = service.process(documents)
 
     assert result.documents_received == 3
     assert result.documents_processed == 2
@@ -44,3 +46,5 @@ def test_raw_website_documents_are_transformed_to_clean_ordered_chunks_without_s
     assert all(chunk.text.strip() == chunk.text and chunk.text for chunk in result.chunks)
     assert all("SCRIPT SECRET" not in chunk.text for chunk in result.chunks)
     assert all(not hasattr(chunk, "embedding") for chunk in result.chunks)
+    assert repeated.chunks == result.chunks
+    assert repeated.warnings == result.warnings

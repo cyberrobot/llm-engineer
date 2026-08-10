@@ -9,4 +9,4 @@ class TextChunker(ABC):
 
     @abstractmethod
     def chunk(self, document: CleanDocument) -> list[KnowledgeChunk]:
-        """Split a clean document into non-empty knowledge chunks."""
+        """Return ordered chunks, or raise a declared recoverable page-level chunking error."""

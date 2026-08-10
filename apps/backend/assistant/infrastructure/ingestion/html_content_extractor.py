@@ -10,7 +10,9 @@ from assistant.domain.website_document import WebsiteDocument
 
 _SPACE = re.compile(r"\s+")
 _BOILERPLATE_MARKERS = re.compile(
-    r"(?:^|[-_\s])(cookie|consent|modal|overlay|social|share|sidebar|navigation|breadcrumb)(?:$|[-_\s])",
+    r"(?:^|[-_\s])(?:cookie[-_\s](?:banner|consent|controls?|settings)|"
+    r"consent[-_\s](?:banner|dialog|modal)|modal[-_\s]overlay|social[-_\s]share|"
+    r"share[-_\s](?:buttons?|controls?)|sidebar[-_\s]navigation|breadcrumb)(?:$|[-_\s])",
     re.IGNORECASE,
 )
 _BOILERPLATE_TITLES = {
@@ -89,6 +91,7 @@ class HtmlContentExtractor(ContentExtractor):
 
     @staticmethod
     def _extract_title(soup: BeautifulSoup, supplied_title: str | None) -> str | None:
+        """Prefer loader, Open Graph, Twitter, HTML, then the first meaningful h1."""
         candidates: list[str | None] = [supplied_title]
         for selector in ('meta[property="og:title"]', 'meta[name="twitter:title"]'):
             metadata = soup.select_one(selector)
