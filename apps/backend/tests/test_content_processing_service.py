@@ -4,8 +4,14 @@ from datetime import datetime, timezone
 import pytest
 
 from assistant.application.content_processing_service import (
+    ContentProcessingError,
     ContentProcessingService,
     NoProcessableContentError,
+)
+from assistant.application.content_stage_errors import (
+    RecoverableContentExtractionError,
+    RecoverableTextChunkingError,
+    RecoverableTextCleaningError,
 )
 from assistant.application.ports.content_extractor import ContentExtractor
 from assistant.application.ports.text_chunker import TextChunker
@@ -41,39 +47,50 @@ def chunk(document: CleanDocument) -> KnowledgeChunk:
 
 
 class FakeExtractor(ContentExtractor):
-    def __init__(self, failures=(), empty=()):
+    def __init__(self, failures=(), empty=(), unexpected=()):
         self.failures = set(failures)
         self.empty = set(empty)
+        self.unexpected = set(unexpected)
+        self.seen = []
 
     def extract(self, document):
+        self.seen.append(document.url)
         if document.url in self.failures:
-            raise ValueError("malformed page")
+            raise RecoverableContentExtractionError("EXTRACTION SECRET")
+        if document.url in self.unexpected:
+            raise TypeError("EXTRACTION PROGRAMMING SECRET")
         if document.url in self.empty:
             return None
         return extracted(document)
 
 
 class FakeCleaner(TextCleaner):
-    def __init__(self, failures=(), empty=()):
+    def __init__(self, failures=(), empty=(), unexpected=()):
         self.failures = set(failures)
         self.empty = set(empty)
+        self.unexpected = set(unexpected)
 
     def clean(self, document):
         if document.source_url in self.failures:
-            raise ValueError("cleaning failed")
+            raise RecoverableTextCleaningError("CLEANING SECRET")
+        if document.source_url in self.unexpected:
+            raise TypeError("CLEANING PROGRAMMING SECRET")
         if document.source_url in self.empty:
             return None
         return cleaned(document)
 
 
 class FakeChunker(TextChunker):
-    def __init__(self, failures=(), empty=()):
+    def __init__(self, failures=(), empty=(), unexpected=()):
         self.failures = set(failures)
         self.empty = set(empty)
+        self.unexpected = set(unexpected)
 
     def chunk(self, document):
         if document.source_url in self.failures:
-            raise ValueError("chunking failed")
+            raise RecoverableTextChunkingError("CHUNKING SECRET")
+        if document.source_url in self.unexpected:
+            raise TypeError("CHUNKING PROGRAMMING SECRET")
         if document.source_url in self.empty:
             return []
         return [chunk(document)]
@@ -112,14 +129,17 @@ def test_processes_multiple_documents_in_input_and_chunk_order(caplog):
         ("chunker", "chunking_failed"),
     ],
 )
-def test_one_page_stage_failure_warns_and_does_not_stop_valid_documents(stage, expected_code):
+def test_recoverable_stage_failure_warns_and_does_not_stop_valid_documents(
+    stage, expected_code, caplog
+):
     bad = "https://example.com/bad"
     extractor = FakeExtractor(failures=[bad] if stage == "extractor" else [])
     cleaner = FakeCleaner(failures=[bad] if stage == "cleaner" else [])
     chunker = FakeChunker(failures=[bad] if stage == "chunker" else [])
     service = ContentProcessingService(extractor, cleaner, chunker)
 
-    result = service.process([raw(bad), raw("https://example.com/good")])
+    with caplog.at_level(logging.WARNING):
+        result = service.process([raw(bad), raw("https://example.com/good")])
 
     assert result.documents_processed == 1
     assert result.documents_skipped == 1
@@ -127,6 +147,51 @@ def test_one_page_stage_failure_warns_and_does_not_stop_valid_documents(stage, e
     assert [(warning.source_url, warning.code) for warning in result.warnings] == [
         (bad, expected_code)
     ]
+    assert "SECRET" not in caplog.text
+    assert all("SECRET" not in warning.message for warning in result.warnings)
+
+
+@pytest.mark.parametrize(
+    ("component", "stage"),
+    [("extractor", "extraction"), ("cleaner", "cleaning"), ("chunker", "chunking")],
+)
+def test_unexpected_stage_failure_aborts_with_safe_chained_error(component, stage, caplog):
+    bad = "https://user:password@example.com/private?token=secret#fragment"
+    extractor = FakeExtractor(unexpected=[bad] if component == "extractor" else [])
+    cleaner = FakeCleaner(unexpected=[bad] if component == "cleaner" else [])
+    chunker = FakeChunker(unexpected=[bad] if component == "chunker" else [])
+    service = ContentProcessingService(extractor, cleaner, chunker)
+
+    with caplog.at_level(logging.ERROR), pytest.raises(ContentProcessingError) as raised:
+        service.process([raw(bad), raw("https://example.com/not-processed")])
+
+    assert isinstance(raised.value.__cause__, TypeError)
+    assert str(raised.value) == f"Unexpected content-processing failure during {stage}."
+    assert "PROGRAMMING SECRET" not in caplog.text
+    assert "password" not in caplog.text
+    assert "token" not in caplog.text
+    failure_record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "Unexpected content-processing failure"
+    )
+    assert failure_record.stage == stage
+    assert failure_record.source == "https://example.com"
+    assert failure_record.exception_type == "TypeError"
+    assert extractor.seen == [bad]
+
+
+def test_arbitrary_value_error_is_not_treated_as_a_recoverable_page_failure():
+    class InvalidExtractor(ContentExtractor):
+        def extract(self, document):
+            raise ValueError("unexpected invariant failure")
+
+    service = ContentProcessingService(InvalidExtractor(), FakeCleaner(), FakeChunker())
+
+    with pytest.raises(ContentProcessingError) as raised:
+        service.process([raw("https://example.com/bad")])
+
+    assert isinstance(raised.value.__cause__, ValueError)
 
 
 @pytest.mark.parametrize(

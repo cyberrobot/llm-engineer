@@ -2,9 +2,15 @@ import logging
 from collections.abc import Sequence
 from time import monotonic
 
+from assistant.application.content_stage_errors import (
+    RecoverableContentExtractionError,
+    RecoverableTextChunkingError,
+    RecoverableTextCleaningError,
+)
 from assistant.application.ports.content_extractor import ContentExtractor
 from assistant.application.ports.text_chunker import TextChunker
 from assistant.application.ports.text_cleaner import TextCleaner
+from assistant.application.safe_url import safe_url_origin
 from assistant.domain.content_processing_result import (
     ContentProcessingResult,
     ProcessingWarning,
@@ -51,7 +57,7 @@ class ContentProcessingService:
         for document in documents:
             try:
                 extracted = self._extractor.extract(document)
-            except Exception:
+            except RecoverableContentExtractionError:
                 failure_counts["extraction"] += 1
                 self._warn(
                     warnings,
@@ -60,6 +66,8 @@ class ContentProcessingService:
                     "The page could not be parsed and was skipped.",
                 )
                 continue
+            except Exception as exc:
+                self._raise_unexpected(document, stage="extraction", failure=exc)
             if extracted is None:
                 self._warn(
                     warnings,
@@ -71,7 +79,7 @@ class ContentProcessingService:
 
             try:
                 clean = self._cleaner.clean(extracted)
-            except Exception:
+            except RecoverableTextCleaningError:
                 failure_counts["cleaning"] += 1
                 self._warn(
                     warnings,
@@ -80,6 +88,8 @@ class ContentProcessingService:
                     "The extracted page could not be normalised and was skipped.",
                 )
                 continue
+            except Exception as exc:
+                self._raise_unexpected(document, stage="cleaning", failure=exc)
             if clean is None:
                 self._warn(
                     warnings,
@@ -91,7 +101,7 @@ class ContentProcessingService:
 
             try:
                 page_chunks = self._chunker.chunk(clean)
-            except Exception:
+            except RecoverableTextChunkingError:
                 failure_counts["chunking"] += 1
                 self._warn(
                     warnings,
@@ -100,6 +110,8 @@ class ContentProcessingService:
                     "The cleaned page could not be chunked and was skipped.",
                 )
                 continue
+            except Exception as exc:
+                self._raise_unexpected(document, stage="chunking", failure=exc)
             if not page_chunks:
                 self._warn(
                     warnings,
@@ -128,7 +140,30 @@ class ContentProcessingService:
     @staticmethod
     def _warn(warnings: list[ProcessingWarning], source_url: str, code: str, message: str) -> None:
         warnings.append(ProcessingWarning(source_url=source_url, code=code, message=message))
-        logger.warning("Website document skipped", extra={"source_url": source_url, "code": code})
+        logger.warning(
+            "Website document skipped",
+            extra={"source": safe_url_origin(source_url), "code": code},
+        )
+
+    @staticmethod
+    def _raise_unexpected(
+        document: WebsiteDocument,
+        *,
+        stage: str,
+        failure: Exception,
+    ) -> None:
+        logger.error(
+            "Unexpected content-processing failure",
+            extra={
+                "stage": stage,
+                "source": safe_url_origin(document.url),
+                "document_characters": len(document.html),
+                "exception_type": type(failure).__name__,
+            },
+        )
+        raise ContentProcessingError(
+            f"Unexpected content-processing failure during {stage}."
+        ) from failure
 
     @staticmethod
     def _log_result(result: ContentProcessingResult, failure_counts: dict[str, int]) -> None:

@@ -79,6 +79,75 @@ def test_hard_split_balances_a_small_tail_when_minimum_size_can_be_satisfied():
     assert [len(chunk.text) for chunk in chunks] == [22, 22, 21]
 
 
+def test_short_first_section_merges_forward_when_the_combination_fits():
+    text = "# Tiny\n\nbrief\n\n# Large\n\n" + "a" * 70
+
+    chunks = SemanticTextChunker(chunk_size=100, overlap=0, min_chunk_size=30).chunk(
+        clean_document(text)
+    )
+
+    assert len(chunks) == 1
+    assert chunks[0].text == text
+    assert chunks[0].heading_path == ("Tiny",)
+
+
+def test_short_middle_section_merges_backward_without_reordering_content():
+    sections = [
+        "# First\n\n" + "a" * 70,
+        "# Tiny\n\nbrief",
+        "# Last\n\n" + "z" * 70,
+    ]
+    chunker = SemanticTextChunker(chunk_size=100, overlap=0, min_chunk_size=30)
+
+    chunks = chunker.chunk(clean_document("\n\n".join(sections)))
+
+    assert [chunk.text for chunk in chunks] == ["\n\n".join(sections[:2]), sections[2]]
+    assert [chunk.heading_path for chunk in chunks] == [("First",), ("Last",)]
+    assert all(len(chunk.text) >= 30 for chunk in chunks)
+
+
+def test_short_final_section_merges_backward_when_the_combination_fits():
+    sections = ["# Large\n\n" + "a" * 70, "# Tiny\n\nbrief"]
+
+    chunks = SemanticTextChunker(chunk_size=100, overlap=0, min_chunk_size=30).chunk(
+        clean_document("\n\n".join(sections))
+    )
+
+    assert [chunk.text for chunk in chunks] == ["\n\n".join(sections)]
+    assert chunks[0].heading_path == ("Large",)
+
+
+def test_short_middle_section_redistributes_at_a_whitespace_boundary_when_merge_would_overflow():
+    sections = [
+        "# First\n\n" + "useful context " * 5,
+        "# Tiny\n\nbrief",
+        "# Last\n\n" + "stable outcome " * 5,
+    ]
+
+    chunks = SemanticTextChunker(chunk_size=90, overlap=0, min_chunk_size=30).chunk(
+        clean_document("\n\n".join(sections))
+    )
+
+    assert len(chunks) == 3
+    assert all(30 <= len(chunk.text) <= 90 for chunk in chunks)
+    assert [chunk.heading_path for chunk in chunks] == [("First",), ("Tiny",), ("Last",)]
+    words = [word for chunk in chunks for word in chunk.text.split()]
+    assert words == "\n\n".join(sections).split()
+
+
+def test_unavoidable_short_section_is_retained_with_order_and_limits_intact():
+    sections = ["# A\n\n" + "a" * 15, "# B\n\n" + "b" * 5, "# C\n\n" + "c" * 15]
+
+    chunks = SemanticTextChunker(chunk_size=30, overlap=0, min_chunk_size=20).chunk(
+        clean_document("\n\n".join(sections))
+    )
+
+    assert [chunk.text for chunk in chunks] == sections
+    assert [chunk.sequence for chunk in chunks] == [0, 1, 2]
+    assert [chunk.heading_path for chunk in chunks] == [("A",), ("B",), ("C",)]
+    assert all(0 < len(chunk.text) <= 30 for chunk in chunks)
+
+
 def test_overlap_reuses_bounded_context_without_repeating_a_full_chunk():
     text = "\n\n".join(
         [

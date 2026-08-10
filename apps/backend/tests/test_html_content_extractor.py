@@ -100,6 +100,59 @@ def test_title_precedence_uses_document_metadata_then_html_title_then_first_h1()
     )
 
 
+def test_title_precedence_uses_open_graph_then_twitter_then_html_title():
+    extractor = HtmlContentExtractor()
+    body = "<body><main><h1>Heading</h1><p>Useful content.</p></main></body>"
+    all_metadata = (
+        '<head><meta property="og:title" content="Open Graph Title">'
+        '<meta name="twitter:title" content="Twitter Title"><title>HTML Title</title></head>'
+    )
+    twitter_and_html = (
+        '<head><meta name="twitter:title" content="Twitter Title"><title>HTML Title</title></head>'
+    )
+
+    assert extractor.extract(website_document(all_metadata + body)).title == "Open Graph Title"
+    assert extractor.extract(website_document(twitter_and_html + body)).title == "Twitter Title"
+    assert (
+        extractor.extract(website_document("<head><title>HTML Title</title></head>" + body)).title
+        == "HTML Title"
+    )
+
+
+def test_missing_or_invalid_title_candidates_fall_back_then_return_none():
+    extractor = HtmlContentExtractor()
+    useful_body = "<main><h1>First heading</h1><h1>Second heading</h1><p>Content.</p></main>"
+    invalid_metadata = (
+        '<head><meta property="og:title" content="   ">'
+        '<meta name="twitter:title" content="Cookie settings">'
+        f"<title>{'x' * 201}</title></head>"
+    )
+
+    assert (
+        extractor.extract(website_document(invalid_metadata + useful_body)).title == "First heading"
+    )
+    assert extractor.extract(website_document("<main><p>Content only.</p></main>")).title is None
+
+
+def test_legitimate_social_and_share_content_survives_but_sharing_controls_are_removed():
+    html = """
+    <main>
+      <section class="social-proof"><p>Trusted by hundreds of organisations.</p></section>
+      <section class="share-price"><p>Current investor information.</p></section>
+      <div class="social-share"><p>Share on a social network.</p></div>
+      <div class="share-buttons"><p>Copy sharing link.</p></div>
+    </main>
+    """
+
+    extracted = HtmlContentExtractor().extract(website_document(html))
+
+    assert extracted is not None
+    assert "Trusted by hundreds of organisations." in extracted.text
+    assert "Current investor information." in extracted.text
+    assert "Share on a social network." not in extracted.text
+    assert "Copy sharing link." not in extracted.text
+
+
 def test_long_or_boilerplate_metadata_title_falls_back_to_meaningful_h1():
     html = (
         '<html><head><meta property="og:title" content="Cookie settings" />'

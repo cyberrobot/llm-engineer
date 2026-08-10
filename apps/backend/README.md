@@ -82,8 +82,16 @@ paragraph boundaries, then uses the existing sentence segmenter, with word and h
 splits only as fallbacks. Chunk order, hashes, UUIDs, and heading-path metadata are deterministic.
 Overlap copies at most the configured number of characters from the prior base chunk, trims to a
 word boundary when possible, never copies a full prior chunk, and never makes a chunk exceed the
-configured size. The minimum chunk size is honoured where the available content can satisfy it;
-a whole document shorter than that minimum remains one useful chunk rather than being discarded.
+configured size. The minimum chunk size is a best-effort constraint across the full ordered chunk
+sequence: short chunks are merged or redistributed at a nearby boundary when size limits permit,
+and otherwise retained without dropping content. A whole document shorter than that minimum
+remains one useful chunk rather than being discarded. Merges retain the earliest heading path.
+
+The loader's explicit `WebsiteDocument.title` takes precedence over Open Graph title, Twitter title,
+HTML `title`, and the first meaningful `h1`, in that order. Blank, excessive, and known boilerplate
+titles are ignored. Class and ID boilerplate matching is deliberately limited to specific controls
+such as cookie banners, consent dialogs, modal overlays, social-sharing controls, breadcrumbs, and
+sidebar navigation; broad terms such as `social` or `share` do not remove legitimate page content.
 
 Configuration is environment-driven:
 
@@ -92,9 +100,13 @@ Configuration is environment-driven:
 - `INGESTION_MIN_CHUNK_SIZE_CHARACTERS` (default `100`)
 - `INGESTION_MIN_DOCUMENT_LENGTH_CHARACTERS` (default `50`)
 
-Pages with no extracted body, too little cleaned content, or a recoverable page-level processing
-failure are skipped with a structured warning while other pages continue. If no page creates a
-chunk, the service raises `NoProcessableContentError` carrying the aggregate result and warnings.
+`WebsiteLoader` returns `list[WebsiteDocument]`, and processing accepts that collection as a
+`Sequence[WebsiteDocument]`; there is no separate crawl-result wrapper. Pages with no extracted
+body, too little cleaned content, or an explicitly recoverable page-level processing failure are
+skipped with a structured warning while other pages continue. Unexpected extractor, cleaner, or
+chunker failures abort processing as a chained `ContentProcessingError` and are logged only with a
+safe source origin and stage metadata. If no page creates a chunk, the service raises
+`NoProcessableContentError` carrying the aggregate result and warnings.
 
 Current extraction is intentionally conservative and does not render JavaScript or learn
 cross-page boilerplate. The processing layer itself makes no OpenAI, database, vector-store, or

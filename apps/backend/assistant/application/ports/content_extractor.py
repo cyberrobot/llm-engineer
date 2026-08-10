@@ -9,4 +9,4 @@ class ContentExtractor(ABC):
 
     @abstractmethod
     def extract(self, document: WebsiteDocument) -> ExtractedDocument | None:
-        """Return extracted content, or ``None`` when the page has no meaningful body."""
+        """Return content, ``None`` for no body, or a declared recoverable extraction error."""

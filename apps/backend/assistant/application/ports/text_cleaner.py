@@ -9,4 +9,4 @@ class TextCleaner(ABC):
 
     @abstractmethod
     def clean(self, document: ExtractedDocument) -> CleanDocument | None:
-        """Return clean content, or ``None`` when too little useful text remains."""
+        """Return clean content, ``None`` when empty, or a declared recoverable cleaning error."""
