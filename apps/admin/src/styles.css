@@ -12,7 +12,8 @@ body {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button,
@@ -41,6 +42,7 @@ a:focus-visible,
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 [tabindex='-1']:focus {
   outline: 3px solid #e1aa48;
   outline-offset: 3px;
@@ -82,7 +84,8 @@ select:focus-visible,
 }
 .login-panel input,
 .assistant-form input,
-.assistant-form select {
+.assistant-form select,
+.assistant-form textarea {
   padding: 0.8rem;
   border: 1px solid #80918b;
   border-radius: 0.4rem;
@@ -303,6 +306,40 @@ td {
 .danger {
   background: #9a2f24;
 }
+.secondary-action {
+  background: #e7ece8;
+  color: #194f3c;
+  border: 1px solid #80918b;
+}
+.source-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+  gap: 1rem;
+}
+.source-card,
+.source-detail > .source-card {
+  background: #fff;
+  border: 1px solid #d7dfda;
+  border-radius: 0.7rem;
+  padding: 1.25rem;
+}
+.source-card h2 { margin-top: 0; }
+.source-detail { display: grid; gap: 1rem; max-width: 65rem; }
+.source-detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.5rem 1rem; }
+.source-detail dt { font-weight: 700; }
+.source-detail dd { margin: 0; }
+.source-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 28rem;
+  overflow: auto;
+  background: #f4f6f3;
+  padding: 1rem;
+  border-radius: 0.4rem;
+}
+.break-content { overflow-wrap: anywhere; }
+.assistant-form fieldset { border: 1px solid #d7dfda; border-radius: 0.4rem; padding: 1rem; }
+.assistant-form fieldset label { display: inline-flex; align-items: center; margin-right: 1.5rem; }
 dialog {
   max-width: 32rem;
   border: 0;

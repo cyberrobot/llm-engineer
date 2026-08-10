@@ -572,6 +572,7 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
           {pending ? 'Saving…' : 'Save assistant'}
         </button>
         <Link to="/admin/assistants">Cancel</Link>
+        {mode === 'edit' && detail && <Link to={`/admin/assistants/${detail.id}/knowledge`}>Manage knowledge &amp; retrieval</Link>}
       </div>
     </form>
   );
