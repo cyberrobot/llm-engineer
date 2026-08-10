@@ -33,6 +33,18 @@ type CreateOperation = {
   fingerprint: string;
   key: string;
 };
+type ReingestionOperation = {
+  sourceId: string;
+  key: string;
+  outcome: 'unknown';
+};
+type ReingestionOperations = Record<string, ReingestionOperation>;
+
+function withoutReingestionOperation(operations: ReingestionOperations, sourceId: string) {
+  const remaining = { ...operations };
+  delete remaining[sourceId];
+  return remaining;
+}
 
 function safeMessage(error: unknown) {
   if (!(error instanceof AdminApiError)) return 'The request could not be completed.';
@@ -170,6 +182,7 @@ export function KnowledgeSourcesPage() {
   const [error, setError] = useState<unknown>();
   const [attempt, setAttempt] = useState(0);
   const [selected, setSelected] = useState<SelectedAction>();
+  const [reingestionOperations, setReingestionOperations] = useState<ReingestionOperations>({});
   const [notice, setNotice] = useState('');
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const addRef = useRef<HTMLAnchorElement>(null);
@@ -273,7 +286,19 @@ export function KnowledgeSourcesPage() {
         <SourceActionDialog
           {...selected}
           assistantId={assistantId}
+          reingestionOperation={reingestionOperations[selected.source.id]}
+          onReingestionOperationChange={(operation) => setReingestionOperations((current) => {
+            if (operation) return { ...current, [selected.source.id]: operation };
+            return withoutReingestionOperation(current, selected.source.id);
+          })}
           onClose={() => setSelected(undefined)}
+          onAuthoritativeRefresh={async () => {
+            const updated = await auth.api.getKnowledgeSource(assistantId, selected.source.id);
+            setPage((current) => current && ({ ...current, items: current.items.map((item) => item.id === updated.id ? updated : item) }));
+            setReingestionOperations((current) => withoutReingestionOperation(current, selected.source.id));
+            setSelected(undefined);
+            setNotice('Authoritative source state refreshed.');
+          }}
           onUpdated={(updated, message) => {
             setPage((current) => current && ({ ...current, items: current.items.map((item) => item.id === updated.id ? updated : item) }));
             setSelected(undefined);
@@ -436,6 +461,7 @@ export function KnowledgeSourceDetailPage() {
   const [attempt, setAttempt] = useState(0);
   const [notice, setNotice] = useState(() => operationNotice(location.state, sourceId));
   const [selected, setSelected] = useState<SelectedAction>();
+  const [reingestionOperations, setReingestionOperations] = useState<ReingestionOperations>({});
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const focusCreationNotice = useRef(Boolean(operationNotice(location.state, sourceId)));
   useSessionError(error);
@@ -519,7 +545,16 @@ export function KnowledgeSourceDetailPage() {
         <SourceActionDialog
           {...selected}
           assistantId={assistantId}
+          reingestionOperation={reingestionOperations[source.id]}
+          onReingestionOperationChange={(operation) => setReingestionOperations(operation ? { [source.id]: operation } : {})}
           onClose={() => setSelected(undefined)}
+          onAuthoritativeRefresh={async () => {
+            const updated = await auth.api.getKnowledgeSource(assistantId, source.id);
+            setSource(updated);
+            setReingestionOperations({});
+            setSelected(undefined);
+            setNotice('Authoritative source state refreshed.');
+          }}
           onUpdated={(updated, message) => { setSource(updated); setSelected(undefined); setNotice(message); }}
           onDeleted={() => navigate(`/admin/assistants/${assistantId}/knowledge`, { state: { deletedSource: source.id } })}
         />
@@ -533,21 +568,28 @@ function SourceActionDialog({
   source,
   trigger,
   assistantId,
+  reingestionOperation,
+  onReingestionOperationChange,
   onClose,
+  onAuthoritativeRefresh,
   onUpdated,
   onDeleted,
 }: SelectedAction & {
   assistantId: string;
+  reingestionOperation?: ReingestionOperation;
+  onReingestionOperationChange: (operation: ReingestionOperation | undefined) => void;
   onClose: () => void;
+  onAuthoritativeRefresh: () => Promise<void>;
   onUpdated: (source: KnowledgeSource, message: string) => void;
   onDeleted: () => void;
 }) {
   const auth = useAuth();
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const reingestionKey = useRef<string | undefined>(undefined);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
-  const [unknownOutcome, setUnknownOutcome] = useState(false);
+  const unresolvedOperation = action === 'reingest' && reingestionOperation?.sourceId === source.id
+    ? reingestionOperation
+    : undefined;
   useEffect(() => dialogRef.current?.showModal(), []);
   const label = action === 'reingest' ? 're-ingestion' : action === 'delete' ? 'deletion' : action;
 
@@ -560,7 +602,7 @@ function SourceActionDialog({
   async function confirm() {
     setPending(true);
     setError('');
-    setUnknownOutcome(false);
+    let submittedReingestionKey: string | undefined;
     try {
       if (action === 'delete') {
         await auth.api.deleteKnowledgeSource(assistantId, source.id);
@@ -568,10 +610,10 @@ function SourceActionDialog({
         return;
       }
       if (action === 'reingest') {
-        const key = reingestionKey.current ?? crypto.randomUUID();
-        reingestionKey.current = key;
+        const key = unresolvedOperation?.key ?? crypto.randomUUID();
+        submittedReingestionKey = key;
         const updated = await auth.api.reingestKnowledgeSource(assistantId, source.id, key);
-        reingestionKey.current = undefined;
+        onReingestionOperationChange(undefined);
         close(() => onUpdated(updated, updated.activeJobReused ? 'The active ingestion job was reused.' : 'Re-ingestion queued.'));
         return;
       }
@@ -585,16 +627,31 @@ function SourceActionDialog({
         return;
       }
       if (action === 'reingest' && isUnknownOutcome(caught)) {
-        setUnknownOutcome(true);
+        if (submittedReingestionKey) {
+          onReingestionOperationChange({ sourceId: source.id, key: submittedReingestionKey, outcome: 'unknown' });
+        }
         setError('The re-ingestion outcome is unknown. Retry the identical operation with the same key, or refresh authoritative state.');
       } else {
-        reingestionKey.current = undefined;
+        if (action === 'reingest') onReingestionOperationChange(undefined);
         setError(caught instanceof AdminApiError && caught.code === 'active_ingestion'
           ? 'This source cannot be deleted while ingestion is active.'
           : caught instanceof AdminApiError && caught.code === 'idempotency_key_conflict'
             ? 'This operation conflicts with an earlier request. Refresh authoritative state before retrying.'
             : safeMessage(caught));
       }
+      setPending(false);
+    }
+  }
+
+  async function refreshAuthoritativeState() {
+    setPending(true);
+    setError('');
+    try {
+      await onAuthoritativeRefresh();
+      close(() => undefined);
+    } catch (caught) {
+      if (caught instanceof AdminApiError && caught.kind === 'unauthenticated') return auth.sessionExpired();
+      setError(`Authoritative state could not be refreshed. ${safeMessage(caught)}`);
       setPending(false);
     }
   }
@@ -607,14 +664,17 @@ function SourceActionDialog({
         : action === 'delete'
           ? `Delete ${source.name} and its owned indexed representation?`
           : action === 'reingest'
-            ? 'Reprocess the persisted source without creating a duplicate.'
+            ? unresolvedOperation
+              ? 'The previous re-ingestion outcome is still unknown. Retry the identical operation or refresh authoritative source state.'
+              : 'Reprocess the persisted source without creating a duplicate.'
             : 'The currently committed knowledge may participate in retrieval.'}</p>
       {pending && <p role="status">Operation in progress…</p>}
       {error && <p className="alert" role="alert">{error}</p>}
       <div className="dialog-actions">
         <button className={action === 'delete' ? 'danger' : ''} disabled={pending} onClick={confirm}>
-          {pending ? 'Working…' : unknownOutcome ? 'Retry identical re-ingestion' : `Confirm ${label}`}
+          {pending ? 'Working…' : unresolvedOperation ? 'Retry identical re-ingestion' : `Confirm ${label}`}
         </button>
+        {unresolvedOperation && <button disabled={pending} onClick={() => void refreshAuthoritativeState()}>Refresh authoritative state</button>}
         <button disabled={pending} onClick={() => close(onClose)}>Cancel</button>
       </div>
     </dialog>

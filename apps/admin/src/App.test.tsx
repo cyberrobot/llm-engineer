@@ -400,6 +400,84 @@ describe('administrator application workflows',()=>{
     expect(trigger).toHaveFocus();
   });
 
+  it('preserves an unknown re-ingestion operation across repeated detail dialog dismissals',async()=>{
+    const reingestKnowledgeSource=vi.fn()
+      .mockRejectedValueOnce(new AdminApiError('network'))
+      .mockResolvedValueOnce({...source,latestIngestion:{...source.latestIngestion!,status:'queued',startedAt:null,completedAt:null}});
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'}),
+      reingestKnowledgeSource,
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    const trigger=await screen.findByRole('button',{name:'Re-ingest Policy guide'});
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole('button',{name:'Confirm re-ingestion'}));
+    await screen.findByText(/outcome is unknown/);
+    const firstKey=reingestKnowledgeSource.mock.calls[0]?.[2];
+    await userEvent.click(screen.getByRole('button',{name:'Cancel'}));
+    await userEvent.click(trigger);
+    expect(screen.getByText(/previous re-ingestion outcome is still unknown/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'Cancel'}));
+    await userEvent.click(trigger);
+    expect(reingestKnowledgeSource).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole('button',{name:'Retry identical re-ingestion'}));
+    expect(reingestKnowledgeSource.mock.calls[1]?.[2]).toBe(firstKey);
+  });
+
+  it('authoritative refresh clears a list re-ingestion operation before later independent work',async()=>{
+    const refreshed={...source,updatedAt:'2026-08-05T10:00:00Z'};
+    const getKnowledgeSource=vi.fn().mockResolvedValue(refreshed);
+    const reingestKnowledgeSource=vi.fn()
+      .mockRejectedValueOnce(new AdminApiError('server'))
+      .mockResolvedValue({...refreshed,latestIngestion:{...source.latestIngestion!,status:'queued',startedAt:null,completedAt:null}});
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      listKnowledgeSources:vi.fn().mockResolvedValue({items:[source],total:1,limit:50,offset:0}),
+      getKnowledgeSource,
+      reingestKnowledgeSource,
+    }),`/admin/assistants/${assistant.id}/knowledge`);
+    const trigger=await screen.findByRole('button',{name:'Re-ingest Policy guide'});
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole('button',{name:'Confirm re-ingestion'}));
+    await screen.findByText(/outcome is unknown/);
+    const firstKey=reingestKnowledgeSource.mock.calls[0]?.[2];
+    await userEvent.click(screen.getByRole('button',{name:'Refresh authoritative state'}));
+    expect(await screen.findByRole('status')).toHaveTextContent('Authoritative source state refreshed.');
+    expect(getKnowledgeSource).toHaveBeenCalledWith(assistant.id,source.id);
+    expect(trigger).toHaveFocus();
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole('button',{name:'Confirm re-ingestion'}));
+    expect(reingestKnowledgeSource.mock.calls[1]?.[2]).not.toBe(firstKey);
+  });
+
+  it('successful retry and definitive conflict both clear retained re-ingestion identity',async()=>{
+    const reingestKnowledgeSource=vi.fn()
+      .mockRejectedValueOnce(new AdminApiError('network'))
+      .mockResolvedValueOnce({...source,latestIngestion:{...source.latestIngestion!,status:'queued',startedAt:null,completedAt:null}})
+      .mockRejectedValueOnce(new AdminApiError('conflict','idempotency_key_conflict'))
+      .mockResolvedValueOnce(source);
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'}),
+      reingestKnowledgeSource,
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    const trigger=await screen.findByRole('button',{name:'Re-ingest Policy guide'});
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole('button',{name:'Confirm re-ingestion'}));
+    const unknownKey=reingestKnowledgeSource.mock.calls[0]?.[2];
+    await userEvent.click(await screen.findByRole('button',{name:'Retry identical re-ingestion'}));
+    expect(reingestKnowledgeSource.mock.calls[1]?.[2]).toBe(unknownKey);
+    await userEvent.click(trigger);
+    await userEvent.click(screen.getByRole('button',{name:'Confirm re-ingestion'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Refresh authoritative state before retrying');
+    const conflictKey=reingestKnowledgeSource.mock.calls[2]?.[2];
+    await userEvent.click(screen.getByRole('button',{name:'Cancel'}));
+    await userEvent.click(trigger);
+    expect(screen.queryByRole('button',{name:'Retry identical re-ingestion'})).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'Confirm re-ingestion'}));
+    expect(reingestKnowledgeSource.mock.calls[3]?.[2]).not.toBe(conflictKey);
+  });
+
   it('removes a source from the list, refreshes the assistant count, and focuses a stable target',async()=>{
     const getAssistant=vi.fn()
       .mockResolvedValueOnce({...assistant,knowledgeSourceCount:1,deletionAllowed:false})
