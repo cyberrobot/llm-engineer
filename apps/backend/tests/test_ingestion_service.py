@@ -1,5 +1,6 @@
 import logging
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 
@@ -16,9 +17,10 @@ class WriteFailure(RuntimeError):
 
 
 class FaultInjectingJobRepository(InMemoryIngestionJobRepository):
-    def __init__(self, failure: str) -> None:
+    def __init__(self, failure: str, *, get_failure: str | None = None) -> None:
         super().__init__()
         self.failure = failure
+        self.get_failure = get_failure
         self.events: list[str] = []
 
     def create(self, job: IngestionJob) -> None:
@@ -42,6 +44,12 @@ class FaultInjectingJobRepository(InMemoryIngestionJobRepository):
         if self.failure == f"{event}_after":
             self.failure = ""
             raise WriteFailure(f"sensitive ambiguous {event} failure")
+
+    def get(self, job_id: UUID) -> IngestionJob | None:
+        self.events.append("get")
+        if self.get_failure is not None:
+            raise RuntimeError(self.get_failure)
+        return super().get(job_id)
 
 
 def successful_service(repository: FaultInjectingJobRepository):
@@ -73,16 +81,33 @@ def successful_service(repository: FaultInjectingJobRepository):
         embeddings_generated=1,
         duration_ms=3,
     )
-    return IngestionService(repository, loader, processor, persistence), loader, persistence
+    return (
+        IngestionService(repository, loader, processor, persistence),
+        loader,
+        processor,
+        persistence,
+    )
 
 
 def only_job(repository: InMemoryIngestionJobRepository) -> IngestionJob | None:
     return repository.latest()
 
 
+def assert_sensitive_values_absent(caplog, *values: str) -> None:
+    structured_values = " ".join(
+        str(value)
+        for record in caplog.records
+        for key, value in vars(record).items()
+        if key not in {"msg", "args"}
+    )
+    for value in values:
+        assert value not in caplog.text
+        assert value not in structured_values
+
+
 def test_pending_job_creation_failure_does_not_run_pipeline_or_invent_a_job():
     repository = FaultInjectingJobRepository("create_before")
-    service, loader, persistence = successful_service(repository)
+    service, loader, _processor, persistence = successful_service(repository)
 
     with pytest.raises(IngestionFailedError) as raised:
         service.start_ingestion("https://example.com/knowledge")
@@ -95,7 +120,7 @@ def test_pending_job_creation_failure_does_not_run_pipeline_or_invent_a_job():
 
 def test_ambiguous_pending_create_is_reloaded_and_pipeline_completes_once():
     repository = FaultInjectingJobRepository("create_after")
-    service, loader, persistence = successful_service(repository)
+    service, loader, _processor, persistence = successful_service(repository)
 
     result = service.start_ingestion("https://example.com/knowledge")
 
@@ -105,9 +130,37 @@ def test_ambiguous_pending_create_is_reloaded_and_pipeline_completes_once():
     persistence.persist_prepared.assert_called_once()
 
 
+def test_ambiguous_pending_create_reload_failure_preserves_create_error_and_stops_pipeline(caplog):
+    repository = FaultInjectingJobRepository(
+        "create_after", get_failure="SQL SECRET repository reload failure"
+    )
+    service, loader, processor, persistence = successful_service(repository)
+
+    with caplog.at_level(logging.ERROR), pytest.raises(IngestionFailedError) as raised:
+        service.start_ingestion("https://example.com/knowledge")
+
+    assert isinstance(raised.value.__cause__, WriteFailure)
+    assert str(raised.value.__cause__) == "sensitive ambiguous create failure"
+    loader.load.assert_not_called()
+    processor.process.assert_not_called()
+    persistence.prepare.assert_not_called()
+    persistence.persist_prepared.assert_not_called()
+    reconciliation = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "Ingestion job state could not be reconciled"
+    )
+    assert reconciliation.ingestion_job_id
+    assert reconciliation.stage == "job_creation"
+    assert reconciliation.failure_category == "repository_reload_failed"
+    assert reconciliation.exception_class == "RuntimeError"
+    assert reconciliation.exc_info is None
+    assert_sensitive_values_absent(caplog, "SQL SECRET", "repository reload failure")
+
+
 def test_running_state_failure_persists_failed_job_and_stops_before_pipeline():
     repository = FaultInjectingJobRepository("update_running_before")
-    service, loader, persistence = successful_service(repository)
+    service, loader, _processor, persistence = successful_service(repository)
 
     with pytest.raises(IngestionFailedError) as raised:
         service.start_ingestion("https://example.com/knowledge")
@@ -123,7 +176,7 @@ def test_running_state_failure_persists_failed_job_and_stops_before_pipeline():
 
 def test_ambiguous_running_update_is_reloaded_and_pipeline_completes_once():
     repository = FaultInjectingJobRepository("update_running_after")
-    service, loader, persistence = successful_service(repository)
+    service, loader, _processor, persistence = successful_service(repository)
 
     result = service.start_ingestion("https://example.com/knowledge")
 
@@ -133,9 +186,36 @@ def test_ambiguous_running_update_is_reloaded_and_pipeline_completes_once():
     persistence.persist_prepared.assert_called_once()
 
 
+def test_ambiguous_running_update_reload_failure_preserves_running_error_and_stops_pipeline(caplog):
+    repository = FaultInjectingJobRepository(
+        "update_running_after", get_failure="PASSWORD SECRET repository reload failure"
+    )
+    service, loader, processor, persistence = successful_service(repository)
+
+    with caplog.at_level(logging.ERROR), pytest.raises(IngestionFailedError) as raised:
+        service.start_ingestion("https://example.com/knowledge")
+
+    assert isinstance(raised.value.__cause__, WriteFailure)
+    assert str(raised.value.__cause__) == "sensitive ambiguous update_running failure"
+    loader.load.assert_not_called()
+    processor.process.assert_not_called()
+    persistence.prepare.assert_not_called()
+    persistence.persist_prepared.assert_not_called()
+    reconciliation = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "Ingestion job state could not be reconciled"
+    )
+    assert reconciliation.stage == "job_start"
+    assert reconciliation.failure_category == "repository_reload_failed"
+    assert reconciliation.exception_class == "RuntimeError"
+    assert reconciliation.exc_info is None
+    assert_sensitive_values_absent(caplog, "PASSWORD SECRET", "repository reload failure")
+
+
 def test_completion_update_failure_marks_durable_running_job_failed_without_repersisting_knowledge():
     repository = FaultInjectingJobRepository("update_completed_before")
-    service, loader, persistence = successful_service(repository)
+    service, loader, _processor, persistence = successful_service(repository)
 
     with pytest.raises(IngestionFailedError) as raised:
         service.start_ingestion("https://example.com/knowledge")
@@ -151,7 +231,7 @@ def test_completion_update_failure_marks_durable_running_job_failed_without_repe
 
 def test_ambiguous_completion_update_returns_confirmed_durable_completion():
     repository = FaultInjectingJobRepository("update_completed_after")
-    service, loader, persistence = successful_service(repository)
+    service, loader, _processor, persistence = successful_service(repository)
 
     result = service.start_ingestion("https://example.com/knowledge")
 
@@ -165,16 +245,48 @@ def test_ambiguous_completion_update_returns_confirmed_durable_completion():
     assert "update_failed" not in repository.events
 
 
+def test_ambiguous_completion_reload_failure_preserves_completion_error_and_knowledge(caplog):
+    repository = FaultInjectingJobRepository(
+        "update_completed_after", get_failure="CONNECTION SECRET provider response"
+    )
+    service, loader, _processor, persistence = successful_service(repository)
+
+    with caplog.at_level(logging.ERROR), pytest.raises(IngestionFailedError) as raised:
+        service.start_ingestion("https://example.com/knowledge")
+
+    assert isinstance(raised.value.__cause__, WriteFailure)
+    assert str(raised.value.__cause__) == "sensitive ambiguous update_completed failure"
+    stored = only_job(repository)
+    assert stored is not None
+    assert stored.status is IngestionStatus.completed
+    loader.load.assert_called_once()
+    persistence.persist_prepared.assert_called_once()
+    assert repository.events.count("update_completed") == 1
+    assert "update_failed" not in repository.events
+    reconciliation = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "Ingestion job state could not be reconciled"
+    )
+    assert reconciliation.stage == "job_completion"
+    assert reconciliation.failure_category == "repository_reload_failed"
+    assert reconciliation.exception_class == "RuntimeError"
+    assert reconciliation.exc_info is None
+    assert_sensitive_values_absent(
+        caplog, "CONNECTION SECRET", "provider response", "repository reload failure"
+    )
+
+
 def test_secondary_failed_state_write_is_logged_but_original_completion_failure_remains_primary(
     caplog,
 ):
     repository = FaultInjectingJobRepository("update_completed_before")
-    service, _loader, persistence = successful_service(repository)
+    service, _loader, _processor, persistence = successful_service(repository)
     original_update = repository.update
 
     def fail_completion_and_failed_state(job: IngestionJob) -> None:
         if job.status is IngestionStatus.failed:
-            raise WriteFailure("sensitive secondary failure")
+            raise WriteFailure("SQL SECRET PASSWORD SECRET CONNECTION SECRET")
         original_update(job)
 
     repository.update = fail_completion_and_failed_state  # type: ignore[method-assign]
@@ -189,11 +301,12 @@ def test_secondary_failed_state_write_is_logged_but_original_completion_failure_
     assert stored.status is IngestionStatus.running
     persistence.persist_prepared.assert_called_once()
     assert "Ingestion failure state could not be persisted" in caplog.text
+    assert_sensitive_values_absent(caplog, "SQL SECRET", "PASSWORD SECRET", "CONNECTION SECRET")
 
 
 def test_pipeline_failure_remains_primary_when_failed_state_cannot_be_persisted(caplog):
     repository = FaultInjectingJobRepository("failed_state")
-    service, loader, persistence = successful_service(repository)
+    service, loader, _processor, persistence = successful_service(repository)
     loader.load.side_effect = RuntimeError("sensitive website failure")
 
     with caplog.at_level(logging.ERROR), pytest.raises(IngestionFailedError) as raised:
@@ -206,11 +319,12 @@ def test_pipeline_failure_remains_primary_when_failed_state_cannot_be_persisted(
     assert stored.status is IngestionStatus.running
     persistence.prepare.assert_not_called()
     assert "Ingestion failure state could not be persisted" in caplog.text
+    assert_sensitive_values_absent(caplog, "sensitive failed-state failure")
 
 
 def test_ingestion_logs_only_safe_source_origin(caplog):
     repository = FaultInjectingJobRepository("")
-    service, _loader, _persistence = successful_service(repository)
+    service, _loader, _processor, _persistence = successful_service(repository)
     source_url = "https://example.com/private/path-secret?token=query-secret#fragment-secret"
 
     with caplog.at_level(logging.INFO):

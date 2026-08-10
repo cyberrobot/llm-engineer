@@ -73,7 +73,7 @@ class IngestionService:
         except Exception as exc:
             durable = self._reload_after_write_error(job.id, stage="job_creation")
             if durable is None:
-                self._record_initialization_failure(job, pipeline_started_at)
+                self._record_initialization_failure(job, pipeline_started_at, failure=exc)
                 raise IngestionFailedError("Knowledge ingestion failed.") from exc
             job = durable
             logger.warning(
@@ -101,11 +101,11 @@ class IngestionService:
                         "Ingestion job initialization failed.",
                         stage="job_initialization",
                     )
-                    self._record_initialization_failure(job, pipeline_started_at)
+                    self._record_initialization_failure(job, pipeline_started_at, failure=exc)
                     raise IngestionFailedError("Knowledge ingestion failed.") from exc
         elif job.status is not IngestionStatus.running:
             error = RuntimeError("Created ingestion job has an invalid durable state.")
-            self._record_initialization_failure(job, pipeline_started_at)
+            self._record_initialization_failure(job, pipeline_started_at, failure=error)
             raise IngestionFailedError("Knowledge ingestion failed.") from error
 
         logger.info(
@@ -163,6 +163,7 @@ class IngestionService:
                 website_loading_duration_ms=website_loading_duration_ms,
                 processing_duration_ms=processing_duration_ms,
                 persistence_duration_ms=persistence_duration_ms,
+                failure=exc,
             )
             self._metrics.record_failure(
                 total_duration_ms=total_duration_ms,
@@ -196,11 +197,13 @@ class IngestionService:
                     processing_duration_ms=processing_duration_ms,
                     persistence_duration_ms=persistence_duration_ms,
                 )
-                logger.exception(
+                logger.error(
                     "Ingestion completion state could not be persisted",
                     extra={
                         "ingestion_job_id": str(job.id),
                         "stage": "job_completion",
+                        "failure_category": "repository_write_failed",
+                        "exception_class": type(exc).__name__,
                         "total_duration_ms": total_duration_ms,
                     },
                 )
@@ -292,13 +295,16 @@ class IngestionService:
         website_loading_duration_ms: int,
         processing_duration_ms: int,
         persistence_duration_ms: int,
+        failure: Exception,
     ) -> None:
         self._persist_failure(job, error_message, stage=stage)
-        logger.exception(
+        logger.error(
             "Ingestion job failed",
             extra={
                 "ingestion_job_id": str(job.id),
                 "stage": stage,
+                "failure_category": "pipeline_stage_failed",
+                "exception_class": type(failure).__name__,
                 "website_loading_duration_ms": website_loading_duration_ms,
                 "processing_duration_ms": processing_duration_ms,
                 "persistence_duration_ms": persistence_duration_ms,
@@ -310,10 +316,15 @@ class IngestionService:
         try:
             job.fail(error_message)
             self._repository.update(job)
-        except Exception:
-            logger.exception(
+        except Exception as exc:
+            logger.error(
                 "Ingestion failure state could not be persisted",
-                extra={"ingestion_job_id": str(job.id), "stage": stage},
+                extra={
+                    "ingestion_job_id": str(job.id),
+                    "stage": stage,
+                    "failure_category": "failed_state_persistence_failed",
+                    "exception_class": type(exc).__name__,
+                },
             )
             return False
         return True
@@ -321,21 +332,30 @@ class IngestionService:
     def _reload_after_write_error(self, job_id: UUID, *, stage: str) -> IngestionJob | None:
         try:
             return self._repository.get(job_id)
-        except Exception:
-            logger.exception(
+        except Exception as exc:
+            logger.error(
                 "Ingestion job state could not be reconciled",
-                extra={"ingestion_job_id": str(job_id), "stage": stage},
+                extra={
+                    "ingestion_job_id": str(job_id),
+                    "stage": stage,
+                    "failure_category": "repository_reload_failed",
+                    "exception_class": type(exc).__name__,
+                },
             )
             return None
 
-    def _record_initialization_failure(self, job: IngestionJob, pipeline_started_at: float) -> None:
+    def _record_initialization_failure(
+        self, job: IngestionJob, pipeline_started_at: float, *, failure: Exception
+    ) -> None:
         total_duration_ms = self._duration_ms(pipeline_started_at)
         self._metrics.record_failure(total_duration_ms=total_duration_ms)
-        logger.exception(
+        logger.error(
             "Ingestion job could not be initialized",
             extra={
                 "ingestion_job_id": str(job.id),
                 "stage": "job_initialization",
+                "failure_category": "job_initialization_failed",
+                "exception_class": type(failure).__name__,
                 "total_duration_ms": total_duration_ms,
             },
         )
