@@ -292,8 +292,8 @@ export function KnowledgeSourcesPage() {
             return withoutReingestionOperation(current, selected.source.id);
           })}
           onClose={() => setSelected(undefined)}
-          onAuthoritativeRefresh={async () => {
-            const updated = await auth.api.getKnowledgeSource(assistantId, selected.source.id);
+          onAuthoritativeRefresh={async (signal) => {
+            const updated = await auth.api.getKnowledgeSource(assistantId, selected.source.id, signal);
             setPage((current) => current && ({ ...current, items: current.items.map((item) => item.id === updated.id ? updated : item) }));
             setReingestionOperations((current) => withoutReingestionOperation(current, selected.source.id));
             setSelected(undefined);
@@ -334,7 +334,10 @@ export function KnowledgeSourceCreatePage() {
   }>();
   const [formError, setFormError] = useState('');
   const [unknownOutcome, setUnknownOutcome] = useState(false);
-  const operationRef = useRef<CreateOperation | undefined>(undefined);
+  const [reconciling, setReconciling] = useState(false);
+  const [reconciliationNotice, setReconciliationNotice] = useState('');
+  const [operation, setOperation] = useState<CreateOperation>();
+  const reconciliationController = useRef<AbortController | undefined>(undefined);
   const errorRef = useRef<HTMLDivElement>(null);
   const dirty = Boolean(name || content || url);
   usePrompt({ when: dirty && !leaving, message: 'Discard your unsaved knowledge source?' });
@@ -353,6 +356,7 @@ export function KnowledgeSourceCreatePage() {
       .catch((caught) => { if (caught?.name !== 'AbortError') setLoadError(caught); });
     return () => controller.abort();
   }, [assistantId, auth.api]);
+  useEffect(() => () => reconciliationController.current?.abort(), []);
 
   if (loadError instanceof AdminApiError && loadError.kind === 'not_found') {
     return <State title="Assistant not found" text="The requested Assistant does not exist." link={{ label: 'Return to assistants', to: '/admin/assistants' }} />;
@@ -380,16 +384,20 @@ export function KnowledgeSourceCreatePage() {
 
   async function execute(request: CreateKnowledgeSource) {
     setFormError('');
-    setUnknownOutcome(false);
+    setReconciliationNotice('');
     const fingerprint = JSON.stringify(request);
-    const operation = operationRef.current?.fingerprint === fingerprint
-      ? operationRef.current
+    if (unknownOutcome && operation?.fingerprint !== fingerprint) {
+      setFormError('Authoritative state must be refreshed before starting a changed creation operation.');
+      return;
+    }
+    const submittedOperation = operation?.fingerprint === fingerprint
+      ? operation
       : { fingerprint, key: crypto.randomUUID() };
-    operationRef.current = operation;
+    setOperation(submittedOperation);
     setPending(true);
     try {
-      const created = await auth.api.createKnowledgeSource(confirmedAssistantId, request, operation.key);
-      operationRef.current = undefined;
+      const created = await auth.api.createKnowledgeSource(confirmedAssistantId, request, submittedOperation.key);
+      setOperation(undefined);
       setLeaving({
         to: `/admin/assistants/${confirmedAssistantId}/knowledge/${created.id}`,
         state: { sourceOperation: { sourceId: created.id, outcome: created.activeJobReused ? 'reused' : 'queued' } },
@@ -400,7 +408,7 @@ export function KnowledgeSourceCreatePage() {
         setUnknownOutcome(true);
         setFormError('The request outcome is unknown. Retry the identical request with the same operation key, or refresh authoritative state before changing it.');
       } else {
-        operationRef.current = undefined;
+        setOperation(undefined);
         setFormError(caught instanceof AdminApiError && caught.code === 'idempotency_key_conflict'
           ? 'This operation conflicts with an earlier request. Refresh before trying again.'
           : safeMessage(caught));
@@ -419,17 +427,54 @@ export function KnowledgeSourceCreatePage() {
 
   function changed(update: () => void) {
     update();
-    operationRef.current = undefined;
-    setUnknownOutcome(false);
+    setFormError('');
+    setReconciliationNotice('');
   }
 
+  function currentFingerprint() {
+    const request = type === 'direct_text'
+      ? { source_type: 'direct_text' as const, name: name.trim(), direct_text: content }
+      : { source_type: 'url' as const, name: name.trim(), url };
+    return JSON.stringify(request);
+  }
+
+  async function reconcileAuthoritativeState() {
+    reconciliationController.current?.abort();
+    const controller = new AbortController();
+    reconciliationController.current = controller;
+    setReconciling(true);
+    setFormError('');
+    setReconciliationNotice('');
+    try {
+      await auth.api.listKnowledgeSources(confirmedAssistantId, { limit: 50, offset: 0 }, controller.signal);
+      if (reconciliationController.current !== controller) return;
+      setOperation(undefined);
+      setUnknownOutcome(false);
+      setReconciliationNotice('Authoritative source state was refreshed. You may now start a new creation operation.');
+    } catch (caught) {
+      if (caught instanceof Error && caught.name === 'AbortError') return;
+      if (caught instanceof AdminApiError && caught.kind === 'unauthenticated') return auth.sessionExpired();
+      if (reconciliationController.current !== controller) return;
+      setFormError(`Authoritative state could not be refreshed. ${safeMessage(caught)}`);
+    } finally {
+      if (reconciliationController.current === controller) {
+        reconciliationController.current = undefined;
+        setReconciling(false);
+      }
+    }
+  }
+
+  const unresolvedPayloadChanged = unknownOutcome
+    && operation?.fingerprint !== currentFingerprint();
   const nameInvalid = formError === 'Name is required.';
   const contentInvalid = formError === 'Content is required.';
   const urlInvalid = formError.startsWith('Enter an absolute');
   return (
     <form className="assistant-form" onSubmit={submit}>
       <p>Add knowledge to <strong>{assistant.name}</strong>. URL sources retrieve one page only. Switching source type preserves but never submits the hidden field.</p>
+      {reconciliationNotice && <p className="success" role="status">{reconciliationNotice}</p>}
       {formError && <div id="source-form-error" ref={errorRef} tabIndex={-1} className="alert" role="alert">{formError}</div>}
+      {unresolvedPayloadChanged && <p className="alert" role="status">The pending unknown operation cannot be retried with the modified payload. Refresh authoritative state before starting a changed creation operation.</p>}
       <fieldset>
         <legend>Source type</legend>
         <label><input type="radio" name="source-type" checked={type === 'direct_text'} onChange={() => changed(() => setType('direct_text'))} /> Direct text</label>
@@ -442,8 +487,9 @@ export function KnowledgeSourceCreatePage() {
         <label>URL<input type="url" value={url} onChange={(event) => changed(() => setUrl(event.target.value))} aria-invalid={urlInvalid} aria-describedby={urlInvalid ? 'source-form-error' : undefined} /></label>
       )}
       <div className="form-actions">
-        <button disabled={pending}>{pending ? 'Adding…' : 'Add knowledge source'}</button>
-        {unknownOutcome && <button type="button" disabled={pending} onClick={() => { const request = input(); if (request) void execute(request); }}>Retry identical request</button>}
+        <button disabled={pending || reconciling || unresolvedPayloadChanged}>{pending ? 'Adding…' : 'Add knowledge source'}</button>
+        {unknownOutcome && !unresolvedPayloadChanged && <button type="button" disabled={pending || reconciling} onClick={() => { const request = input(); if (request) void execute(request); }}>Retry identical request</button>}
+        {unknownOutcome && <button type="button" disabled={pending || reconciling} onClick={() => void reconcileAuthoritativeState()}>{reconciling ? 'Refreshing authoritative state…' : 'Refresh authoritative state'}</button>}
         <Link to={`/admin/assistants/${confirmedAssistantId}/knowledge`}>Cancel</Link>
       </div>
     </form>
@@ -548,8 +594,8 @@ export function KnowledgeSourceDetailPage() {
           reingestionOperation={reingestionOperations[source.id]}
           onReingestionOperationChange={(operation) => setReingestionOperations(operation ? { [source.id]: operation } : {})}
           onClose={() => setSelected(undefined)}
-          onAuthoritativeRefresh={async () => {
-            const updated = await auth.api.getKnowledgeSource(assistantId, source.id);
+          onAuthoritativeRefresh={async (signal) => {
+            const updated = await auth.api.getKnowledgeSource(assistantId, source.id, signal);
             setSource(updated);
             setReingestionOperations({});
             setSelected(undefined);
@@ -579,7 +625,7 @@ function SourceActionDialog({
   reingestionOperation?: ReingestionOperation;
   onReingestionOperationChange: (operation: ReingestionOperation | undefined) => void;
   onClose: () => void;
-  onAuthoritativeRefresh: () => Promise<void>;
+  onAuthoritativeRefresh: (signal: AbortSignal) => Promise<void>;
   onUpdated: (source: KnowledgeSource, message: string) => void;
   onDeleted: () => void;
 }) {
@@ -587,10 +633,12 @@ function SourceActionDialog({
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const refreshController = useRef<AbortController | undefined>(undefined);
   const unresolvedOperation = action === 'reingest' && reingestionOperation?.sourceId === source.id
     ? reingestionOperation
     : undefined;
   useEffect(() => dialogRef.current?.showModal(), []);
+  useEffect(() => () => refreshController.current?.abort(), []);
   const label = action === 'reingest' ? 're-ingestion' : action === 'delete' ? 'deletion' : action;
 
   function close(callback: () => void, restore = true) {
@@ -644,15 +692,23 @@ function SourceActionDialog({
   }
 
   async function refreshAuthoritativeState() {
+    refreshController.current?.abort();
+    const controller = new AbortController();
+    refreshController.current = controller;
     setPending(true);
     setError('');
     try {
-      await onAuthoritativeRefresh();
+      await onAuthoritativeRefresh(controller.signal);
+      if (refreshController.current !== controller) return;
       close(() => undefined);
     } catch (caught) {
+      if (caught instanceof Error && caught.name === 'AbortError') return;
       if (caught instanceof AdminApiError && caught.kind === 'unauthenticated') return auth.sessionExpired();
+      if (refreshController.current !== controller) return;
       setError(`Authoritative state could not be refreshed. ${safeMessage(caught)}`);
       setPending(false);
+    } finally {
+      if (refreshController.current === controller) refreshController.current = undefined;
     }
   }
 
@@ -662,7 +718,7 @@ function SourceActionDialog({
       <p>{action === 'disable'
         ? 'Stored knowledge remains present but will be excluded from retrieval.'
         : action === 'delete'
-          ? `Delete ${source.name} and its owned indexed representation?`
+          ? `Delete ${source.name} and its owned indexed representation? Deletion is blocked while ingestion is queued or running.`
           : action === 'reingest'
             ? unresolvedOperation
               ? 'The previous re-ingestion outcome is still unknown. Retry the identical operation or refresh authoritative source state.'

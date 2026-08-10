@@ -209,6 +209,24 @@ export const FailedDetail: Story = {
     </Frame>
   ),
 };
+export const NoIngestionDetail: Story = {
+  render: () => (
+    <Frame path={detailPath} route={detailRoute} api={{ ...base, getKnowledgeSource: async () => ({ ...source, latestIngestion: null }) }}>
+      <KnowledgeSourceDetailPage />
+    </Frame>
+  ),
+};
+export const CancelledIngestionDetail: Story = {
+  render: () => (
+    <Frame
+      path={detailPath}
+      route={detailRoute}
+      api={{ ...base, getKnowledgeSource: async () => ({ ...source, latestIngestion: { ...source.latestIngestion!, status: 'cancelled' } }) }}
+    >
+      <KnowledgeSourceDetailPage />
+    </Frame>
+  ),
+};
 export const DisabledDetail: Story = {
   render: () => (
     <Frame path={detailPath} route={detailRoute} api={{ ...base, getKnowledgeSource: async () => ({ ...source, retrievalState: 'disabled' }) }}>
@@ -295,7 +313,10 @@ export const DeleteConfirmation: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(await canvas.findByRole('button', { name: 'Delete Policy guide' }));
-    await expect(canvas.getByRole('dialog')).toHaveTextContent('owned indexed representation');
+    const dialog = canvas.getByRole('dialog');
+    await expect(dialog).toHaveTextContent('Policy guide');
+    await expect(dialog).toHaveTextContent('owned indexed representation');
+    await expect(dialog).toHaveTextContent('blocked while ingestion is queued or running');
   },
 };
 export const DeleteConflict: Story = {

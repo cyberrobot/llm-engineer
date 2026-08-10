@@ -1,4 +1,4 @@
-import { render,screen } from '@testing-library/react';
+import { render,screen,within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach,describe,expect,it,vi } from 'vitest';
@@ -329,6 +329,8 @@ describe('administrator application workflows',()=>{
     await userEvent.click(screen.getByRole('button',{name:'Confirm re-ingestion'}));
     expect(await screen.findByText('The active ingestion job was reused.')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button',{name:'Delete Policy guide'}));
+    expect(screen.getByRole('dialog')).toHaveTextContent('Delete Policy guide and its owned indexed representation');
+    expect(screen.getByRole('dialog')).toHaveTextContent('blocked while ingestion is queued or running');
     await userEvent.click(screen.getByRole('button',{name:'Confirm deletion'}));
     expect(await screen.findByRole('alert')).toHaveTextContent('cannot be deleted while ingestion is active');
     expect(deleteKnowledgeSource).toHaveBeenCalledOnce();
@@ -354,12 +356,13 @@ describe('administrator application workflows',()=>{
     expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({method:'POST',credentials:'include',body:JSON.stringify({source_type:'direct_text',name:'Policy guide',direct_text:'Fictional policy.'}),headers:expect.objectContaining({'Idempotency-Key':expect.any(String)})}));
   });
 
-  it('reuses a create key after an unknown outcome and replaces it after payload changes',async()=>{
+  it('blocks a changed create payload until authoritative state is refreshed, then uses a fresh key',async()=>{
+    const listKnowledgeSources=vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0});
     const createKnowledgeSource=vi.fn()
       .mockRejectedValueOnce(new AdminApiError('network'))
       .mockRejectedValueOnce(new AdminApiError('network'))
       .mockResolvedValueOnce({...source,directText:'Fictional policy.'});
-    renderApp(apiWith({getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),createKnowledgeSource,getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'})}),`/admin/assistants/${assistant.id}/knowledge/new`);
+    renderApp(apiWith({getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),listKnowledgeSources,createKnowledgeSource,getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'})}),`/admin/assistants/${assistant.id}/knowledge/new`);
     await userEvent.type(await screen.findByLabelText('Name'),'Policy guide');
     await userEvent.type(screen.getByLabelText('Content'),'Fictional policy.');
     await userEvent.click(screen.getByRole('button',{name:'Add knowledge source'}));
@@ -368,8 +371,40 @@ describe('administrator application workflows',()=>{
     const firstKey=createKnowledgeSource.mock.calls[0]?.[2];
     expect(createKnowledgeSource.mock.calls[1]?.[2]).toBe(firstKey);
     await userEvent.type(screen.getByLabelText('Name'),' updated');
+    expect(screen.getByRole('button',{name:'Add knowledge source'})).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('Refresh authoritative state before starting a changed creation operation');
+    expect(createKnowledgeSource).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole('button',{name:'Refresh authoritative state'}));
+    expect(await screen.findByRole('status')).toHaveTextContent('Authoritative source state was refreshed');
+    expect(listKnowledgeSources).toHaveBeenCalledWith(assistant.id,{limit:50,offset:0},expect.any(AbortSignal));
     await userEvent.click(screen.getByRole('button',{name:'Add knowledge source'}));
     expect(createKnowledgeSource.mock.calls[2]?.[2]).not.toBe(firstKey);
+  });
+
+  it('keeps an unknown create operation and form values when authoritative refresh fails',async()=>{
+    const createKnowledgeSource=vi.fn().mockRejectedValue(new AdminApiError('server'));
+    const listKnowledgeSources=vi.fn().mockRejectedValue(new AdminApiError('network'));
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      listKnowledgeSources,
+      createKnowledgeSource,
+    }),`/admin/assistants/${assistant.id}/knowledge/new`);
+    const name=await screen.findByLabelText('Name');
+    const content=screen.getByLabelText('Content');
+    await userEvent.type(name,'Policy guide');
+    await userEvent.type(content,'Fictional policy.');
+    await userEvent.click(screen.getByRole('button',{name:'Add knowledge source'}));
+    const originalKey=createKnowledgeSource.mock.calls[0]?.[2];
+    await userEvent.type(name,' changed');
+    await userEvent.click(screen.getByRole('button',{name:'Refresh authoritative state'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Authoritative state could not be refreshed');
+    expect(screen.getByRole('button',{name:'Add knowledge source'})).toBeDisabled();
+    expect(name).toHaveValue('Policy guide changed');
+    expect(content).toHaveValue('Fictional policy.');
+    await userEvent.clear(name);
+    await userEvent.type(name,'Policy guide');
+    await userEvent.click(screen.getByRole('button',{name:'Retry identical request'}));
+    expect(createKnowledgeSource.mock.calls[1]?.[2]).toBe(originalKey);
   });
 
   it('creates a URL source without submitting preserved hidden direct text and announces reuse',async()=>{
@@ -443,11 +478,36 @@ describe('administrator application workflows',()=>{
     const firstKey=reingestKnowledgeSource.mock.calls[0]?.[2];
     await userEvent.click(screen.getByRole('button',{name:'Refresh authoritative state'}));
     expect(await screen.findByRole('status')).toHaveTextContent('Authoritative source state refreshed.');
-    expect(getKnowledgeSource).toHaveBeenCalledWith(assistant.id,source.id);
+    expect(getKnowledgeSource).toHaveBeenCalledWith(assistant.id,source.id,expect.any(AbortSignal));
     expect(trigger).toHaveFocus();
     await userEvent.click(trigger);
     await userEvent.click(screen.getByRole('button',{name:'Confirm re-ingestion'}));
     expect(reingestKnowledgeSource.mock.calls[1]?.[2]).not.toBe(firstKey);
+  });
+
+  it('aborts an unresolved re-ingestion recovery read when its page unmounts',async()=>{
+    const recovery=deferred<KnowledgeSource>();
+    let recoverySignal:AbortSignal|undefined;
+    const getKnowledgeSource=vi.fn()
+      .mockResolvedValueOnce({...source,directText:'Fictional policy.'})
+      .mockImplementation((_assistantId:string,_sourceId:string,signal?:AbortSignal)=>{
+        recoverySignal=signal;
+        return recovery.promise;
+      });
+    const reingestKnowledgeSource=vi.fn().mockRejectedValue(new AdminApiError('network'));
+    const view=renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource,
+      reingestKnowledgeSource,
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    await userEvent.click(await screen.findByRole('button',{name:'Re-ingest Policy guide'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm re-ingestion'}));
+    await screen.findByText(/outcome is unknown/);
+    await userEvent.click(screen.getByRole('button',{name:'Refresh authoritative state'}));
+    expect(recoverySignal).toBeInstanceOf(AbortSignal);
+    expect(recoverySignal?.aborted).toBe(false);
+    view.unmount();
+    expect(recoverySignal?.aborted).toBe(true);
   });
 
   it('successful retry and definitive conflict both clear retained re-ingestion identity',async()=>{
@@ -511,6 +571,37 @@ describe('administrator application workflows',()=>{
     expect(screen.getByText('Completed')).toBeInTheDocument();
     expect(screen.getByText('fetch_failed')).toBeInTheDocument();
     expect(screen.getByText(/previous committed knowledge remains available/i)).toBeInTheDocument();
+  });
+
+  it('renders no ingestion job and cancelled ingestion as safe readable states',async()=>{
+    const first=renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.',latestIngestion:null}),
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    expect(await screen.findByText('No ingestion job was reported.')).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Re-ingest Policy guide'})).toBeEnabled();
+    first.unmount();
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.',latestIngestion:{...source.latestIngestion!,status:'cancelled'}}),
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    expect(await screen.findByText('Cancelled')).toBeInTheDocument();
+    expect(screen.queryByText(/underlying source is available/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Re-ingest Policy guide'})).toBeEnabled();
+  });
+
+  it('renders HTML-looking direct text literally inside the read-only presentation',async()=>{
+    const malicious=`<img src=x onerror="alert('x')"><script>bad()</script>`;
+    const view=renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:1,deletionAllowed:false}),
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:malicious}),
+    }),`/admin/assistants/${assistant.id}/knowledge/${source.id}`);
+    await screen.findByText(malicious);
+    const presentation=view.container.querySelector('.source-content');
+    expect(presentation).not.toBeNull();
+    expect(within(presentation as HTMLElement).getByText(malicious)).toBeInTheDocument();
+    expect(presentation?.querySelector('img')).toBeNull();
+    expect(presentation?.querySelector('script')).toBeNull();
   });
 
   it('retries and manually refreshes the knowledge list',async()=>{
