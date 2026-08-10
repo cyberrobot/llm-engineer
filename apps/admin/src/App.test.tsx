@@ -407,6 +407,55 @@ describe('administrator application workflows',()=>{
     expect(createKnowledgeSource.mock.calls[1]?.[2]).toBe(originalKey);
   });
 
+  it('clears an unknown create operation after a definitive validation failure',async()=>{
+    const createKnowledgeSource=vi.fn()
+      .mockRejectedValueOnce(new AdminApiError('network'))
+      .mockRejectedValueOnce(new AdminApiError('invalid_request'))
+      .mockResolvedValueOnce({...source,directText:'Fictional policy.'});
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      createKnowledgeSource,
+      getKnowledgeSource:vi.fn().mockResolvedValue({...source,directText:'Fictional policy.'}),
+    }),`/admin/assistants/${assistant.id}/knowledge/new`);
+    const name=await screen.findByLabelText('Name');
+    await userEvent.type(name,'Policy guide');
+    await userEvent.type(screen.getByLabelText('Content'),'Fictional policy.');
+    await userEvent.click(screen.getByRole('button',{name:'Add knowledge source'}));
+    const unknownKey=createKnowledgeSource.mock.calls[0]?.[2];
+    await userEvent.click(await screen.findByRole('button',{name:'Retry identical request'}));
+    expect(createKnowledgeSource.mock.calls[1]?.[2]).toBe(unknownKey);
+    expect(await screen.findByRole('alert')).toHaveTextContent('request could not be completed');
+    expect(screen.queryByText(/outcome is unknown/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Retry identical request'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Refresh authoritative state'})).not.toBeInTheDocument();
+    const createButton=screen.getByRole('button',{name:'Add knowledge source'});
+    expect(createButton).toBeEnabled();
+    await userEvent.type(name,' updated');
+    expect(name).toHaveValue('Policy guide updated');
+    expect(createButton).toBeEnabled();
+    await userEvent.click(createButton);
+    expect(createKnowledgeSource.mock.calls[2]?.[1]).toEqual({source_type:'direct_text',name:'Policy guide updated',direct_text:'Fictional policy.'});
+    expect(createKnowledgeSource.mock.calls[2]?.[2]).not.toBe(unknownKey);
+  });
+
+  it('clears an unknown create operation and follows definitive idempotency conflict handling',async()=>{
+    const createKnowledgeSource=vi.fn()
+      .mockRejectedValueOnce(new AdminApiError('server'))
+      .mockRejectedValueOnce(new AdminApiError('conflict','idempotency_key_conflict'));
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      createKnowledgeSource,
+    }),`/admin/assistants/${assistant.id}/knowledge/new`);
+    await userEvent.type(await screen.findByLabelText('Name'),'Policy guide');
+    await userEvent.type(screen.getByLabelText('Content'),'Fictional policy.');
+    await userEvent.click(screen.getByRole('button',{name:'Add knowledge source'}));
+    await userEvent.click(await screen.findByRole('button',{name:'Retry identical request'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('conflicts with an earlier request. Refresh before trying again');
+    expect(screen.queryByText(/outcome is unknown/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Retry identical request'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Refresh authoritative state'})).not.toBeInTheDocument();
+  });
+
   it('creates a URL source without submitting preserved hidden direct text and announces reuse',async()=>{
     const createKnowledgeSource=vi.fn().mockResolvedValue({...source,sourceType:'url',url:'https://example.test/guide',directText:null,activeJobReused:true});
     renderApp(apiWith({getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),createKnowledgeSource,getKnowledgeSource:vi.fn().mockResolvedValue({...source,sourceType:'url',url:'https://example.test/guide',directText:null})}),`/admin/assistants/${assistant.id}/knowledge/new`);

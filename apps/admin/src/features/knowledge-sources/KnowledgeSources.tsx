@@ -398,17 +398,23 @@ export function KnowledgeSourceCreatePage() {
     try {
       const created = await auth.api.createKnowledgeSource(confirmedAssistantId, request, submittedOperation.key);
       setOperation(undefined);
+      setUnknownOutcome(false);
       setLeaving({
         to: `/admin/assistants/${confirmedAssistantId}/knowledge/${created.id}`,
         state: { sourceOperation: { sourceId: created.id, outcome: created.activeJobReused ? 'reused' : 'queued' } },
       });
     } catch (caught) {
-      if (caught instanceof AdminApiError && caught.kind === 'unauthenticated') return auth.sessionExpired();
+      if (caught instanceof AdminApiError && caught.kind === 'unauthenticated') {
+        setOperation(undefined);
+        setUnknownOutcome(false);
+        return auth.sessionExpired();
+      }
       if (isUnknownOutcome(caught)) {
         setUnknownOutcome(true);
         setFormError('The request outcome is unknown. Retry the identical request with the same operation key, or refresh authoritative state before changing it.');
       } else {
         setOperation(undefined);
+        setUnknownOutcome(false);
         setFormError(caught instanceof AdminApiError && caught.code === 'idempotency_key_conflict'
           ? 'This operation conflicts with an earlier request. Refresh before trying again.'
           : safeMessage(caught));
