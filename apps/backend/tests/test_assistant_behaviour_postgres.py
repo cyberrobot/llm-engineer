@@ -1,7 +1,8 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from threading import Barrier
+from threading import Barrier, Event
+from time import monotonic, sleep
 from uuid import uuid4
 
 import psycopg
@@ -191,6 +192,112 @@ def test_concurrent_draft_saves_from_same_token_have_exactly_one_winner() -> Non
                 (str(assistant.id),),
             ).fetchall()
         assert rows == [(1, initial.draft.instructions), (2, final.draft.instructions)]
+    finally:
+        cleanup(assistant)
+
+
+def test_state_hydration_after_lock_wait_uses_authoritative_revision_pointer() -> None:
+    assistant = create_assistant(f"post-lock-hydration-{uuid4().hex}")
+    initial = PostgresAssistantBehaviourRepository().get_state(assistant.id)
+    lock_query_started = Event()
+    application_name = f"behaviour-hydration-{uuid4().hex}"
+
+    class SignallingCursor:
+        def __init__(self, cursor) -> None:
+            self._cursor = cursor
+
+        def __enter__(self):
+            self._cursor.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._cursor.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self._cursor, name)
+
+        def execute(self, query, params=None):
+            if "assistant_behaviour_states" in query and "FOR UPDATE" in query:
+                lock_query_started.set()
+            return self._cursor.execute(query, params)
+
+    class SignallingConnection:
+        def __init__(self) -> None:
+            assert DATABASE_URL is not None
+            self._connection = psycopg.connect(DATABASE_URL, application_name=application_name)
+
+        def __enter__(self):
+            self._connection.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._connection.__exit__(*args)
+
+        def cursor(self):
+            return SignallingCursor(self._connection.cursor())
+
+    waiting_repository = PostgresAssistantBehaviourRepository(SignallingConnection)
+
+    def save_from_stale_snapshot():
+        try:
+            waiting_repository.save_draft(
+                assistant.id,
+                expected_token=initial.concurrency_token,
+                instructions="Must conflict after lock wait",
+                welcome_message="",
+                input_placeholder="Ask",
+                suggested_questions=(),
+                at=initial.updated_at + timedelta(seconds=2),
+            )
+        except AssistantBehaviourUpdateConflict as exc:
+            return exc
+        raise AssertionError("The post-lock authoritative state must reject the stale token")
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with get_connection() as locking_connection:
+                locking_connection.execute(
+                    "SELECT 1 FROM assistant_behaviour_states WHERE assistant_id=%s FOR UPDATE",
+                    (str(assistant.id),),
+                )
+                result = executor.submit(save_from_stale_snapshot)
+                assert lock_query_started.wait(timeout=5)
+                deadline = monotonic() + 5
+                while monotonic() < deadline:
+                    waiting = locking_connection.execute(
+                        """SELECT wait_event_type
+                           FROM pg_stat_activity
+                           WHERE application_name=%s""",
+                        (application_name,),
+                    ).fetchone()
+                    if waiting == ("Lock",):
+                        break
+                    sleep(0.01)
+                else:
+                    raise AssertionError("The repository mutation did not wait for the state lock")
+                locking_connection.execute(
+                    """INSERT INTO assistant_behaviour_revisions
+                       (assistant_id,revision,instructions,welcome_message,input_placeholder,
+                        suggested_questions,created_at)
+                       VALUES (%s,2,%s,'','Ask','[]'::jsonb,%s)""",
+                    (
+                        str(assistant.id),
+                        "Authoritative revision after lock wait",
+                        initial.updated_at + timedelta(seconds=1),
+                    ),
+                )
+                locking_connection.execute(
+                    """UPDATE assistant_behaviour_states
+                       SET draft_revision=2,version=2,updated_at=%s
+                       WHERE assistant_id=%s""",
+                    (initial.updated_at + timedelta(seconds=1), str(assistant.id)),
+                )
+            conflict = result.result(timeout=5)
+        assert isinstance(conflict, AssistantBehaviourUpdateConflict)
+        final = PostgresAssistantBehaviourRepository().get_state(assistant.id)
+        assert final.draft.revision == 2
+        assert final.draft.instructions == "Authoritative revision after lock wait"
+        assert final.version == 2
     finally:
         cleanup(assistant)
 

@@ -1,5 +1,6 @@
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -17,6 +18,20 @@ from assistant.domain.assistant_behaviour_repository import (
 )
 from assistant.domain.assistant_repository import AssistantNotFound, AssistantRepository
 from infrastructure.database.connection import get_connection
+
+
+@dataclass(frozen=True, slots=True)
+class _BehaviourStateRow:
+    assistant_id: UUID
+    draft_revision: int
+    published_revision: int | None
+    published_at: datetime | None
+    version: int
+    updated_at: datetime
+
+
+class _AssistantBehaviourInvariantError(RuntimeError):
+    pass
 
 
 class PostgresAssistantBehaviourRepository(AssistantBehaviourRepository):
@@ -114,23 +129,13 @@ class PostgresAssistantBehaviourRepository(AssistantBehaviourRepository):
             return self._read_state(cursor, assistant_id)
 
     @staticmethod
-    def _read_state(
-        cursor: Any, assistant_id: UUID, *, lock: bool = False
-    ) -> AssistantBehaviourState:
+    def _read_state_row(cursor: Any, assistant_id: UUID, *, lock: bool) -> _BehaviourStateRow:
         cursor.execute(
             """SELECT s.assistant_id,s.draft_revision,s.published_revision,s.published_at,
-                      s.version,s.updated_at,
-                      d.instructions,d.welcome_message,d.input_placeholder,
-                      d.suggested_questions,d.created_at,
-                      p.instructions,p.welcome_message,p.input_placeholder,
-                      p.suggested_questions,p.created_at
+                      s.version,s.updated_at
                FROM assistant_behaviour_states s
-               JOIN assistant_behaviour_revisions d
-                 ON (d.assistant_id,d.revision)=(s.assistant_id,s.draft_revision)
-               LEFT JOIN assistant_behaviour_revisions p
-                 ON (p.assistant_id,p.revision)=(s.assistant_id,s.published_revision)
                WHERE s.assistant_id=%s"""
-            + (" FOR UPDATE OF s" if lock else ""),
+            + (" FOR UPDATE" if lock else ""),
             (str(assistant_id),),
         )
         row = cursor.fetchone()
@@ -139,29 +144,65 @@ class PostgresAssistantBehaviourRepository(AssistantBehaviourRepository):
             if cursor.fetchone() is None:
                 raise AssistantNotFound("Assistant not found.")
             raise AssistantBehaviourNotFound("Assistant behaviour was not initialized.")
-        draft = AssistantBehaviourRevision(
+        return _BehaviourStateRow(
             UUID(str(row[0])),
             int(row[1]),
-            str(row[6]),
-            str(row[7]),
-            str(row[8]),
-            tuple(row[9]),
-            row[10],
+            int(row[2]) if row[2] is not None else None,
+            row[3],
+            int(row[4]),
+            row[5],
         )
-        published = None
-        if row[2] is not None:
-            published = AssistantBehaviourRevision(
-                UUID(str(row[0])),
-                int(row[2]),
-                str(row[11]),
-                str(row[12]),
-                str(row[13]),
-                tuple(row[14]),
-                row[15],
+
+    @staticmethod
+    def _read_revision(
+        cursor: Any, assistant_id: UUID, revision: int
+    ) -> AssistantBehaviourRevision:
+        cursor.execute(
+            """SELECT instructions,welcome_message,input_placeholder,
+                      suggested_questions,created_at
+               FROM assistant_behaviour_revisions
+               WHERE assistant_id=%s AND revision=%s""",
+            (str(assistant_id), revision),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise _AssistantBehaviourInvariantError(
+                "Assistant behaviour state references a missing immutable revision "
+                f"(assistant_id={assistant_id}, revision={revision})."
             )
-        return AssistantBehaviourState(
-            UUID(str(row[0])), draft, published, row[3], int(row[4]), row[5]
+        return AssistantBehaviourRevision(
+            assistant_id,
+            revision,
+            str(row[0]),
+            str(row[1]),
+            str(row[2]),
+            tuple(row[3]),
+            row[4],
         )
+
+    @classmethod
+    def _hydrate_state(cls, cursor: Any, state_row: _BehaviourStateRow) -> AssistantBehaviourState:
+        draft = cls._read_revision(cursor, state_row.assistant_id, state_row.draft_revision)
+        published = (
+            cls._read_revision(cursor, state_row.assistant_id, state_row.published_revision)
+            if state_row.published_revision is not None
+            else None
+        )
+        return AssistantBehaviourState(
+            state_row.assistant_id,
+            draft,
+            published,
+            state_row.published_at,
+            state_row.version,
+            state_row.updated_at,
+        )
+
+    @classmethod
+    def _read_state(
+        cls, cursor: Any, assistant_id: UUID, *, lock: bool = False
+    ) -> AssistantBehaviourState:
+        state_row = cls._read_state_row(cursor, assistant_id, lock=lock)
+        return cls._hydrate_state(cursor, state_row)
 
 
 class InMemoryAssistantBehaviourRepository(AssistantBehaviourRepository):
