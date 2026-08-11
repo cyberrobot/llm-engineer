@@ -180,6 +180,32 @@ class AssistantAdministrationMetrics:
 assistant_administration_metrics = AssistantAdministrationMetrics()
 
 
+class AssistantBehaviourMetrics:
+    def __init__(self, *, registry: CollectorRegistry = REGISTRY) -> None:
+        self.operations = Counter(
+            "assistant_behaviour_operations_total",
+            "Assistant behaviour operations by bounded operation and outcome.",
+            ("operation", "outcome"),
+            registry=registry,
+        )
+
+
+assistant_behaviour_metrics = AssistantBehaviourMetrics()
+
+
+class AssistantPreviewMetrics:
+    def __init__(self, *, registry: CollectorRegistry = REGISTRY) -> None:
+        self.operations = Counter(
+            "assistant_preview_total",
+            "Administrator Assistant previews by bounded outcome.",
+            ("outcome",),
+            registry=registry,
+        )
+
+
+assistant_preview_metrics = AssistantPreviewMetrics()
+
+
 class PublicAssistantChatMetrics:
     """Public-chat metrics without user-controlled or high-cardinality labels."""
 

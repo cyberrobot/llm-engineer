@@ -4,6 +4,9 @@ from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS, get_database_
 from infrastructure.database.migrations.administrator_authentication import (
     upgrade as upgrade_administrator_authentication,
 )
+from infrastructure.database.migrations.assistant_behaviour import (
+    upgrade as upgrade_assistant_behaviour,
+)
 from infrastructure.database.migrations.assistant_domain_scoping import (
     upgrade as upgrade_assistant_domain_scoping,
 )
@@ -149,6 +152,7 @@ def init_db():
                 )
             """)
             upgrade_assistant_domain_scoping(cur)
+            upgrade_assistant_behaviour(cur)
             upgrade_knowledge_source_management(cur)
             upgrade_transactional_ingestion_persistence(cur)
             upgrade_background_worker_execution(cur)
