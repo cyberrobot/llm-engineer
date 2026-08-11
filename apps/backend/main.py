@@ -24,6 +24,8 @@ from core.exceptions import register_exception_handlers
 from core.logging import configure_logging
 from core.resources import close_cached_dependency
 from infrastructure.database.connection import init_db
+from operations.api.administration_dependencies import get_maintenance_service
+from operations.infrastructure.maintenance import MaintenanceModeMiddleware
 from shared.dependencies.rate_limit import limiter
 
 
@@ -71,6 +73,7 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
+app.add_middleware(MaintenanceModeMiddleware, service_factory=get_maintenance_service)
 app.add_middleware(RequestCorrelationMiddleware)
 
 app.state.limiter = limiter

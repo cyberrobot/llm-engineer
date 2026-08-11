@@ -24,6 +24,10 @@ SAFE_ADMINISTRATIVE_ERRORS = {
         503,
         "A required dependency is unavailable.",
     ),
+    AdministrativeErrorCode.cache_region_not_found: (404, "The cache region was not found."),
+    AdministrativeErrorCode.cache_key_not_found: (404, "The cache key was not found."),
+    AdministrativeErrorCode.audit_entry_not_found: (404, "The audit entry was not found."),
+    AdministrativeErrorCode.operational_job_not_found: (404, "The job was not found."),
 }
 
 

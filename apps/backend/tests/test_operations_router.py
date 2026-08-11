@@ -20,7 +20,14 @@ def test_authorized_admin_can_access_registered_operations_root(monkeypatch):
     parsed = OperationsRootResponse.model_validate(response.json())
     assert parsed.service == "operations"
     assert parsed.status == "available"
-    assert parsed.capabilities == ["health"]
+    assert parsed.capabilities == [
+        "health",
+        "cache",
+        "audit",
+        "maintenance",
+        "jobs",
+        "summary",
+    ]
     assert parsed.generated_at.tzinfo is not None
     assert parsed.generated_at.utcoffset() is not None
     assert parsed.generated_at.utcoffset().total_seconds() == 0
@@ -98,7 +105,20 @@ def test_operations_openapi_is_tagged_documented_and_secure_by_default():
         for path, methods in openapi["paths"].items()
         if path.startswith("/admin/operations")
     }
-    assert set(operations_paths) == {"/admin/operations", "/admin/operations/health"}
+    assert set(operations_paths) == {
+        "/admin/operations",
+        "/admin/operations/health",
+        "/admin/operations/cache",
+        "/admin/operations/cache/clear",
+        "/admin/operations/cache/regions/{region}/clear",
+        "/admin/operations/cache/key",
+        "/admin/operations/maintenance",
+        "/admin/operations/audit",
+        "/admin/operations/audit/{entry_id}",
+        "/admin/operations/jobs",
+        "/admin/operations/jobs/{job_id}",
+        "/admin/operations/summary",
+    }
     assert all(
         details.get("security") == [{"AdminApiKey": []}]
         for methods in operations_paths.values()
