@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
@@ -147,6 +148,43 @@ def test_administration_endpoints_are_secure_mutations_are_audited_and_reads_are
         _cleanup()
 
 
+@pytest.mark.parametrize("path", ["/admin/operations/audit", "/admin/operations/jobs"])
+def test_audit_and_job_visibility_use_shared_administrator_authorization(monkeypatch, path):
+    client, _ = _client(monkeypatch)
+    try:
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers={"X-API-Key": "ingest-secret"}).status_code == 403
+        assert client.get(path, headers={"X-API-Key": "admin-secret"}).status_code == 200
+    finally:
+        _cleanup()
+
+
+def test_cache_inspection_excludes_payloads_and_repeated_clears_are_safe(monkeypatch):
+    client, audit = _client(monkeypatch)
+    headers = {"X-API-Key": "admin-secret"}
+    try:
+        inspected = client.get("/admin/operations/cache", headers=headers)
+
+        assert inspected.status_code == 200
+        assert inspected.json()["items"][0]["entries"] == 1
+        assert "assistant:123" not in inspected.text
+        assert "value" not in inspected.text
+
+        region_results = [
+            client.post("/admin/operations/cache/regions/assistant/clear", headers=headers)
+            for _ in range(2)
+        ]
+        all_results = [
+            client.post("/admin/operations/cache/clear", headers=headers) for _ in range(2)
+        ]
+
+        assert [response.status_code for response in region_results] == [200, 200]
+        assert [response.status_code for response in all_results] == [200, 200]
+        assert audit.list(AuditFilters(), limit=10, offset=0).total == 4
+    finally:
+        _cleanup()
+
+
 def test_unknown_operational_resources_return_typed_safe_errors(monkeypatch):
     client, audit = _client(monkeypatch)
     request_id = str(uuid4())
@@ -250,10 +288,28 @@ def test_maintenance_centrally_blocks_public_assistant_traffic_but_not_admin_or_
         }
         assert blocked.headers["access-control-allow-origin"] == "http://localhost:5173"
         assert blocked.headers["x-request-id"] == request_id
+        for path in ("/assistant/chat", "/rag-chat"):
+            legacy_request_id = str(uuid4())
+            legacy_blocked = client.post(
+                path,
+                headers={"X-Request-ID": legacy_request_id},
+                json={},
+            )
+            assert legacy_blocked.status_code == 503
+            assert legacy_blocked.json()["detail"] == {
+                "code": "maintenance_mode",
+                "message": "The service is undergoing maintenance.",
+            }
+            assert legacy_blocked.headers["x-request-id"] == legacy_request_id
         assert (
             client.get("/admin/operations", headers={"X-API-Key": "admin-secret"}).status_code
             == 200
         )
+        admin_auth = client.get("/admin/auth/me")
+        assert admin_auth.status_code == 401
+        assert "maintenance_mode" not in admin_auth.text
+        assistant_health = client.get("/assistant/health")
+        assert "maintenance_mode" not in assistant_health.text
         assert client.get("/health/live").status_code == 200
         assert client.get("/health/ready").status_code == 503
         assert client.get("/health").status_code == 503

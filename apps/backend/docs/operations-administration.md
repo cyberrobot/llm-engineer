@@ -19,6 +19,11 @@ routes additionally require `operations:execute`.
   probes remain reachable. The public response retains CORS and request-correlation headers and
   never includes the configured operator message. Readiness reports `not_ready` while maintenance
   is enabled; liveness remains `alive`.
+  Maintenance is enforced centrally for the published
+  `/public/assistants/{assistant_slug}/chat` route and the existing unauthenticated
+  `/assistant/chat` and `/rag-chat` routes. `/assistant/health`, `/admin/auth/**`,
+  `/admin/operations/**`, and the health probes remain reachable so operators can authenticate,
+  diagnose the service, and disable maintenance.
 - `GET /admin/operations/jobs` and `GET /admin/operations/jobs/{id}` provide a read-only projection
   of existing background ingestion jobs. Pagination uses `limit` (1–200) and a zero-based `offset`;
   list filtering accepts the established job statuses.
