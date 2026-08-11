@@ -885,6 +885,47 @@ describe('administrator application workflows',()=>{
     expect(screen.getByRole('button',{name:'Save draft'})).toBeDisabled();
   });
 
+  it('blocks duplicate draft saves, protects unload, and retains edited values after network failure',async()=>{
+    const pending=deferred<AssistantBehaviour>();
+    const updateAssistantBehaviour=vi.fn(()=>pending.promise);
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      updateAssistantBehaviour,
+    }),`/admin/assistants/${assistant.id}/behaviour`);
+    const instructions=await screen.findByLabelText('Instructions');
+    const welcome=screen.getByLabelText('Welcome message');
+    await userEvent.type(instructions,' Local edit.');
+    await userEvent.clear(welcome);
+    await userEvent.type(welcome,'Edited welcome.');
+    await userEvent.click(screen.getByRole('button',{name:'Remove question 2'}));
+    const unload=new Event('beforeunload',{cancelable:true});
+
+    window.dispatchEvent(unload);
+
+    expect(unload.defaultPrevented).toBe(true);
+    const save=screen.getByRole('button',{name:'Save draft'});
+    await userEvent.dblClick(save);
+    expect(updateAssistantBehaviour).toHaveBeenCalledOnce();
+    expect(updateAssistantBehaviour).toHaveBeenCalledWith(assistant.id,{
+      concurrency_token:'2',
+      instructions:`${behaviour.draft.instructions} Local edit.`,
+      welcome_message:'Edited welcome.',
+      input_placeholder:'Ask about policy',
+      suggested_questions:['What is covered?'],
+    });
+    expect(screen.getByRole('button',{name:'Saving draft…'})).toBeDisabled();
+
+    pending.reject(new AdminApiError('network'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('backend could not be reached');
+    expect(instructions).toHaveValue(`${behaviour.draft.instructions} Local edit.`);
+    expect(welcome).toHaveValue('Edited welcome.');
+    expect(screen.getByLabelText('Question 1')).toHaveValue('What is covered?');
+    expect(screen.queryByLabelText('Question 2')).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Save draft'})).toBeEnabled();
+  });
+
   it('retains invalid and stale Behaviour edits and safely refreshes only after confirmation',async()=>{
     const getAssistantBehaviour=vi.fn().mockResolvedValue(behaviour);
     renderApp(apiWith({
@@ -951,6 +992,29 @@ describe('administrator application workflows',()=>{
     pending.resolve({...behaviour,published:{revision:2,publishedAt:'2026-08-05T10:00:00Z'},hasUnpublishedChanges:false,concurrencyToken:'3'});
     expect(await screen.findByText('Behaviour published successfully.')).toBeInTheDocument();
     expect(screen.getByRole('button',{name:'Publish saved draft'})).toBeDisabled();
+  });
+
+  it.each([
+    ['network failure',new AdminApiError('network'),'backend could not be reached',false],
+    ['stale conflict',new AdminApiError('conflict','assistant_behaviour_publish_conflict'),'saved draft changed before publication',true],
+  ] as const)('retains the saved draft after publication %s',async(_scenario,error,message,offersRefresh)=>{
+    const publishAssistantBehaviour=vi.fn().mockRejectedValue(error);
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      publishAssistantBehaviour,
+    }),`/admin/assistants/${assistant.id}/behaviour`);
+    await userEvent.click(await screen.findByRole('button',{name:'Publish saved draft'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm publication'}));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    expect(screen.getByText('Draft changes awaiting publication')).toBeInTheDocument();
+    expect(screen.getByText(/Revision 1 published/)).toBeInTheDocument();
+    expect(screen.queryByText('Behaviour published successfully.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Publish saved draft'})).toBeEnabled();
+    if(offersRefresh)expect(screen.getByRole('button',{name:'Refresh server state'})).toBeInTheDocument();
+    else expect(screen.queryByRole('button',{name:'Refresh server state'})).not.toBeInTheDocument();
+    expect(publishAssistantBehaviour).toHaveBeenCalledWith(assistant.id,{concurrency_token:'2',draft_revision:2});
   });
 
   it('renders the canonical saved-draft widget preview incrementally, supports multi-turn chat, and resets local conversation',async()=>{

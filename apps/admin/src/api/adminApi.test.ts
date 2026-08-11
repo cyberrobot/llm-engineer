@@ -533,6 +533,19 @@ describe('admin API', () => {
     await expect(createAdminApi(base).getAssistantBehaviour(assistant.id)).rejects.toMatchObject({ kind: 'invalid_response' });
   });
 
+  it('rejects malformed successful publication state', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      ...behaviour,
+      published: { revision: 2, published_at: 'not-a-timestamp' },
+      has_unpublished_changes: false,
+    })));
+
+    await expect(createAdminApi(base).publishAssistantBehaviour(assistant.id, {
+      concurrency_token: '2',
+      draft_revision: 2,
+    })).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
   it('uses the authenticated saved-draft preview SSE contract and validates completion', async () => {
     const stream = [
       'event: start\ndata: {"assistant":"legal-review"}',

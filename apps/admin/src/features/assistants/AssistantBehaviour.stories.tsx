@@ -50,7 +50,11 @@ const base: AdminApi = {
   getAssistantBehaviour: async () => behaviour,
   updateAssistantBehaviour: async () => ({ ...behaviour, concurrencyToken: '3', draft: { ...behaviour.draft, revision: 3 } }),
   publishAssistantBehaviour: async () => ({ ...behaviour, published: { revision: 2, publishedAt: '2026-08-10T10:00:00Z' }, hasUnpublishedChanges: false, concurrencyToken: '3' }),
-  previewAssistantMessage: async () => ({ answer: 'This is a deterministic fictional answer.' }),
+  previewAssistantMessage: async (_id, _input, options) => {
+    const answer = 'This is a deterministic fictional answer.';
+    options?.onDelta?.(answer);
+    return { answer };
+  },
   listKnowledgeSources: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
   getKnowledgeSource: async () => { throw new AdminApiError('not_found'); },
   createKnowledgeSource: async () => { throw new AdminApiError('invalid_request'); },
