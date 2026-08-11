@@ -1,4 +1,4 @@
-import { render,screen,waitFor,within } from '@testing-library/react';
+import { act,render,screen,waitFor,within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach,describe,expect,it,vi } from 'vitest';
@@ -953,10 +953,15 @@ describe('administrator application workflows',()=>{
     expect(screen.getByRole('button',{name:'Publish saved draft'})).toBeDisabled();
   });
 
-  it('renders the canonical saved-draft widget preview, supports multi-turn chat, and resets local conversation',async()=>{
+  it('renders the canonical saved-draft widget preview incrementally, supports multi-turn chat, and resets local conversation',async()=>{
+    const first=deferred<{answer:string}>();
+    let firstOptions:Parameters<AdminApi['previewAssistantMessage']>[2];
     const previewAssistantMessage=vi.fn()
-      .mockResolvedValueOnce({answer:'First fictional answer.'})
-      .mockResolvedValueOnce({answer:'Follow-up fictional answer.'});
+      .mockImplementationOnce((_id,_input,options)=>{firstOptions=options;return first.promise;})
+      .mockImplementationOnce((_id,_input,options)=>{
+        options?.onDelta?.('Follow-up fictional answer.');
+        return Promise.resolve({answer:'Follow-up fictional answer.'});
+      });
     renderApp(apiWith({
       getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
       getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
@@ -967,16 +972,45 @@ describe('administrator application workflows',()=>{
     expect(screen.getByRole('button',{name:'What is covered?'})).toBeInTheDocument();
     const composer=screen.getByPlaceholderText('Ask about policy');
     await userEvent.type(composer,'First question{Enter}');
-    expect(await screen.findByText('First fictional answer.')).toBeInTheDocument();
+    act(()=>firstOptions?.onDelta?.('First fictional '));
+    expect(await screen.findByText('First fictional')).toBeInTheDocument();
+    expect(screen.getByText('Thinking…')).toBeInTheDocument();
+    act(()=>firstOptions?.onDelta?.('answer.'));
+    expect(screen.getByText('First fictional answer.')).toBeInTheDocument();
+    first.resolve({answer:'First fictional answer.'});
+    await waitFor(()=>expect(screen.queryByText('Thinking…')).not.toBeInTheDocument());
     await userEvent.type(composer,'Follow up{Enter}');
     expect(await screen.findByText('Follow-up fictional answer.')).toBeInTheDocument();
     expect(previewAssistantMessage).toHaveBeenLastCalledWith(assistant.id,{
       message:'Follow up',
       history:[{role:'user',content:'First question'},{role:'assistant',content:'First fictional answer.'}],
-    },expect.any(AbortSignal));
+    },expect.objectContaining({signal:expect.any(AbortSignal),onDelta:expect.any(Function)}));
     await userEvent.click(screen.getByRole('button',{name:'Reset conversation'}));
     expect(screen.queryByText('First fictional answer.')).not.toBeInTheDocument();
     expect(screen.getByText('Welcome to policy help.')).toBeInTheDocument();
+  });
+
+  it('aborts active Preview generation on reset and ignores later deltas',async()=>{
+    const response=deferred<{answer:string}>();
+    let options:Parameters<AdminApi['previewAssistantMessage']>[2];
+    const previewAssistantMessage=vi.fn((_id,_input,streamOptions)=>{options=streamOptions;return response.promise;});
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      previewAssistantMessage,
+    }),`/admin/assistants/${assistant.id}/preview`);
+    await userEvent.type(await screen.findByPlaceholderText('Ask about policy'),'Reset me{Enter}');
+    act(()=>options?.onDelta?.('Partial answer'));
+    expect(screen.getByText('Partial answer')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button',{name:'Reset conversation'}));
+
+    expect(options?.signal?.aborted).toBe(true);
+    expect(screen.queryByText('Partial answer')).not.toBeInTheDocument();
+    act(()=>options?.onDelta?.('Late delta'));
+    expect(screen.queryByText('Late delta')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    response.reject(new DOMException('Aborted','AbortError'));
   });
 
   it.each([

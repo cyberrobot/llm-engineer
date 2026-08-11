@@ -397,23 +397,29 @@ export function AssistantPreviewPage() {
   const [reset, setReset] = useState(0);
   const chatClient = useMemo<AssistantChatClient | undefined>(() => {
     if (!assistantId) return undefined;
+    const previewAssistantId = assistantId;
+    async function preview(
+      request: Parameters<AssistantChatClient['send']>[0],
+      options: { signal: AbortSignal; onStart?: () => void; onDelta?: (delta: string) => void },
+    ) {
+      try {
+        return await auth.api.previewAssistantMessage(previewAssistantId, {
+          message: request.message,
+          history: request.history.map((item) => ({ role: item.role, content: item.content })),
+        }, options);
+      } catch (error) {
+        if (error instanceof AdminApiError && error.kind === 'unauthenticated') auth.sessionExpired();
+        if (error instanceof AdminApiError && error.kind === 'invalid_request') throw new AssistantChatError('invalid_request', false);
+        if (error instanceof AdminApiError && ['not_found', 'conflict', 'forbidden'].includes(error.kind)) throw new AssistantChatError('assistant_unavailable', false);
+        if (error instanceof AdminApiError && error.kind === 'network') throw new AssistantChatError('network_error', true);
+        if (error instanceof AdminApiError && error.kind === 'invalid_response') throw new AssistantChatError('invalid_response', true);
+        throw new AssistantChatError('server_error', true);
+      }
+    }
     return {
       historyLimit: 12,
-      async send(request, { signal }) {
-        try {
-          return await auth.api.previewAssistantMessage(assistantId, {
-            message: request.message,
-            history: request.history.map((item) => ({ role: item.role, content: item.content })),
-          }, signal);
-        } catch (error) {
-          if (error instanceof AdminApiError && error.kind === 'unauthenticated') auth.sessionExpired();
-          if (error instanceof AdminApiError && error.kind === 'invalid_request') throw new AssistantChatError('invalid_request', false);
-          if (error instanceof AdminApiError && ['not_found', 'conflict', 'forbidden'].includes(error.kind)) throw new AssistantChatError('assistant_unavailable', false);
-          if (error instanceof AdminApiError && error.kind === 'network') throw new AssistantChatError('network_error', true);
-          if (error instanceof AdminApiError && error.kind === 'invalid_response') throw new AssistantChatError('invalid_response', true);
-          throw new AssistantChatError('server_error', true);
-        }
-      },
+      send(request, { signal }) { return preview(request, { signal }); },
+      stream(request, options) { return preview(request, options); },
     };
   }, [assistantId, auth]);
 

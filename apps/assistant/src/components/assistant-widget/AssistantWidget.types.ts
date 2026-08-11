@@ -40,11 +40,21 @@ export interface AssistantChatResponse {
   answer: string
 }
 
+export interface AssistantChatStreamOptions {
+  signal: AbortSignal
+  onStart?: () => void
+  onDelta: (delta: string) => void
+}
+
 export interface AssistantChatClient {
   readonly historyLimit: number
   send(
     request: AssistantChatRequest,
     options: { signal: AbortSignal },
+  ): Promise<AssistantChatResponse>
+  stream?(
+    request: AssistantChatRequest,
+    options: AssistantChatStreamOptions,
   ): Promise<AssistantChatResponse>
 }
 

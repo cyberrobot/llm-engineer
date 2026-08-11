@@ -37,7 +37,7 @@ export function AssistantSection() {
 }
 ```
 
-The package also exports `AssistantWidgetConversation` and the `AssistantChatClient` contract as an additive integration boundary for trusted applications that need the canonical conversation UI with a different server-backed transport. The standard `AssistantWidget` continues to construct and use the public chat client; custom clients must enforce their own authentication and server-side authorization.
+The package also exports `AssistantWidgetConversation` and the `AssistantChatClient` contract as an additive integration boundary for trusted applications that need the canonical conversation UI with a different server-backed transport. Existing custom clients may continue to implement `send()`. Clients that also implement the optional `stream()` method can surface ordered response deltas through `onDelta`; the conversation updates one in-progress Assistant message and commits it to history only after successful completion. The standard `AssistantWidget` continues to construct and use the public chat client; custom clients must enforce their own authentication and server-side authorization.
 
 The stylesheet is compiled and locally scoped. Consumers do not need Tailwind, PostCSS, CSS
 Modules, or other widget-specific styling configuration.
@@ -53,16 +53,18 @@ Modules, or other widget-specific styling configuration.
 | `placeholder` | `string` | No | Composer placeholder. |
 | `suggestedQuestions` | `readonly string[]` | No | Suggestions shown until the first question is submitted. |
 
-The root export also provides the `AssistantWidgetProps` and `AssistantWidgetMessage` TypeScript
-types. Internal clients, transport errors, reducers, hooks, and UI components are not public API.
+The root export also provides the component props, conversation client and streaming option types,
+the safe chat error, and the shared SSE consumer. Internal transport implementations, reducers,
+hooks, and UI components are not public API.
 
 ## Behavior
 
 Conversations live only in the current widget instance and are never persisted. The widget calls
 `POST /public/assistants/{assistantId}/chat` without authentication, sends bounded completed
-conversation history, and permits one request at a time. Supported transient failures show a safe
-message and a manual retry action; backend response bodies and raw transport errors are not exposed
-or logged. Active requests are aborted when the widget unmounts or its API configuration changes.
+conversation history, incrementally renders validated SSE deltas, and permits one request at a
+time. Supported transient failures show a safe message and a manual retry action; backend response
+bodies and raw transport errors are not exposed or logged. Active requests are aborted when the
+widget unmounts or its API configuration changes.
 
 React and React DOM are peer dependencies. The supported range is React 19, matching the
 repository's tested React version. The ESM package can be imported during server rendering;
@@ -70,7 +72,7 @@ browser-only APIs are accessed only when a user sends a question.
 
 ## Current limitations
 
-The package does not include citations, incremental response rendering, persisted conversations,
+The package does not include citations, persisted conversations,
 conversation restoration, attachments, authentication, analytics, a floating launcher, iframe or
 script-tag embedding, arbitrary white-label theming, or framework-specific wrappers.
 

@@ -1,3 +1,8 @@
+import {
+  AssistantChatError,
+  consumeAssistantEventStream,
+} from '@redmoor/assistant-widget';
+
 export type Administrator = { id: string; email: string; role: 'administrator' };
 export type AdminApiErrorKind =
   | 'unauthenticated'
@@ -167,16 +172,30 @@ export function createAdminApi(baseUrl: string): AdminApi {
       if (!response.ok) return failure(response, 'assistant');
       return assistantBehaviourFrom(await successfulJson(response), id);
     },
-    async previewAssistantMessage(id, input, signal) {
+    async previewAssistantMessage(id, input, options = {}) {
       const response = await request(baseUrl, `/admin/assistants/${encodeURIComponent(id)}/preview/chat`, {
-        ...jsonRequest('POST', input, signal),
+        ...jsonRequest('POST', input, options.signal),
         headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
       });
       if (!response.ok) return failure(response, 'assistant');
       if (!response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')) {
         throw new AdminApiError('invalid_response');
       }
-      return { answer: previewAnswerFrom(await response.text()) };
+      try {
+        return await consumeAssistantEventStream(response.body, {
+          signal: options.signal ?? new AbortController().signal,
+          onStart: options.onStart,
+          onDelta: options.onDelta,
+        });
+      } catch (error: unknown) {
+        if (error instanceof DOMException && error.name === 'AbortError') throw error;
+        if (error instanceof AssistantChatError) {
+          if (error.code === 'invalid_response') throw new AdminApiError('invalid_response');
+          if (error.code === 'network_error') throw new AdminApiError('network');
+          throw new AdminApiError('server');
+        }
+        throw error;
+      }
     },
     async listKnowledgeSources(assistantId, options = {}, signal) {
       const params = new URLSearchParams({
@@ -252,6 +271,11 @@ export type UpdateAssistantBehaviour = {
 export type PublishAssistantBehaviour = { concurrency_token: string; draft_revision: number };
 export type AssistantChatHistoryMessage = { role: 'user' | 'assistant'; content: string };
 export type AssistantPreviewMessage = { message: string; history: AssistantChatHistoryMessage[] };
+export type AssistantPreviewStreamOptions = {
+  signal?: AbortSignal;
+  onStart?: () => void;
+  onDelta?: (delta: string) => void;
+};
 export type KnowledgeSourceType = 'direct_text' | 'url';
 export type RetrievalState = 'enabled' | 'disabled';
 export type IngestionStatus = 'queued' | 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -364,42 +388,6 @@ function assistantBehaviourFrom(value: unknown, assistantId: string): AssistantB
   if (value.has_unpublished_changes !== expectedUnpublished) throw new AdminApiError('invalid_response');
   return { assistantId, draft, published, hasUnpublishedChanges: value.has_unpublished_changes, concurrencyToken: value.concurrency_token };
 }
-function previewAnswerFrom(value: string): string {
-  const answer: string[] = [];
-  let started = false;
-  let completed = false;
-  for (const block of value.replaceAll('\r\n', '\n').split('\n\n')) {
-    let event = 'message';
-    const data: string[] = [];
-    for (const line of block.split('\n')) {
-      if (line.startsWith('event:')) event = line.slice(6).trim();
-      if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
-    }
-    if (data.length === 0) continue;
-    let payload: unknown;
-    try { payload = JSON.parse(data.join('\n')); } catch { throw new AdminApiError('invalid_response'); }
-    if (!['start','delta','complete','error'].includes(event)) throw new AdminApiError('invalid_response');
-    if (event === 'error') throw new AdminApiError('server');
-    if (event === 'start') {
-      if (started || completed || !isRecord(payload) || !hasExactKeys(payload, ['assistant']) || typeof payload.assistant !== 'string' || !payload.assistant) {
-        throw new AdminApiError('invalid_response');
-      }
-      started = true;
-    }
-    if (event === 'delta') {
-      if (!started || completed || !isRecord(payload) || !hasExactKeys(payload, ['text']) || typeof payload.text !== 'string') throw new AdminApiError('invalid_response');
-      answer.push(payload.text);
-    }
-    if (event === 'complete') {
-      if (!started || completed || !isRecord(payload) || !hasExactKeys(payload, ['finishReason']) || payload.finishReason !== 'stop') throw new AdminApiError('invalid_response');
-      completed = true;
-    }
-  }
-  const text = answer.join('').trim();
-  if (!started || !completed || !text) throw new AdminApiError('invalid_response');
-  return text;
-}
-
 export interface AdminApi {
   login(email: string, password: string, signal?: AbortSignal): Promise<Administrator>;
   currentUser(signal?: AbortSignal): Promise<Administrator>;
@@ -412,7 +400,7 @@ export interface AdminApi {
   getAssistantBehaviour(id: string, signal?: AbortSignal): Promise<AssistantBehaviour>;
   updateAssistantBehaviour(id: string, input: UpdateAssistantBehaviour, signal?: AbortSignal): Promise<AssistantBehaviour>;
   publishAssistantBehaviour(id: string, input: PublishAssistantBehaviour, signal?: AbortSignal): Promise<AssistantBehaviour>;
-  previewAssistantMessage(id: string, input: AssistantPreviewMessage, signal?: AbortSignal): Promise<{ answer: string }>;
+  previewAssistantMessage(id: string, input: AssistantPreviewMessage, options?: AssistantPreviewStreamOptions): Promise<{ answer: string }>;
   listKnowledgeSources(assistantId: string, options?: { limit?: number; offset?: number }, signal?: AbortSignal): Promise<KnowledgeSourceList>;
   getKnowledgeSource(assistantId: string, sourceId: string, signal?: AbortSignal): Promise<KnowledgeSource>;
   createKnowledgeSource(assistantId: string, input: CreateKnowledgeSource, idempotencyKey: string, signal?: AbortSignal): Promise<KnowledgeSource>;

@@ -570,6 +570,89 @@ describe('admin API', () => {
     );
   });
 
+  it('surfaces preview deltas before the response completes', async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller; },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, {
+      headers: { 'Content-Type': 'text/event-stream' },
+    })));
+    const onDelta = vi.fn();
+    const pending = createAdminApi(base).previewAssistantMessage(
+      assistant.id,
+      { message: 'Question', history: [] },
+      { signal: new AbortController().signal, onDelta },
+    );
+
+    streamController.enqueue(new TextEncoder().encode(
+      'event: start\ndata: {"assistant":"legal-review"}\n\n' +
+      'event: delta\ndata: {"text":"First "}\n\n',
+    ));
+    await vi.waitFor(() => expect(onDelta).toHaveBeenCalledWith('First '));
+
+    streamController.enqueue(new TextEncoder().encode(
+      'event: delta\ndata: {"text":"answer."}\n\n' +
+      'event: complete\ndata: {"finishReason":"stop"}\n\n',
+    ));
+    await expect(pending).resolves.toEqual({ answer: 'First answer.' });
+  });
+
+  it('maps an interrupted preview stream safely after partial output', async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller; },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, {
+      headers: { 'Content-Type': 'text/event-stream' },
+    })));
+    const onDelta = vi.fn();
+    const pending = createAdminApi(base).previewAssistantMessage(
+      assistant.id,
+      { message: 'Question', history: [] },
+      { signal: new AbortController().signal, onDelta },
+    );
+    streamController.enqueue(new TextEncoder().encode(
+      'event: start\ndata: {"assistant":"legal-review"}\n\n' +
+      'event: delta\ndata: {"text":"partial"}\n\n',
+    ));
+    await vi.waitFor(() => expect(onDelta).toHaveBeenCalledWith('partial'));
+
+    streamController.error(new TypeError('private network detail'));
+
+    await expect(pending).rejects.toMatchObject({
+      kind: 'network',
+      message: 'The administrator request could not be completed.',
+    });
+  });
+
+  it('aborts an active preview stream without processing more deltas', async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller; },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, {
+      headers: { 'Content-Type': 'text/event-stream' },
+    })));
+    const controller = new AbortController();
+    const onDelta = vi.fn();
+    const pending = createAdminApi(base).previewAssistantMessage(
+      assistant.id,
+      { message: 'Question', history: [] },
+      { signal: controller.signal, onDelta },
+    );
+    streamController.enqueue(new TextEncoder().encode(
+      'event: start\ndata: {"assistant":"legal-review"}\n\n' +
+      'event: delta\ndata: {"text":"partial"}\n\n',
+    ));
+    await vi.waitFor(() => expect(onDelta).toHaveBeenCalledOnce());
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(onDelta).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ['wrong media type', new Response('{}', { headers: { 'Content-Type': 'application/json' } })],
     ['missing completion', new Response('event: delta\ndata: {"text":"partial"}\n\n', { headers: { 'Content-Type': 'text/event-stream' } })],
