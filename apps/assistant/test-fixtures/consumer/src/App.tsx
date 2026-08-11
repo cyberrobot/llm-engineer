@@ -1,5 +1,7 @@
 import {
+  AssistantWidgetConversation,
   AssistantWidget,
+  type AssistantChatClient,
   type AssistantWidgetMessage,
   type AssistantWidgetProps,
 } from '@redmoor/assistant-widget'
@@ -17,11 +19,19 @@ const exampleMessage: AssistantWidgetMessage = {
   content: 'The public message type resolves.',
 }
 
+const previewClient: AssistantChatClient = {
+  historyLimit: 12,
+  async send() {
+    return { answer: 'The injected client type resolves.' }
+  },
+}
+
 export function App() {
   return (
     <main>
       <p hidden>{exampleMessage.content}</p>
       <AssistantWidget {...configuration} />
+      <AssistantWidgetConversation assistantName="Preview" chatClient={previewClient} />
     </main>
   )
 }

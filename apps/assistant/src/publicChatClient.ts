@@ -2,7 +2,11 @@ import {
   AssistantChatError,
   type AssistantChatClient,
   type AssistantChatErrorCode,
+  type AssistantChatRequest,
+  type AssistantChatResponse,
+  type AssistantChatStreamOptions,
 } from './components/assistant-widget/AssistantWidget.types'
+import { consumeAssistantEventStream } from './assistantEventStream'
 
 const PUBLIC_HISTORY_LIMIT = 12
 
@@ -33,47 +37,6 @@ function requestError(status: number): AssistantChatError {
   return new AssistantChatError(code, retryable)
 }
 
-function parseEventStream(value: string): string {
-  const answer: string[] = []
-  let completed = false
-
-  for (const block of value.replaceAll('\r\n', '\n').split('\n\n')) {
-    let event = 'message'
-    const dataLines: string[] = []
-
-    for (const line of block.split('\n')) {
-      if (line.startsWith('event:')) event = line.slice(6).trim()
-      if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
-    }
-
-    if (dataLines.length === 0) continue
-
-    let payload: unknown
-    try {
-      payload = JSON.parse(dataLines.join('\n'))
-    } catch {
-      throw new AssistantChatError('invalid_response', true)
-    }
-
-    if (event === 'error') throw new AssistantChatError('server_error', true)
-    if (event === 'delta') {
-      if (
-        typeof payload !== 'object' ||
-        payload === null ||
-        typeof (payload as Record<string, unknown>).text !== 'string'
-      ) {
-        throw new AssistantChatError('invalid_response', true)
-      }
-      answer.push((payload as { text: string }).text)
-    }
-    if (event === 'complete') completed = true
-  }
-
-  const text = answer.join('').trim()
-  if (!completed || text.length === 0) throw new AssistantChatError('invalid_response', true)
-  return text
-}
-
 export function createPublicChatClient(
   apiBaseUrl: string,
   assistantId: string,
@@ -82,38 +45,48 @@ export function createPublicChatClient(
   const baseUrl = apiBaseUrl.trim().replace(/\/+$/, '')
   const normalizedAssistantId = assistantId.trim()
 
+  async function requestChat(
+    request: AssistantChatRequest,
+    options: AssistantChatStreamOptions,
+  ): Promise<AssistantChatResponse> {
+    if (baseUrl.length === 0 || normalizedAssistantId.length === 0) {
+      throw new AssistantChatError('invalid_request', false)
+    }
+
+    let response: Response
+    try {
+      response = await fetchImplementation(
+        `${baseUrl}/public/assistants/${encodeURIComponent(normalizedAssistantId)}/chat`,
+        {
+          method: 'POST',
+          headers: {
+            Accept: 'text/event-stream',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(request),
+          signal: options.signal,
+        },
+      )
+    } catch (error: unknown) {
+      if (options.signal.aborted) throw error
+      throw new AssistantChatError('network_error', true)
+    }
+
+    if (!response.ok) throw requestError(response.status)
+    if (!response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')) {
+      throw new AssistantChatError('invalid_response', true)
+    }
+
+    return consumeAssistantEventStream(response.body, options)
+  }
+
   return {
     historyLimit: PUBLIC_HISTORY_LIMIT,
     async send(request, { signal }) {
-      if (baseUrl.length === 0 || normalizedAssistantId.length === 0) {
-        throw new AssistantChatError('invalid_request', false)
-      }
-
-      let response: Response
-      try {
-        response = await fetchImplementation(
-          `${baseUrl}/public/assistants/${encodeURIComponent(normalizedAssistantId)}/chat`,
-          {
-            method: 'POST',
-            headers: {
-              Accept: 'text/event-stream',
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(request),
-            signal,
-          },
-        )
-      } catch (error: unknown) {
-        if (signal.aborted) throw error
-        throw new AssistantChatError('network_error', true)
-      }
-
-      if (!response.ok) throw requestError(response.status)
-      if (!response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')) {
-        throw new AssistantChatError('invalid_response', true)
-      }
-
-      return { answer: parseEventStream(await response.text()) }
+      return requestChat(request, { signal, onDelta: () => undefined })
+    },
+    async stream(request, options) {
+      return requestChat(request, options)
     },
   }
 }

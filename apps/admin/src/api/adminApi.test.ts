@@ -457,4 +457,244 @@ describe('admin API', () => {
     expect(fetchMock.mock.calls.map((call) => (call[1]?.headers as Record<string, string>)['Idempotency-Key']))
       .toEqual(['same-reingestion-key', 'same-reingestion-key', 'independent-reingestion-key']);
   });
+
+  const behaviour = {
+    assistant_id: assistant.id,
+    draft: {
+      revision: 2,
+      instructions: '  Preserve leading space\n\nAnd trailing space  ',
+      welcome_message: 'Welcome to the fictional assistant.',
+      input_placeholder: 'Ask about policy',
+      suggested_questions: ['What is covered?', 'How do I appeal?'],
+      created_at: '2026-08-10T09:00:00Z',
+    },
+    published: { revision: 1, published_at: '2026-08-09T09:00:00Z' },
+    has_unpublished_changes: true,
+    concurrency_token: '2',
+  };
+
+  it('uses exact behaviour read, save, and publish contracts without normalising prompt content', async () => {
+    const saved = { ...behaviour, concurrency_token: '3', draft: { ...behaviour.draft, revision: 3 } };
+    const published = {
+      ...saved,
+      published: { revision: 3, published_at: '2026-08-10T10:00:00Z' },
+      has_unpublished_changes: false,
+      concurrency_token: '4',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json(behaviour))
+      .mockResolvedValueOnce(Response.json(saved))
+      .mockResolvedValueOnce(Response.json(published));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = createAdminApi(base);
+
+    await api.getAssistantBehaviour(assistant.id);
+    await api.updateAssistantBehaviour(assistant.id, {
+      concurrency_token: '2',
+      instructions: behaviour.draft.instructions,
+      welcome_message: behaviour.draft.welcome_message,
+      input_placeholder: behaviour.draft.input_placeholder,
+      suggested_questions: behaviour.draft.suggested_questions,
+    });
+    await api.publishAssistantBehaviour(assistant.id, {
+      concurrency_token: '3',
+      draft_revision: 3,
+    });
+
+    const path = `${base}/admin/assistants/${assistant.id}/behaviour`;
+    expect(fetchMock.mock.calls[0]).toEqual([path, expect.objectContaining({ method: 'GET', credentials: 'include' })]);
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+      method: 'PUT',
+      credentials: 'include',
+      body: JSON.stringify({
+        concurrency_token: '2',
+        instructions: behaviour.draft.instructions,
+        welcome_message: behaviour.draft.welcome_message,
+        input_placeholder: behaviour.draft.input_placeholder,
+        suggested_questions: behaviour.draft.suggested_questions,
+      }),
+    }));
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(`${path}/publish`);
+    expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ concurrency_token: '3', draft_revision: 3 }),
+    }));
+  });
+
+  it.each([
+    { ...behaviour, assistant_id: source.id },
+    { ...behaviour, draft: { ...behaviour.draft, revision: 0 } },
+    { ...behaviour, draft: { ...behaviour.draft, suggested_questions: ['', 'Valid?'] } },
+    { ...behaviour, published: { revision: 1, published_at: 'yesterday' } },
+    { ...behaviour, has_unpublished_changes: false },
+    { ...behaviour, extra: 'unsupported' },
+  ])('rejects malformed behaviour state responses', async (body) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(body)));
+    await expect(createAdminApi(base).getAssistantBehaviour(assistant.id)).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
+  it('rejects malformed successful publication state', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      ...behaviour,
+      published: { revision: 2, published_at: 'not-a-timestamp' },
+      has_unpublished_changes: false,
+    })));
+
+    await expect(createAdminApi(base).publishAssistantBehaviour(assistant.id, {
+      concurrency_token: '2',
+      draft_revision: 2,
+    })).rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
+  it('uses the authenticated saved-draft preview SSE contract and validates completion', async () => {
+    const stream = [
+      'event: start\ndata: {"assistant":"legal-review"}',
+      'event: delta\ndata: {"text":"A fictional "}',
+      'event: delta\ndata: {"text":"answer."}',
+      'event: complete\ndata: {"finishReason":"stop"}',
+      '',
+    ].join('\n\n');
+    const fetchMock = vi.fn().mockResolvedValue(new Response(stream, {
+      headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createAdminApi(base).previewAssistantMessage(assistant.id, {
+      message: 'Follow up?',
+      history: [
+        { role: 'user', content: 'First question' },
+        { role: 'assistant', content: 'First answer' },
+      ],
+    })).resolves.toEqual({ answer: 'A fictional answer.' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${base}/admin/assistants/${assistant.id}/preview/chat`,
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: expect.objectContaining({ Accept: 'text/event-stream' }),
+        body: JSON.stringify({
+          message: 'Follow up?',
+          history: [
+            { role: 'user', content: 'First question' },
+            { role: 'assistant', content: 'First answer' },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('surfaces preview deltas before the response completes', async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller; },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, {
+      headers: { 'Content-Type': 'text/event-stream' },
+    })));
+    const onDelta = vi.fn();
+    const pending = createAdminApi(base).previewAssistantMessage(
+      assistant.id,
+      { message: 'Question', history: [] },
+      { signal: new AbortController().signal, onDelta },
+    );
+
+    streamController.enqueue(new TextEncoder().encode(
+      'event: start\ndata: {"assistant":"legal-review"}\n\n' +
+      'event: delta\ndata: {"text":"First "}\n\n',
+    ));
+    await vi.waitFor(() => expect(onDelta).toHaveBeenCalledWith('First '));
+
+    streamController.enqueue(new TextEncoder().encode(
+      'event: delta\ndata: {"text":"answer."}\n\n' +
+      'event: complete\ndata: {"finishReason":"stop"}\n\n',
+    ));
+    await expect(pending).resolves.toEqual({ answer: 'First answer.' });
+  });
+
+  it('maps an interrupted preview stream safely after partial output', async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller; },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, {
+      headers: { 'Content-Type': 'text/event-stream' },
+    })));
+    const onDelta = vi.fn();
+    const pending = createAdminApi(base).previewAssistantMessage(
+      assistant.id,
+      { message: 'Question', history: [] },
+      { signal: new AbortController().signal, onDelta },
+    );
+    streamController.enqueue(new TextEncoder().encode(
+      'event: start\ndata: {"assistant":"legal-review"}\n\n' +
+      'event: delta\ndata: {"text":"partial"}\n\n',
+    ));
+    await vi.waitFor(() => expect(onDelta).toHaveBeenCalledWith('partial'));
+
+    streamController.error(new TypeError('private network detail'));
+
+    await expect(pending).rejects.toMatchObject({
+      kind: 'network',
+      message: 'The administrator request could not be completed.',
+    });
+  });
+
+  it('aborts an active preview stream without processing more deltas', async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller; },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body, {
+      headers: { 'Content-Type': 'text/event-stream' },
+    })));
+    const controller = new AbortController();
+    const onDelta = vi.fn();
+    const pending = createAdminApi(base).previewAssistantMessage(
+      assistant.id,
+      { message: 'Question', history: [] },
+      { signal: controller.signal, onDelta },
+    );
+    streamController.enqueue(new TextEncoder().encode(
+      'event: start\ndata: {"assistant":"legal-review"}\n\n' +
+      'event: delta\ndata: {"text":"partial"}\n\n',
+    ));
+    await vi.waitFor(() => expect(onDelta).toHaveBeenCalledOnce());
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(onDelta).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['wrong media type', new Response('{}', { headers: { 'Content-Type': 'application/json' } })],
+    ['missing completion', new Response('event: delta\ndata: {"text":"partial"}\n\n', { headers: { 'Content-Type': 'text/event-stream' } })],
+    ['unsupported event payload', new Response('event: delta\ndata: {"content":"raw"}\n\nevent: complete\ndata: {"finishReason":"stop"}\n\n', { headers: { 'Content-Type': 'text/event-stream' } })],
+  ])('rejects malformed preview success: %s', async (_scenario, response) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+    await expect(createAdminApi(base).previewAssistantMessage(assistant.id, { message: 'Question', history: [] }))
+      .rejects.toMatchObject({ kind: 'invalid_response' });
+  });
+
+  it('forwards cancellation for behaviour reads and safely maps preview failures', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const pending = createAdminApi(base).getAssistantBehaviour(assistant.id, controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      detail: { code: 'assistant_preview_unavailable', message: 'provider prompt and stack trace' },
+    }, { status: 409 })));
+    await expect(createAdminApi(base).previewAssistantMessage(assistant.id, { message: 'Question', history: [] }))
+      .rejects.toMatchObject({
+        kind: 'conflict',
+        code: 'assistant_preview_unavailable',
+        message: 'The administrator request could not be completed.',
+      });
+  });
 });

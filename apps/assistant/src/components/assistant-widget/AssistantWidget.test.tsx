@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -224,6 +224,62 @@ describe('AssistantWidget', () => {
     expect(await screen.findByText('Practical technology consulting.')).toBeInTheDocument()
     await waitFor(() => expect(input).toBeEnabled())
     expect(input).toHaveFocus()
+  })
+
+  it('updates one assistant message incrementally before the stream completes', async () => {
+    const user = userEvent.setup()
+    const response = deferredResponse()
+    let streamOptions: Parameters<NonNullable<AssistantChatClient['stream']>>[1] | undefined
+    const client: AssistantChatClient = {
+      ...mockClient(vi.fn()),
+      stream: vi.fn((_request, options) => {
+        streamOptions = options
+        return response.promise
+      }),
+    }
+    render(<AssistantWidget chatClient={client} />)
+    await user.type(screen.getByRole('textbox'), 'Stream this{Enter}')
+
+    act(() => streamOptions?.onDelta('First '))
+    expect(screen.getByText('First')).toBeInTheDocument()
+    expect(screen.getByText('Thinking…')).toBeInTheDocument()
+
+    act(() => streamOptions?.onDelta('answer'))
+    expect(screen.queryByText('First')).not.toBeInTheDocument()
+    expect(screen.getByText('First answer')).toBeInTheDocument()
+    expect(within(screen.getByRole('log')).getAllByText('Assistant')).toHaveLength(2)
+
+    response.resolve({ answer: 'First answer' })
+    await waitFor(() => expect(screen.queryByText('Thinking…')).not.toBeInTheDocument())
+    expect(screen.getByText('First answer')).toBeInTheDocument()
+  })
+
+  it('removes a failed partial response and excludes it from retry history', async () => {
+    const user = userEvent.setup()
+    const firstResponse = deferredResponse()
+    let firstOptions: Parameters<NonNullable<AssistantChatClient['stream']>>[1] | undefined
+    const stream = vi
+      .fn<NonNullable<AssistantChatClient['stream']>>()
+      .mockImplementationOnce((_request, options) => {
+        firstOptions = options
+        return firstResponse.promise
+      })
+      .mockImplementationOnce((_request, options) => {
+        options.onDelta('Recovered answer')
+        return Promise.resolve({ answer: 'Recovered answer' })
+      })
+    render(<AssistantWidget chatClient={{ ...mockClient(vi.fn()), stream }} />)
+
+    await user.type(screen.getByRole('textbox'), 'Retry me{Enter}')
+    act(() => firstOptions?.onDelta('Corrupted partial'))
+    firstResponse.reject(new AssistantChatError('network_error', true))
+    expect(await screen.findByRole('alert')).toHaveTextContent("couldn't reach the assistant")
+    expect(screen.queryByText('Corrupted partial')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Retry question' }))
+
+    expect(await screen.findByText('Recovered answer')).toBeInTheDocument()
+    expect(stream).toHaveBeenNthCalledWith(2, { message: 'Retry me', history: [] }, expect.anything())
   })
 
   it('sends bounded successful history with a follow-up question', async () => {

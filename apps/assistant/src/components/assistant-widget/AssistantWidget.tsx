@@ -141,42 +141,84 @@ function Conversation({
     abortRef.current = controller
     setPending(true)
     setFailedTurn(undefined)
+    const assistantMessageId = nextId('assistant')
+    let streamedAnswer = ''
 
     try {
-      const response = await chatClient.send(
-        {
-          message: userMessage.content,
-          history: buildConversationHistory(
-            precedingMessages,
-            chatClient.historyLimit,
-            userMessage.id,
-          ),
-        },
-        { signal: controller.signal },
-      )
+      const request = {
+        message: userMessage.content,
+        history: buildConversationHistory(
+          precedingMessages,
+          chatClient.historyLimit,
+          userMessage.id,
+        ),
+      }
+      const response = chatClient.stream
+        ? await chatClient.stream(request, {
+            signal: controller.signal,
+            onDelta(delta) {
+              if (controller.signal.aborted) return
+              streamedAnswer += delta
+              const nextAnswer = streamedAnswer
+              setLocalMessages((current) => {
+                if (controller.signal.aborted) return current
+                const existing = current.some((message) => message.id === assistantMessageId)
+                if (!existing) {
+                  return [
+                    ...current,
+                    {
+                      id: assistantMessageId,
+                      role: 'assistant',
+                      content: nextAnswer,
+                      status: 'pending',
+                    },
+                  ]
+                }
+                return current.map((message) =>
+                  message.id === assistantMessageId
+                    ? { ...message, content: nextAnswer }
+                    : message,
+                )
+              })
+            },
+          })
+        : await chatClient.send(request, { signal: controller.signal })
       if (controller.signal.aborted) return
       if (typeof response.answer !== 'string' || response.answer.trim().length === 0) {
         throw new AssistantChatError('invalid_response', true)
       }
+      if (chatClient.stream && streamedAnswer !== response.answer) {
+        throw new AssistantChatError('invalid_response', true)
+      }
 
-      setLocalMessages((current) => [
-        ...current.map((message) =>
-          message.id === userMessage.id ? { ...message, status: 'complete' as const } : message,
-        ),
-        {
-          id: nextId('assistant'),
-          role: 'assistant',
-          content: response.answer.trim(),
-          status: 'complete',
-        },
-      ])
+      setLocalMessages((current) => {
+        const completedMessages = current.map((message) => {
+          if (message.id === userMessage.id) return { ...message, status: 'complete' as const }
+          if (message.id === assistantMessageId) {
+            return { ...message, content: response.answer, status: 'complete' as const }
+          }
+          return message
+        })
+        if (current.some((message) => message.id === assistantMessageId)) return completedMessages
+        return [
+          ...completedMessages,
+          {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: response.answer,
+            status: 'complete',
+          },
+        ]
+      })
     } catch (error: unknown) {
       if (controller.signal.aborted) return
       const failure = failureFrom(error)
       setLocalMessages((current) =>
-        current.map((message) =>
-          message.id === userMessage.id ? { ...message, status: 'failed' } : message,
-        ),
+        current
+          .filter((message) => message.id !== assistantMessageId)
+          .map((message) =>
+            message.id === userMessage.id ? { ...message, status: 'failed' } : message,
+          ),
       )
       setFailedTurn({ messageId: userMessage.id, ...failure })
       onError?.(error)

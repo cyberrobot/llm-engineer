@@ -10,6 +10,40 @@ function eventStream(...events: string[]) {
 }
 
 describe('public assistant chat client', () => {
+  it('streams public response deltas before completion while preserving send compatibility', async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller
+      },
+    })
+    const client = createPublicChatClient(
+      'https://api.example.test',
+      'redmoor',
+      vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(body, {
+        headers: { 'Content-Type': 'text/event-stream' },
+      })),
+    )
+    const onDelta = vi.fn()
+    const pending = client.stream?.(
+      { message: 'Question', history: [] },
+      { signal: new AbortController().signal, onDelta },
+    )
+
+    streamController.enqueue(new TextEncoder().encode(
+      'event: start\ndata: {"assistant":"redmoor"}\n\n' +
+      'event: delta\ndata: {"text":"First "}\n\n',
+    ))
+    await vi.waitFor(() => expect(onDelta).toHaveBeenCalledWith('First '))
+    expect(pending).toBeInstanceOf(Promise)
+
+    streamController.enqueue(new TextEncoder().encode(
+      'event: delta\ndata: {"text":"answer"}\n\n' +
+      'event: complete\ndata: {"finishReason":"stop"}\n\n',
+    ))
+    await expect(pending).resolves.toEqual({ answer: 'First answer' })
+  })
+
   it('posts bounded history to the configured assistant and returns completed SSE text', async () => {
     const fetchImplementation = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
       eventStream(

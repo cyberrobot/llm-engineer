@@ -4,6 +4,7 @@ import { AdminShell } from './components/AdminShell';
 import { FullPageStatus } from './components/FullPageStatus';
 import { LoginPage } from './components/LoginPage';
 import { AssistantFormPage, AssistantsPage } from './features/assistants/Assistants';
+import { AssistantBehaviourPage, AssistantPreviewPage } from './features/assistants/AssistantBehaviour';
 import { KnowledgeEntryPage, KnowledgeSourceCreatePage, KnowledgeSourceDetailPage, KnowledgeSourcesPage } from './features/knowledge-sources/KnowledgeSources';
 
 function Protected() {
@@ -57,9 +58,11 @@ export default function App() {
         />
         <Route path="/admin/assistants/new" element={<AssistantFormPage mode="create" />} />
         <Route path="/admin/assistants/:assistantId/edit" element={<AssistantFormPage mode="edit" />} />
+        <Route path="/admin/assistants/:assistantId/behaviour" element={<AssistantBehaviourPage />} />
         <Route path="/admin/assistants/:assistantId/knowledge" element={<KnowledgeSourcesPage />} />
         <Route path="/admin/assistants/:assistantId/knowledge/new" element={<KnowledgeSourceCreatePage />} />
         <Route path="/admin/assistants/:assistantId/knowledge/:sourceId" element={<KnowledgeSourceDetailPage />} />
+        <Route path="/admin/assistants/:assistantId/preview" element={<AssistantPreviewPage />} />
         <Route
           path="/admin/knowledge-sources"
           element={<KnowledgeEntryPage />}

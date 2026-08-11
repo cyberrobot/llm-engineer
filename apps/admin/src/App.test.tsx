@@ -1,9 +1,9 @@
-import { render,screen,within } from '@testing-library/react';
+import { act,render,screen,waitFor,within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import App from './App';
-import { AdminApiError, createAdminApi, type AdminApi, type Administrator, type Assistant, type KnowledgeSource } from './api/adminApi';
+import { AdminApiError, createAdminApi, type AdminApi, type Administrator, type Assistant, type AssistantBehaviour, type KnowledgeSource } from './api/adminApi';
 import { AuthProvider, useAuth } from './auth/AuthContext';
 
 const administrator:Administrator={id:'admin-1',email:'admin@example.test',role:'administrator'};
@@ -12,7 +12,8 @@ function deferred<T>(){let resolve!:(value:T)=>void,reject!:(reason?:unknown)=>v
 type TestLocation=string|{pathname:string;state:unknown};
 function renderApp(api:AdminApi,path:TestLocation='/admin'){const router=createMemoryRouter([{path:'*',element:<AuthProvider api={api}><App/></AuthProvider>}],{initialEntries:[path]});return{...render(<RouterProvider router={router}/>),router}}
 const source:KnowledgeSource={id:'22222222-2222-4222-8222-222222222222',assistantId:assistant.id,sourceType:'direct_text',name:'Policy guide',retrievalState:'enabled',url:null,directText:null,documentId:'document-1',createdAt:'2026-08-05T09:00:00Z',updatedAt:'2026-08-05T09:00:00Z',latestIngestion:{id:'33333333-3333-4333-8333-333333333333',status:'completed',currentStep:null,createdAt:'2026-08-05T09:00:00Z',startedAt:'2026-08-05T09:01:00Z',completedAt:'2026-08-05T09:02:00Z',failureCode:null,failureMessage:null},activeJobReused:false};
-function apiWith(overrides:Partial<AdminApi>={}):AdminApi{return{currentUser:vi.fn().mockResolvedValue(administrator),login:vi.fn().mockResolvedValue(administrator),logout:vi.fn().mockResolvedValue(undefined),listAssistants:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getAssistant:vi.fn(),createAssistant:vi.fn(),updateAssistant:vi.fn(),deleteAssistant:vi.fn(),listKnowledgeSources:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getKnowledgeSource:vi.fn(),createKnowledgeSource:vi.fn(),updateKnowledgeSourceRetrieval:vi.fn(),reingestKnowledgeSource:vi.fn(),deleteKnowledgeSource:vi.fn(),...overrides}}
+const behaviour:AssistantBehaviour={assistantId:assistant.id,draft:{revision:2,instructions:'Answer only from fictional policy.\nPreserve this line.',welcomeMessage:'Welcome to policy help.',inputPlaceholder:'Ask about policy',suggestedQuestions:['What is covered?','How do I appeal?'],createdAt:'2026-08-05T09:00:00Z'},published:{revision:1,publishedAt:'2026-08-04T09:00:00Z'},hasUnpublishedChanges:true,concurrencyToken:'2'};
+function apiWith(overrides:Partial<AdminApi>={}):AdminApi{return{currentUser:vi.fn().mockResolvedValue(administrator),login:vi.fn().mockResolvedValue(administrator),logout:vi.fn().mockResolvedValue(undefined),listAssistants:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getAssistant:vi.fn(),createAssistant:vi.fn(),updateAssistant:vi.fn(),deleteAssistant:vi.fn(),getAssistantBehaviour:vi.fn(),updateAssistantBehaviour:vi.fn(),publishAssistantBehaviour:vi.fn(),previewAssistantMessage:vi.fn(),listKnowledgeSources:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0}),getKnowledgeSource:vi.fn(),createKnowledgeSource:vi.fn(),updateKnowledgeSourceRetrieval:vi.fn(),reingestKnowledgeSource:vi.fn(),deleteKnowledgeSource:vi.fn(),...overrides}}
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals()});
 
 describe('administrator application workflows',()=>{
@@ -855,5 +856,276 @@ describe('administrator application workflows',()=>{
     expect(await screen.findByRole('alert')).toHaveTextContent('backend could not be reached');
     await userEvent.click(screen.getByRole('button',{name:'Cancel'}));
     expect(trigger).toHaveFocus();
+  });
+
+  it('loads Behaviour, preserves prompt whitespace and ordered questions, then reconciles the confirmed draft',async()=>{
+    const confirmed:AssistantBehaviour={...behaviour,draft:{...behaviour.draft,revision:3,instructions:'  First line\n\nSecond line  ',suggestedQuestions:['How do I appeal?','What is covered?','New question?']},concurrencyToken:'3'};
+    const updateAssistantBehaviour=vi.fn().mockResolvedValue(confirmed);
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      updateAssistantBehaviour,
+    }),`/admin/assistants/${assistant.id}/behaviour`);
+    const instructions=await screen.findByLabelText('Instructions');
+    expect(instructions).toHaveValue(behaviour.draft.instructions);
+    await userEvent.clear(instructions);
+    await userEvent.type(instructions,'  First line{Enter}{Enter}Second line  ');
+    await userEvent.click(screen.getByRole('button',{name:'Move question 2 up'}));
+    await userEvent.click(screen.getByRole('button',{name:'Add question'}));
+    await userEvent.type(screen.getByLabelText('Question 3'),'New question?');
+    await userEvent.click(screen.getByRole('button',{name:'Save draft'}));
+    expect(updateAssistantBehaviour).toHaveBeenCalledWith(assistant.id,{
+      concurrency_token:'2',
+      instructions:'  First line\n\nSecond line  ',
+      welcome_message:'Welcome to policy help.',
+      input_placeholder:'Ask about policy',
+      suggested_questions:['How do I appeal?','What is covered?','New question?'],
+    });
+    expect(await screen.findByRole('status')).toHaveTextContent('Behaviour draft saved.');
+    expect(screen.getByRole('button',{name:'Save draft'})).toBeDisabled();
+  });
+
+  it('blocks duplicate draft saves, protects unload, and retains edited values after network failure',async()=>{
+    const pending=deferred<AssistantBehaviour>();
+    const updateAssistantBehaviour=vi.fn(()=>pending.promise);
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      updateAssistantBehaviour,
+    }),`/admin/assistants/${assistant.id}/behaviour`);
+    const instructions=await screen.findByLabelText('Instructions');
+    const welcome=screen.getByLabelText('Welcome message');
+    await userEvent.type(instructions,' Local edit.');
+    await userEvent.clear(welcome);
+    await userEvent.type(welcome,'Edited welcome.');
+    await userEvent.click(screen.getByRole('button',{name:'Remove question 2'}));
+    const unload=new Event('beforeunload',{cancelable:true});
+
+    window.dispatchEvent(unload);
+
+    expect(unload.defaultPrevented).toBe(true);
+    const save=screen.getByRole('button',{name:'Save draft'});
+    await userEvent.dblClick(save);
+    expect(updateAssistantBehaviour).toHaveBeenCalledOnce();
+    expect(updateAssistantBehaviour).toHaveBeenCalledWith(assistant.id,{
+      concurrency_token:'2',
+      instructions:`${behaviour.draft.instructions} Local edit.`,
+      welcome_message:'Edited welcome.',
+      input_placeholder:'Ask about policy',
+      suggested_questions:['What is covered?'],
+    });
+    expect(screen.getByRole('button',{name:'Saving draft…'})).toBeDisabled();
+
+    pending.reject(new AdminApiError('network'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('backend could not be reached');
+    expect(instructions).toHaveValue(`${behaviour.draft.instructions} Local edit.`);
+    expect(welcome).toHaveValue('Edited welcome.');
+    expect(screen.getByLabelText('Question 1')).toHaveValue('What is covered?');
+    expect(screen.queryByLabelText('Question 2')).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Save draft'})).toBeEnabled();
+  });
+
+  it('retains invalid and stale Behaviour edits and safely refreshes only after confirmation',async()=>{
+    const getAssistantBehaviour=vi.fn().mockResolvedValue(behaviour);
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour,
+      updateAssistantBehaviour:vi.fn().mockRejectedValue(new AdminApiError('conflict','assistant_behaviour_update_conflict')),
+    }),`/admin/assistants/${assistant.id}/behaviour`);
+    const instructions=await screen.findByLabelText('Instructions');
+    await userEvent.clear(instructions);
+    await userEvent.click(screen.getByRole('button',{name:'Save draft'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Instructions are required.');
+    expect(instructions).toHaveValue('');
+    await userEvent.type(instructions,'Local unsaved instructions');
+    await userEvent.click(screen.getByRole('button',{name:'Save draft'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('changed elsewhere');
+    expect(instructions).toHaveValue('Local unsaved instructions');
+    const confirm=vi.spyOn(window,'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    await userEvent.click(screen.getByRole('button',{name:'Refresh server state'}));
+    expect(instructions).toHaveValue('Local unsaved instructions');
+    await userEvent.click(screen.getByRole('button',{name:'Refresh server state'}));
+    await waitFor(()=>expect(screen.getByLabelText('Instructions')).toHaveValue(behaviour.draft.instructions));
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it('warns before Behaviour navigation and clears the warning after an authoritative save',async()=>{
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
+    const updateAssistantBehaviour=vi.fn().mockResolvedValue({...behaviour,draft:{...behaviour.draft,instructions:'Changed'},concurrencyToken:'3'});
+    const {router}=renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      updateAssistantBehaviour,
+    }),`/admin/assistants/${assistant.id}/behaviour`);
+    const instructions=await screen.findByLabelText('Instructions');
+    await userEvent.clear(instructions);
+    await userEvent.type(instructions,'Changed');
+    await userEvent.click(screen.getByRole('link',{name:'Preview'}));
+    expect(confirm).toHaveBeenCalledWith('Discard your unsaved behaviour changes?');
+    expect(router.state.location.pathname).toContain('/behaviour');
+    await userEvent.click(screen.getByRole('button',{name:'Save draft'}));
+    await screen.findByText('Behaviour draft saved.');
+    await userEvent.click(screen.getByRole('link',{name:'Preview'}));
+    expect(router.state.location.pathname).toContain('/preview');
+  });
+
+  it('requires deliberate publication, describes lifecycle separately, prevents duplicates, and restores focus on cancel',async()=>{
+    const pending=deferred<AssistantBehaviour>();
+    const publishAssistantBehaviour=vi.fn(()=>pending.promise);
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      publishAssistantBehaviour,
+    }),`/admin/assistants/${assistant.id}/behaviour`);
+    const publish=await screen.findByRole('button',{name:'Publish saved draft'});
+    await userEvent.click(publish);
+    const dialog=screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('will remain inactive and private');
+    await userEvent.click(within(dialog).getByRole('button',{name:'Cancel'}));
+    expect(publish).toHaveFocus();
+    await userEvent.click(publish);
+    await userEvent.click(screen.getByRole('button',{name:'Confirm publication'}));
+    expect(screen.getByRole('button',{name:'Publishing…'})).toBeDisabled();
+    expect(publishAssistantBehaviour).toHaveBeenCalledOnce();
+    expect(publishAssistantBehaviour).toHaveBeenCalledWith(assistant.id,{concurrency_token:'2',draft_revision:2});
+    pending.resolve({...behaviour,published:{revision:2,publishedAt:'2026-08-05T10:00:00Z'},hasUnpublishedChanges:false,concurrencyToken:'3'});
+    expect(await screen.findByText('Behaviour published successfully.')).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Publish saved draft'})).toBeDisabled();
+  });
+
+  it.each([
+    ['network failure',new AdminApiError('network'),'backend could not be reached',false],
+    ['stale conflict',new AdminApiError('conflict','assistant_behaviour_publish_conflict'),'saved draft changed before publication',true],
+  ] as const)('retains the saved draft after publication %s',async(_scenario,error,message,offersRefresh)=>{
+    const publishAssistantBehaviour=vi.fn().mockRejectedValue(error);
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      publishAssistantBehaviour,
+    }),`/admin/assistants/${assistant.id}/behaviour`);
+    await userEvent.click(await screen.findByRole('button',{name:'Publish saved draft'}));
+    await userEvent.click(screen.getByRole('button',{name:'Confirm publication'}));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    expect(screen.getByText('Draft changes awaiting publication')).toBeInTheDocument();
+    expect(screen.getByText(/Revision 1 published/)).toBeInTheDocument();
+    expect(screen.queryByText('Behaviour published successfully.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Publish saved draft'})).toBeEnabled();
+    if(offersRefresh)expect(screen.getByRole('button',{name:'Refresh server state'})).toBeInTheDocument();
+    else expect(screen.queryByRole('button',{name:'Refresh server state'})).not.toBeInTheDocument();
+    expect(publishAssistantBehaviour).toHaveBeenCalledWith(assistant.id,{concurrency_token:'2',draft_revision:2});
+  });
+
+  it('renders the canonical saved-draft widget preview incrementally, supports multi-turn chat, and resets local conversation',async()=>{
+    const first=deferred<{answer:string}>();
+    let firstOptions:Parameters<AdminApi['previewAssistantMessage']>[2];
+    const previewAssistantMessage=vi.fn()
+      .mockImplementationOnce((_id,_input,options)=>{firstOptions=options;return first.promise;})
+      .mockImplementationOnce((_id,_input,options)=>{
+        options?.onDelta?.('Follow-up fictional answer.');
+        return Promise.resolve({answer:'Follow-up fictional answer.'});
+      });
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      previewAssistantMessage,
+    }),`/admin/assistants/${assistant.id}/preview`);
+    expect(await screen.findByText('Previewing saved draft revision 2.')).toBeInTheDocument();
+    expect(screen.getByText('Welcome to policy help.')).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'What is covered?'})).toBeInTheDocument();
+    const composer=screen.getByPlaceholderText('Ask about policy');
+    await userEvent.type(composer,'First question{Enter}');
+    act(()=>firstOptions?.onDelta?.('First fictional '));
+    expect(await screen.findByText('First fictional')).toBeInTheDocument();
+    expect(screen.getByText('Thinking…')).toBeInTheDocument();
+    act(()=>firstOptions?.onDelta?.('answer.'));
+    expect(screen.getByText('First fictional answer.')).toBeInTheDocument();
+    first.resolve({answer:'First fictional answer.'});
+    await waitFor(()=>expect(screen.queryByText('Thinking…')).not.toBeInTheDocument());
+    await userEvent.type(composer,'Follow up{Enter}');
+    expect(await screen.findByText('Follow-up fictional answer.')).toBeInTheDocument();
+    expect(previewAssistantMessage).toHaveBeenLastCalledWith(assistant.id,{
+      message:'Follow up',
+      history:[{role:'user',content:'First question'},{role:'assistant',content:'First fictional answer.'}],
+    },expect.objectContaining({signal:expect.any(AbortSignal),onDelta:expect.any(Function)}));
+    await userEvent.click(screen.getByRole('button',{name:'Reset conversation'}));
+    expect(screen.queryByText('First fictional answer.')).not.toBeInTheDocument();
+    expect(screen.getByText('Welcome to policy help.')).toBeInTheDocument();
+  });
+
+  it('aborts active Preview generation on reset and ignores later deltas',async()=>{
+    const response=deferred<{answer:string}>();
+    let options:Parameters<AdminApi['previewAssistantMessage']>[2];
+    const previewAssistantMessage=vi.fn((_id,_input,streamOptions)=>{options=streamOptions;return response.promise;});
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      previewAssistantMessage,
+    }),`/admin/assistants/${assistant.id}/preview`);
+    await userEvent.type(await screen.findByPlaceholderText('Ask about policy'),'Reset me{Enter}');
+    act(()=>options?.onDelta?.('Partial answer'));
+    expect(screen.getByText('Partial answer')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button',{name:'Reset conversation'}));
+
+    expect(options?.signal?.aborted).toBe(true);
+    expect(screen.queryByText('Partial answer')).not.toBeInTheDocument();
+    act(()=>options?.onDelta?.('Late delta'));
+    expect(screen.queryByText('Late delta')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    response.reject(new DOMException('Aborted','AbortError'));
+  });
+
+  it.each([
+    ['forbidden',false,'permission'],
+    ['unauthenticated',true,'Welcome back'],
+  ] as const)('handles Behaviour load %s safely without exposing protected content',async(kind,expires,text)=>{
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockRejectedValue(new AdminApiError(kind)),
+    }),`/admin/assistants/${assistant.id}/behaviour`);
+    if(expires) expect(await screen.findByRole('heading',{name:text})).toBeInTheDocument();
+    else expect(await screen.findByRole('alert')).toHaveTextContent(text);
+    expect(screen.queryByLabelText('Instructions')).not.toBeInTheDocument();
+  });
+
+  it('maps preview failures through the canonical safe widget state without browser persistence',async()=>{
+    const localSet=vi.spyOn(Storage.prototype,'setItem');
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      previewAssistantMessage:vi.fn().mockRejectedValue(new AdminApiError('network')),
+    }),`/admin/assistants/${assistant.id}/preview`);
+    await userEvent.type(await screen.findByPlaceholderText('Ask about policy'),'Private preview question{Enter}');
+    expect(await screen.findByRole('alert')).toHaveTextContent("couldn't reach the assistant");
+    expect(localSet).not.toHaveBeenCalled();
+    expect(window.location.href).not.toContain('Private preview question');
+  });
+
+  it('preserves the administrator session and shows a permission error for forbidden Preview messages',async()=>{
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      previewAssistantMessage:vi.fn().mockRejectedValue(new AdminApiError('forbidden','private backend detail')),
+    }),`/admin/assistants/${assistant.id}/preview`);
+
+    await userEvent.type(await screen.findByPlaceholderText('Ask about policy'),'Forbidden question{Enter}');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('do not have permission to preview this assistant');
+    expect(screen.getByText('admin@example.test')).toBeInTheDocument();
+    expect(screen.queryByRole('heading',{name:'Welcome back'})).not.toBeInTheDocument();
+    expect(screen.queryByText('This assistant is currently unavailable.')).not.toBeInTheDocument();
+    expect(screen.queryByText('private backend detail')).not.toBeInTheDocument();
+  });
+
+  it('expires the administrator session when preview chat returns 401',async()=>{
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      previewAssistantMessage:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated')),
+    }),`/admin/assistants/${assistant.id}/preview`);
+    await userEvent.type(await screen.findByPlaceholderText('Ask about policy'),'Question{Enter}');
+    expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();
   });
 });
