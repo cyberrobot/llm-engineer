@@ -14,6 +14,7 @@ import {
   type AssistantVisibility,
 } from '../../api/adminApi';
 import { useAuth } from '../../auth/AuthContext';
+import { AssistantNavigation } from './AssistantBehaviour';
 
 function message(error: unknown) {
   if (!(error instanceof AdminApiError))
@@ -507,6 +508,8 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
     }
   }
   return (
+    <section className={mode === 'edit' ? 'assistant-workspace' : undefined}>
+      {mode === 'edit' && detail && <AssistantNavigation assistant={detail} />}
     <form className="assistant-form" onSubmit={submit}>
       <p>
         {mode === 'create'
@@ -575,5 +578,6 @@ export function AssistantFormPage({ mode }: { mode: 'create' | 'edit' }) {
         {mode === 'edit' && detail && <Link to={`/admin/assistants/${detail.id}/knowledge`}>Manage knowledge &amp; retrieval</Link>}
       </div>
     </form>
+    </section>
   );
 }

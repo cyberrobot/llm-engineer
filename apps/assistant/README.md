@@ -37,6 +37,8 @@ export function AssistantSection() {
 }
 ```
 
+The package also exports `AssistantWidgetConversation` and the `AssistantChatClient` contract as an additive integration boundary for trusted applications that need the canonical conversation UI with a different server-backed transport. The standard `AssistantWidget` continues to construct and use the public chat client; custom clients must enforce their own authentication and server-side authorization.
+
 The stylesheet is compiled and locally scoped. Consumers do not need Tailwind, PostCSS, CSS
 Modules, or other widget-specific styling configuration.
 

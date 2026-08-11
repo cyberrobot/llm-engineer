@@ -6,7 +6,17 @@ Private React application for Redmoor administration. It provides cookie-backed 
 
 Authenticated administrators can list and create Assistants at `/admin/assistants`, create at `/admin/assistants/new`, and edit at `/admin/assistants/:assistantId/edit`. The UI uses the protected backend `/admin/assistants` contract and supports only name, immutable slug, active/inactive status, and public/private visibility. Creation defaults to inactive/private. Updates use the backend concurrency token; deletion remains subject to seeded-assistant and dependency restrictions.
 
-The Assistant identity form deliberately excludes knowledge-source fields, prompts, widget settings, preview, analytics, duplication, and bulk actions. Knowledge and retrieval use the separate Assistant-scoped workflow below. Expired sessions return to login, malformed successful responses are rejected, and slug/update conflicts are presented without raw backend details.
+The Assistant identity form deliberately excludes knowledge-source fields, prompts, analytics, duplication, and bulk actions. Behaviour, preview, and knowledge use separate Assistant-scoped sections. Expired sessions return to login, malformed successful responses are rejected, and slug/update conflicts are presented without raw backend details.
+
+## Behaviour, publishing, and preview
+
+Open `/admin/assistants/:assistantId/behaviour` to edit the server-backed saved draft. The supported configuration is limited to instructions, welcome message, input placeholder, and up to eight ordered suggested questions. Instructions are generation guidance; the other fields are user-facing conversation text. Prompt whitespace is preserved, validation failures retain local values, and the backend concurrency token prevents a stale save from silently overwriting another administrator's work.
+
+Saving a draft never publishes it. Publication is a separate confirmed operation that promotes the exact saved draft revision. Publication also does not activate the Assistant or change private/public visibility; those lifecycle controls remain on General. The page reports the authoritative published revision and whether the saved draft contains unpublished changes.
+
+Open `/admin/assistants/:assistantId/preview` to exercise the saved draft through the authenticated backend preview contract. Preview uses the canonical Assistant widget conversation surface and the normal grounded generation pipeline, but it does not publish or change availability. Unsaved local Behaviour edits are not previewed. Preview conversation history exists only in component memory and Reset conversation clears it.
+
+Behaviour prompts and preview conversations are never written to local storage, session storage, route URLs, or generic errors. The backend preview endpoint is required; the admin application does not fall back to public chat or browser-only prompt simulation.
 
 ## Knowledge and retrieval
 

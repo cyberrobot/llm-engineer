@@ -13,6 +13,8 @@ function titleFor(pathname: string) {
     if (pathname.includes('/knowledge/') && pathname.endsWith('/new')) return 'Add knowledge source';
     if (pathname.includes('/knowledge/')) return 'Knowledge source details';
     if (pathname.endsWith('/knowledge')) return 'Knowledge & retrieval';
+    if (pathname.endsWith('/behaviour')) return 'Assistant behaviour';
+    if (pathname.endsWith('/preview')) return 'Assistant preview';
     if (pathname.endsWith('/new')) return 'Create assistant';
     if (pathname.endsWith('/edit')) return 'Edit assistant';
     return 'Assistants';

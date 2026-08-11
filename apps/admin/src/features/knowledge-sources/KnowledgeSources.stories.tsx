@@ -54,6 +54,10 @@ const base: AdminApi = {
   createAssistant: async () => assistant,
   updateAssistant: async () => assistant,
   deleteAssistant: async () => undefined,
+  getAssistantBehaviour: async () => { throw new AdminApiError('not_found'); },
+  updateAssistantBehaviour: async () => { throw new AdminApiError('invalid_request'); },
+  publishAssistantBehaviour: async () => { throw new AdminApiError('invalid_request'); },
+  previewAssistantMessage: async () => { throw new AdminApiError('invalid_request'); },
   listKnowledgeSources: async () => ({
     items: [
       summary,

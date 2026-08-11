@@ -152,6 +152,32 @@ export function createAdminApi(baseUrl: string): AdminApi {
       if (!response.ok) return failure(response, 'assistant');
       if (response.status !== 204) throw new AdminApiError('invalid_response');
     },
+    async getAssistantBehaviour(id, signal) {
+      const response = await request(baseUrl, behaviourPath(id), { method: 'GET', signal });
+      if (!response.ok) return failure(response, 'assistant');
+      return assistantBehaviourFrom(await successfulJson(response), id);
+    },
+    async updateAssistantBehaviour(id, input, signal) {
+      const response = await request(baseUrl, behaviourPath(id), jsonRequest('PUT', input, signal));
+      if (!response.ok) return failure(response, 'assistant');
+      return assistantBehaviourFrom(await successfulJson(response), id);
+    },
+    async publishAssistantBehaviour(id, input, signal) {
+      const response = await request(baseUrl, `${behaviourPath(id)}/publish`, jsonRequest('POST', input, signal));
+      if (!response.ok) return failure(response, 'assistant');
+      return assistantBehaviourFrom(await successfulJson(response), id);
+    },
+    async previewAssistantMessage(id, input, signal) {
+      const response = await request(baseUrl, `/admin/assistants/${encodeURIComponent(id)}/preview/chat`, {
+        ...jsonRequest('POST', input, signal),
+        headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) return failure(response, 'assistant');
+      if (!response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')) {
+        throw new AdminApiError('invalid_response');
+      }
+      return { answer: previewAnswerFrom(await response.text()) };
+    },
     async listKnowledgeSources(assistantId, options = {}, signal) {
       const params = new URLSearchParams({
         limit: String(options.limit ?? 50),
@@ -200,6 +226,32 @@ export type AssistantDetail = Assistant & { knowledgeSourceCount: number; deleti
 export type AssistantList = { items: Assistant[]; total: number; limit: number; offset: number };
 export type CreateAssistant = { slug: string; name: string; status: AssistantStatus; visibility: AssistantVisibility };
 export type UpdateAssistant = { concurrency_token: string; name?: string; status?: AssistantStatus; visibility?: AssistantVisibility };
+export type AssistantBehaviourDraft = {
+  revision: number;
+  instructions: string;
+  welcomeMessage: string;
+  inputPlaceholder: string;
+  suggestedQuestions: string[];
+  createdAt: string;
+};
+export type AssistantBehaviourPublished = { revision: number; publishedAt: string };
+export type AssistantBehaviour = {
+  assistantId: string;
+  draft: AssistantBehaviourDraft;
+  published: AssistantBehaviourPublished | null;
+  hasUnpublishedChanges: boolean;
+  concurrencyToken: string;
+};
+export type UpdateAssistantBehaviour = {
+  concurrency_token: string;
+  instructions: string;
+  welcome_message: string;
+  input_placeholder: string;
+  suggested_questions: string[];
+};
+export type PublishAssistantBehaviour = { concurrency_token: string; draft_revision: number };
+export type AssistantChatHistoryMessage = { role: 'user' | 'assistant'; content: string };
+export type AssistantPreviewMessage = { message: string; history: AssistantChatHistoryMessage[] };
 export type KnowledgeSourceType = 'direct_text' | 'url';
 export type RetrievalState = 'enabled' | 'disabled';
 export type IngestionStatus = 'queued' | 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -230,6 +282,7 @@ function assistantListFrom(value: unknown): AssistantList {
   return { items: value.items.map(assistantFrom), total, limit, offset };
 }
 function jsonRequest(method: string, body: unknown, signal?: AbortSignal, headers: Record<string,string> = {}): RequestInit { return { method, headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal }; }
+function behaviourPath(assistantId: string) { return `/admin/assistants/${encodeURIComponent(assistantId)}/behaviour`; }
 function knowledgePath(assistantId: string) { return `/admin/assistants/${encodeURIComponent(assistantId)}/knowledge-sources`; }
 const awareTimestamp = /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/;
 function validTimestamp(value: unknown): value is string { return timestamp(value) && awareTimestamp.test(value); }
@@ -271,6 +324,82 @@ function knowledgeSourceListFrom(value: unknown, assistantId: string): Knowledge
 }
 function isHttpUrl(value: string) { try { const url=new URL(value); return (url.protocol==='http:'||url.protocol==='https:')&&!url.username&&!url.password&&!url.hash; } catch { return false; } }
 
+function safeMultiline(value: unknown, maximum: number, required: boolean): value is string {
+  if (typeof value !== 'string' || value.length > maximum || (required && !value.trim())) return false;
+  return ![...value].some((character) =>
+    /[\p{Cc}\p{Cf}\p{Cs}]/u.test(character) && character !== '\n' && character !== '\t');
+}
+function safeSingleLine(value: unknown, maximum: number, required: boolean): value is string {
+  return safeMultiline(value, maximum, required) && !value.includes('\n') && !value.includes('\r') && !value.includes('\t');
+}
+function behaviourDraftFrom(value: unknown): AssistantBehaviourDraft {
+  if (!isRecord(value) || !hasExactKeys(value, ['revision','instructions','welcome_message','input_placeholder','suggested_questions','created_at']) ||
+    !Number.isInteger(value.revision) || Number(value.revision) < 1 ||
+    !safeMultiline(value.instructions, 12000, true) || !safeMultiline(value.welcome_message, 1000, false) ||
+    !safeSingleLine(value.input_placeholder, 160, true) || !Array.isArray(value.suggested_questions) ||
+    value.suggested_questions.length > 8 || !value.suggested_questions.every((question) => safeSingleLine(question, 240, true)) ||
+    !validTimestamp(value.created_at)) throw new AdminApiError('invalid_response');
+  return {
+    revision: Number(value.revision), instructions: value.instructions, welcomeMessage: value.welcome_message,
+    inputPlaceholder: value.input_placeholder, suggestedQuestions: [...value.suggested_questions] as string[], createdAt: value.created_at,
+  };
+}
+function assistantBehaviourFrom(value: unknown, assistantId: string): AssistantBehaviour {
+  if (!isRecord(value) || !hasExactKeys(value, ['assistant_id','draft','published','has_unpublished_changes','concurrency_token']) ||
+    value.assistant_id !== assistantId || typeof value.has_unpublished_changes !== 'boolean' ||
+    typeof value.concurrency_token !== 'string' || !value.concurrency_token || value.concurrency_token.length > 100) {
+    throw new AdminApiError('invalid_response');
+  }
+  const draft = behaviourDraftFrom(value.draft);
+  let published: AssistantBehaviourPublished | null = null;
+  if (value.published !== null) {
+    if (!isRecord(value.published) || !hasExactKeys(value.published, ['revision','published_at']) ||
+      !Number.isInteger(value.published.revision) || Number(value.published.revision) < 1 ||
+      Number(value.published.revision) > draft.revision || !validTimestamp(value.published.published_at)) {
+      throw new AdminApiError('invalid_response');
+    }
+    published = { revision: Number(value.published.revision), publishedAt: value.published.published_at };
+  }
+  const expectedUnpublished = published === null || published.revision !== draft.revision;
+  if (value.has_unpublished_changes !== expectedUnpublished) throw new AdminApiError('invalid_response');
+  return { assistantId, draft, published, hasUnpublishedChanges: value.has_unpublished_changes, concurrencyToken: value.concurrency_token };
+}
+function previewAnswerFrom(value: string): string {
+  const answer: string[] = [];
+  let started = false;
+  let completed = false;
+  for (const block of value.replaceAll('\r\n', '\n').split('\n\n')) {
+    let event = 'message';
+    const data: string[] = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+    }
+    if (data.length === 0) continue;
+    let payload: unknown;
+    try { payload = JSON.parse(data.join('\n')); } catch { throw new AdminApiError('invalid_response'); }
+    if (!['start','delta','complete','error'].includes(event)) throw new AdminApiError('invalid_response');
+    if (event === 'error') throw new AdminApiError('server');
+    if (event === 'start') {
+      if (started || completed || !isRecord(payload) || !hasExactKeys(payload, ['assistant']) || typeof payload.assistant !== 'string' || !payload.assistant) {
+        throw new AdminApiError('invalid_response');
+      }
+      started = true;
+    }
+    if (event === 'delta') {
+      if (!started || completed || !isRecord(payload) || !hasExactKeys(payload, ['text']) || typeof payload.text !== 'string') throw new AdminApiError('invalid_response');
+      answer.push(payload.text);
+    }
+    if (event === 'complete') {
+      if (!started || completed || !isRecord(payload) || !hasExactKeys(payload, ['finishReason']) || payload.finishReason !== 'stop') throw new AdminApiError('invalid_response');
+      completed = true;
+    }
+  }
+  const text = answer.join('').trim();
+  if (!started || !completed || !text) throw new AdminApiError('invalid_response');
+  return text;
+}
+
 export interface AdminApi {
   login(email: string, password: string, signal?: AbortSignal): Promise<Administrator>;
   currentUser(signal?: AbortSignal): Promise<Administrator>;
@@ -280,6 +409,10 @@ export interface AdminApi {
   createAssistant(input: CreateAssistant, signal?: AbortSignal): Promise<Assistant>;
   updateAssistant(id: string, input: UpdateAssistant, signal?: AbortSignal): Promise<Assistant>;
   deleteAssistant(id: string, signal?: AbortSignal): Promise<void>;
+  getAssistantBehaviour(id: string, signal?: AbortSignal): Promise<AssistantBehaviour>;
+  updateAssistantBehaviour(id: string, input: UpdateAssistantBehaviour, signal?: AbortSignal): Promise<AssistantBehaviour>;
+  publishAssistantBehaviour(id: string, input: PublishAssistantBehaviour, signal?: AbortSignal): Promise<AssistantBehaviour>;
+  previewAssistantMessage(id: string, input: AssistantPreviewMessage, signal?: AbortSignal): Promise<{ answer: string }>;
   listKnowledgeSources(assistantId: string, options?: { limit?: number; offset?: number }, signal?: AbortSignal): Promise<KnowledgeSourceList>;
   getKnowledgeSource(assistantId: string, sourceId: string, signal?: AbortSignal): Promise<KnowledgeSource>;
   createKnowledgeSource(assistantId: string, input: CreateKnowledgeSource, idempotencyKey: string, signal?: AbortSignal): Promise<KnowledgeSource>;
