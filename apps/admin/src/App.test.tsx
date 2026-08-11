@@ -1103,6 +1103,22 @@ describe('administrator application workflows',()=>{
     expect(window.location.href).not.toContain('Private preview question');
   });
 
+  it('preserves the administrator session and shows a permission error for forbidden Preview messages',async()=>{
+    renderApp(apiWith({
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+      getAssistantBehaviour:vi.fn().mockResolvedValue(behaviour),
+      previewAssistantMessage:vi.fn().mockRejectedValue(new AdminApiError('forbidden','private backend detail')),
+    }),`/admin/assistants/${assistant.id}/preview`);
+
+    await userEvent.type(await screen.findByPlaceholderText('Ask about policy'),'Forbidden question{Enter}');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('do not have permission to preview this assistant');
+    expect(screen.getByText('admin@example.test')).toBeInTheDocument();
+    expect(screen.queryByRole('heading',{name:'Welcome back'})).not.toBeInTheDocument();
+    expect(screen.queryByText('This assistant is currently unavailable.')).not.toBeInTheDocument();
+    expect(screen.queryByText('private backend detail')).not.toBeInTheDocument();
+  });
+
   it('expires the administrator session when preview chat returns 401',async()=>{
     renderApp(apiWith({
       getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),

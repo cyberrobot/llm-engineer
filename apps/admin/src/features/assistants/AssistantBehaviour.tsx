@@ -395,6 +395,8 @@ export function AssistantPreviewPage() {
   const { assistantId } = useParams();
   const workspace = useWorkspace(assistantId);
   const [reset, setReset] = useState(0);
+  const [forbiddenAssistantId, setForbiddenAssistantId] = useState<string>();
+  const previewForbidden = Boolean(assistantId && forbiddenAssistantId === assistantId);
   const chatClient = useMemo<AssistantChatClient | undefined>(() => {
     if (!assistantId) return undefined;
     const previewAssistantId = assistantId;
@@ -410,7 +412,11 @@ export function AssistantPreviewPage() {
       } catch (error) {
         if (error instanceof AdminApiError && error.kind === 'unauthenticated') auth.sessionExpired();
         if (error instanceof AdminApiError && error.kind === 'invalid_request') throw new AssistantChatError('invalid_request', false);
-        if (error instanceof AdminApiError && ['not_found', 'conflict', 'forbidden'].includes(error.kind)) throw new AssistantChatError('assistant_unavailable', false);
+        if (error instanceof AdminApiError && error.kind === 'forbidden') {
+          setForbiddenAssistantId(previewAssistantId);
+          throw new AssistantChatError('assistant_unavailable', false);
+        }
+        if (error instanceof AdminApiError && ['not_found', 'conflict'].includes(error.kind)) throw new AssistantChatError('assistant_unavailable', false);
         if (error instanceof AdminApiError && error.kind === 'network') throw new AssistantChatError('network_error', true);
         if (error instanceof AdminApiError && error.kind === 'invalid_response') throw new AssistantChatError('invalid_response', true);
         throw new AssistantChatError('server_error', true);
@@ -434,17 +440,24 @@ export function AssistantPreviewPage() {
           <h3>Preview</h3>
           <p><strong>Previewing saved draft revision {behaviour.draft.revision}.</strong> Unsaved Behaviour edits are never included.</p>
         </div>
-        <button className="secondary-action" onClick={() => setReset((value) => value + 1)}>Reset conversation</button>
+        <button className="secondary-action" onClick={() => {
+          setForbiddenAssistantId(undefined);
+          setReset((value) => value + 1);
+        }}>Reset conversation</button>
       </div>
       <div className="assistant-preview-frame">
-        <AssistantWidgetConversation
-          key={reset}
-          assistantName={assistant.name}
-          chatClient={chatClient}
-          placeholder={behaviour.draft.inputPlaceholder}
-          suggestedQuestions={behaviour.draft.suggestedQuestions}
-          welcomeMessage={behaviour.draft.welcomeMessage}
-        />
+        {previewForbidden ? (
+          <div className="alert" role="alert">You do not have permission to preview this assistant.</div>
+        ) : (
+          <AssistantWidgetConversation
+            key={reset}
+            assistantName={assistant.name}
+            chatClient={chatClient}
+            placeholder={behaviour.draft.inputPlaceholder}
+            suggestedQuestions={behaviour.draft.suggestedQuestions}
+            welcomeMessage={behaviour.draft.welcomeMessage}
+          />
+        )}
       </div>
     </section>
   );
