@@ -262,6 +262,58 @@ def test_public_chat_uses_published_revision_and_ignores_newer_saved_draft():
     assert "NEW DRAFT INSTRUCTIONS" in provider.stream_calls[-1][0]
 
 
+def test_prepared_public_chat_keeps_published_snapshot_while_next_request_uses_new_publication():
+    redmoor = assistant()
+    assistants = AssistantRepositoryStub((redmoor,))
+    behaviours = InMemoryAssistantBehaviourRepository(assistants)  # type: ignore[arg-type]
+    initial = behaviours.get_state(redmoor.id)
+    revision_two = behaviours.save_draft(
+        redmoor.id,
+        expected_token=initial.concurrency_token,
+        instructions="PUBLISHED REVISION TWO",
+        welcome_message="",
+        input_placeholder="Ask",
+        suggested_questions=(),
+        at=initial.updated_at,
+    )
+    published_two = behaviours.publish(
+        redmoor.id,
+        expected_token=revision_two.concurrency_token,
+        draft_revision=revision_two.draft.revision,
+        at=revision_two.updated_at,
+    )
+    revision_three = behaviours.save_draft(
+        redmoor.id,
+        expected_token=published_two.concurrency_token,
+        instructions="PUBLISHED REVISION THREE",
+        welcome_message="",
+        input_placeholder="Ask",
+        suggested_questions=(),
+        at=published_two.updated_at,
+    )
+    provider = StreamingProvider()
+    service = PublicAssistantChatService(
+        assistants,
+        RetrievalFactory({redmoor.id: [knowledge()]}),
+        provider,
+        behaviour_repository=behaviours,
+    )
+
+    prepared = service.prepare("redmoor", PublicChatRequest(message="Question"))
+    behaviours.publish(
+        redmoor.id,
+        expected_token=revision_three.concurrency_token,
+        draft_revision=revision_three.draft.revision,
+        at=revision_three.updated_at,
+    )
+    list(prepared.events())
+    assert "PUBLISHED REVISION TWO" in provider.stream_calls[-1][0]
+    assert "PUBLISHED REVISION THREE" not in provider.stream_calls[-1][0]
+
+    list(service.prepare("redmoor", PublicChatRequest(message="Question")).events())
+    assert "PUBLISHED REVISION THREE" in provider.stream_calls[-1][0]
+
+
 @pytest.mark.parametrize(
     ("status", "visibility"),
     [

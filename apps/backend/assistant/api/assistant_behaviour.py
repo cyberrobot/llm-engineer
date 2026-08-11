@@ -49,6 +49,11 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     422: {"model": AssistantAdminErrorResponse, "description": "Invalid behaviour or chat input"},
 }
 
+PREVIEW_ERROR_RESPONSES = {
+    **ERROR_RESPONSES,
+    504: {"model": AssistantAdminErrorResponse, "description": "Preview preparation timed out"},
+}
+
 
 def _error(code: str, message: str, status_code: int) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
@@ -64,7 +69,6 @@ def _response(state: AssistantBehaviourState) -> AssistantBehaviourStateResponse
             input_placeholder=state.draft.input_placeholder,
             suggested_questions=list(state.draft.suggested_questions),
             created_at=state.draft.created_at,
-            updated_at=state.updated_at,
         ),
         published=(
             AssistantBehaviourPublishedResponse(
@@ -175,7 +179,7 @@ def _preview_stream(session: PreparedPublicChat) -> Iterator[str]:
 @router.post(
     "/{assistant_id}/preview/chat",
     response_class=StreamingResponse,
-    responses=ERROR_RESPONSES,
+    responses=PREVIEW_ERROR_RESPONSES,
     dependencies=[Depends(require_trusted_admin_origin)],
     description="Streams grounded chat using the saved draft without publishing or changing availability.",
 )

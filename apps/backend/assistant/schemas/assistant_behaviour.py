@@ -19,7 +19,6 @@ class AssistantBehaviourDraftResponse(BaseModel):
     input_placeholder: str
     suggested_questions: list[str]
     created_at: datetime
-    updated_at: datetime
 
 
 class AssistantBehaviourPublishedResponse(BaseModel):

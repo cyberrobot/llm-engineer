@@ -30,6 +30,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_discovery_assistant
       KNOWLEDGE_SOURCE_POSTGRES_REQUIRED: "true"
       KNOWLEDGE_PERSISTENCE_POSTGRES_REQUIRED: "true"
+      ASSISTANT_BEHAVIOUR_POSTGRES_REQUIRED: "true"
     defaults:
       run:
         working-directory: apps/backend
@@ -62,6 +63,12 @@ jobs:
         run: >-
           pytest -q -o "addopts=" --strict-markers
           tests/test_knowledge_persistence_integration.py
+
+      - name: Run required Assistant behaviour PostgreSQL tests without skips
+        run: >-
+          pytest -q -o "addopts=" --strict-markers
+          tests/test_assistant_behaviour_postgres.py
+          tests/test_migrations.py
 
   storybook-tests:
     name: Storybook tests

@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -19,7 +20,12 @@ NOW = datetime(2026, 8, 11, tzinfo=timezone.utc)
 ASSISTANT_ID = UUID("11111111-1111-4111-8111-111111111111")
 
 
-def client(*, authenticated: bool = True, trusted: bool = True) -> TestClient:
+def client(
+    *,
+    authenticated: bool = True,
+    trusted: bool = True,
+    clock: Callable[[], datetime] = lambda: NOW,
+) -> TestClient:
     assistant = Assistant(
         ASSISTANT_ID,
         "draft",
@@ -34,7 +40,7 @@ def client(*, authenticated: bool = True, trusted: bool = True) -> TestClient:
     register_exception_handlers(app)
     app.include_router(router)
     app.dependency_overrides[get_assistant_behaviour_service] = lambda: AssistantBehaviourService(
-        behaviours, clock=lambda: NOW
+        behaviours, clock=clock
     )
     if authenticated:
         app.dependency_overrides[require_administrator_role] = lambda: object()
@@ -44,7 +50,14 @@ def client(*, authenticated: bool = True, trusted: bool = True) -> TestClient:
 
 
 def test_get_save_and_publish_return_authoritative_state() -> None:
-    api = client()
+    times = iter(
+        (
+            NOW + timedelta(seconds=1),
+            NOW + timedelta(seconds=2),
+            NOW + timedelta(seconds=3),
+        )
+    )
+    api = client(clock=lambda: next(times))
     initial = api.get(f"/admin/assistants/{ASSISTANT_ID}/behaviour")
     assert initial.status_code == 200
     assert initial.json()["draft"]["revision"] == 1
@@ -66,6 +79,11 @@ def test_get_save_and_publish_return_authoritative_state() -> None:
     assert saved.json()["draft"]["revision"] == 2
     assert saved.json()["published"]["revision"] == 1
     assert saved.json()["has_unpublished_changes"] is True
+    draft_metadata = {
+        "revision": saved.json()["draft"]["revision"],
+        "created_at": saved.json()["draft"]["created_at"],
+    }
+    assert "updated_at" not in saved.json()["draft"]
 
     stale = api.put(
         f"/admin/assistants/{ASSISTANT_ID}/behaviour",
@@ -89,6 +107,11 @@ def test_get_save_and_publish_return_authoritative_state() -> None:
     )
     assert published.status_code == 200
     assert published.json()["published"]["revision"] == 2
+    assert published.json()["published"]["published_at"] != draft_metadata["created_at"]
+    assert {
+        "revision": published.json()["draft"]["revision"],
+        "created_at": published.json()["draft"]["created_at"],
+    } == draft_metadata
     assert published.json()["has_unpublished_changes"] is False
 
 

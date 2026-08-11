@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 
+from assistant.application.assistant_behaviour_service import AssistantBehaviourService
 from assistant.domain.assistant import Assistant, AssistantStatus, AssistantVisibility
 from assistant.domain.assistant_behaviour_repository import (
     AssistantBehaviourPublishConflict,
@@ -105,3 +106,34 @@ def test_publish_targets_exact_draft_and_is_idempotent() -> None:
         )
         == published
     )
+
+
+@pytest.mark.parametrize("unsafe_question", ("tab\tquestion", "zero-width\u200bquestion"))
+def test_service_rejects_unsafe_suggested_questions_before_persistence(
+    unsafe_question: str,
+) -> None:
+    assistant, _assistants, behaviours = repository()
+
+    class TrackingRepository:
+        save_called = False
+
+        def get_state(self, assistant_id):
+            return behaviours.get_state(assistant_id)
+
+        def save_draft(self, *args, **kwargs):
+            del args, kwargs
+            self.save_called = True
+            raise AssertionError("unsafe content must not reach persistence")
+
+    tracking = TrackingRepository()
+    service = AssistantBehaviourService(tracking)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="one safe line"):
+        service.save_draft(
+            assistant.id,
+            concurrency_token="1",
+            instructions="Safe",
+            welcome_message="",
+            input_placeholder="Ask",
+            suggested_questions=(unsafe_question,),
+        )
+    assert tracking.save_called is False

@@ -91,12 +91,17 @@ def upgrade(cursor: Any) -> None:
             IF TG_OP = 'UPDATE' THEN
                 RAISE EXCEPTION 'assistant behaviour revisions are immutable';
             END IF;
+            IF translate(NEW.instructions, E'\\n\\t', '') ~ '[[:cntrl:]]'
+               OR translate(NEW.welcome_message, E'\\n\\t', '') ~ '[[:cntrl:]]'
+               OR NEW.input_placeholder ~ '[[:cntrl:]]' THEN
+                RAISE EXCEPTION 'assistant behaviour contains unsafe control characters';
+            END IF;
             FOR item IN SELECT value FROM jsonb_array_elements(NEW.suggested_questions)
             LOOP
                 IF jsonb_typeof(item) <> 'string'
                    OR length(trim(item #>> '{{}}')) = 0
                    OR length(item #>> '{{}}') > {MAX_SUGGESTED_QUESTION_LENGTH}
-                   OR (item #>> '{{}}') ~ '[\\n\\r]' THEN
+                   OR (item #>> '{{}}') ~ '[[:cntrl:]]' THEN
                     RAISE EXCEPTION 'invalid suggested question';
                 END IF;
             END LOOP;

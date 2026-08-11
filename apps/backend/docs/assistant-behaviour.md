@@ -26,6 +26,9 @@ The administrator contract is:
   `error` SSE event shapes as public chat, but uses the saved current draft. It accepts the same
   bounded message/history shape and works for inactive or private Assistants.
 
+Draft revision metadata exposes only `created_at`. Revisions are immutable, so publishing a draft
+or otherwise changing publication state never changes that revision-owned timestamp.
+
 All routes require the existing administrator cookie session. Save, publish, and preview also
 require the configured trusted administrator origin. Preview requests cannot supply arbitrary
 instructions and do not store conversation state.
