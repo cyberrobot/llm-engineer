@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import Depends
 
 from assistant.application.assistant_admin_service import AssistantAdministrationService
+from assistant.application.assistant_behaviour_service import AssistantBehaviourService
 from assistant.application.chat import ChatService
 from assistant.application.content_processing_service import ContentProcessingService
 from assistant.application.ingestion_job_service import DocumentIngestionJobService
@@ -35,7 +36,10 @@ from assistant.application.ports.text_chunker import TextChunker
 from assistant.application.ports.text_cleaner import TextCleaner
 from assistant.application.ports.website_loader import WebsiteLoader
 from assistant.application.prompt_builder import PromptBuilder
-from assistant.application.public_chat import PublicAssistantChatService
+from assistant.application.public_chat import (
+    AssistantPreviewChatService,
+    PublicAssistantChatService,
+)
 from assistant.application.public_chat_protection import (
     AnonymousClientResolver,
     InMemoryConcurrencyLimiter,
@@ -45,6 +49,7 @@ from assistant.application.public_chat_protection import (
 )
 from assistant.application.retrieval_service import RetrievalService
 from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
+from assistant.domain.assistant_behaviour_repository import AssistantBehaviourRepository
 from assistant.domain.assistant_repository import AssistantRepository
 from assistant.domain.document_ingestion_job import IngestionStep
 from assistant.infrastructure.ingestion.html_content_extractor import HtmlContentExtractor
@@ -54,10 +59,12 @@ from assistant.infrastructure.ingestion.website_loader import HttpWebsiteLoader
 from assistant.infrastructure.repositories import (
     DocumentIngestionJobRepository,
     IngestionJobRepository,
+    InMemoryAssistantBehaviourRepository,
     InMemoryAssistantRepository,
     InMemoryDocumentIngestionJobRepository,
     InMemoryIngestionJobRepository,
     KnowledgeRepository,
+    PostgresAssistantBehaviourRepository,
     PostgresAssistantRepository,
     PostgresDocumentIngestionJobRepository,
     PostgresIngestionJobRepository,
@@ -144,10 +151,28 @@ def get_assistant_administration_service(
     return AssistantAdministrationService(repository)
 
 
+@lru_cache
+def get_assistant_behaviour_repository() -> AssistantBehaviourRepository:
+    if DATABASE_URL:
+        return PostgresAssistantBehaviourRepository()
+    return InMemoryAssistantBehaviourRepository(get_assistant_repository())
+
+
+def get_assistant_behaviour_service(
+    repository: Annotated[
+        AssistantBehaviourRepository, Depends(get_assistant_behaviour_repository)
+    ],
+) -> AssistantBehaviourService:
+    return AssistantBehaviourService(repository)
+
+
 def get_public_chat_service(
     ai_provider: Annotated[AIProvider, Depends(get_ai_provider)],
     repository: Annotated[KnowledgeRepository, Depends(get_knowledge_repository)],
     assistant_repository: Annotated[AssistantRepository, Depends(get_assistant_repository)],
+    behaviour_repository: Annotated[
+        AssistantBehaviourRepository, Depends(get_assistant_behaviour_repository)
+    ],
 ) -> PublicAssistantChatService:
     settings = get_public_assistant_chat_settings()
 
@@ -166,6 +191,36 @@ def get_public_chat_service(
         ai_provider,
         PromptBuilder(),
         settings,
+        behaviour_repository=behaviour_repository,
+    )
+
+
+def get_assistant_preview_chat_service(
+    ai_provider: Annotated[AIProvider, Depends(get_ai_provider)],
+    repository: Annotated[KnowledgeRepository, Depends(get_knowledge_repository)],
+    assistant_repository: Annotated[AssistantRepository, Depends(get_assistant_repository)],
+    behaviour_repository: Annotated[
+        AssistantBehaviourRepository, Depends(get_assistant_behaviour_repository)
+    ],
+) -> AssistantPreviewChatService:
+    settings = get_public_assistant_chat_settings()
+
+    def retrieval_factory(assistant_id: UUID) -> RetrievalService:
+        return RetrievalService(
+            ai_provider,
+            repository,
+            assistant_id=assistant_id,
+            limit=settings.retrieval_limit,
+            min_score=settings.minimum_similarity_score,
+        )
+
+    return AssistantPreviewChatService(
+        assistant_repository,
+        behaviour_repository,
+        retrieval_factory,
+        ai_provider,
+        PromptBuilder(),
+        settings,
     )
 
 
@@ -177,6 +232,7 @@ def get_public_chat_service_factory() -> Callable[[], PublicAssistantChatService
             get_ai_provider(),
             get_knowledge_repository(get_vector_store()),
             get_assistant_repository(),
+            get_assistant_behaviour_repository(),
         )
 
     return build

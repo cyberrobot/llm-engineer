@@ -1,3 +1,4 @@
+import json
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from typing import Any
@@ -9,6 +10,12 @@ from assistant.domain.assistant import (
     Assistant,
     AssistantStatus,
     AssistantVisibility,
+)
+from assistant.domain.assistant_behaviour import (
+    DEFAULT_ASSISTANT_INSTRUCTIONS,
+    DEFAULT_INPUT_PLACEHOLDER,
+    DEFAULT_SUGGESTED_QUESTIONS,
+    DEFAULT_WELCOME_MESSAGE,
 )
 from assistant.domain.assistant_repository import (
     AssistantConcurrentUpdate,
@@ -50,6 +57,26 @@ class PostgresAssistantRepository(AssistantRepository):
                         assistant.created_at,
                         assistant.updated_at,
                     ),
+                )
+                cursor.execute(
+                    """INSERT INTO assistant_behaviour_revisions
+                       (assistant_id,revision,instructions,welcome_message,input_placeholder,
+                        suggested_questions,created_at)
+                       VALUES (%s,1,%s,%s,%s,%s::jsonb,%s)""",
+                    (
+                        str(assistant.id),
+                        DEFAULT_ASSISTANT_INSTRUCTIONS,
+                        DEFAULT_WELCOME_MESSAGE,
+                        DEFAULT_INPUT_PLACEHOLDER,
+                        json.dumps(DEFAULT_SUGGESTED_QUESTIONS),
+                        assistant.created_at,
+                    ),
+                )
+                cursor.execute(
+                    """INSERT INTO assistant_behaviour_states
+                       (assistant_id,draft_revision,published_revision,published_at,version,updated_at)
+                       VALUES (%s,1,1,%s,1,%s)""",
+                    (str(assistant.id), assistant.created_at, assistant.created_at),
                 )
         except Exception as exc:
             if (

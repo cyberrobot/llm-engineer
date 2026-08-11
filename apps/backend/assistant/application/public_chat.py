@@ -9,11 +9,13 @@ from assistant.application.prompt_builder import Prompt, PromptBuilder
 from assistant.application.public_chat_protection import TokenBudget
 from assistant.domain import KnowledgeChunk
 from assistant.domain.assistant import Assistant, AssistantStatus, AssistantVisibility
+from assistant.domain.assistant_behaviour import DEFAULT_ASSISTANT_INSTRUCTIONS
+from assistant.domain.assistant_behaviour_repository import AssistantBehaviourRepository
 from assistant.domain.assistant_repository import AssistantNotFound
 from assistant.schemas.public_chat import PublicChatRequest
 from core.config import PublicAssistantChatSettings, get_public_assistant_chat_settings
 from core.correlation import request_id_context
-from core.metrics import public_chat_metrics
+from core.metrics import assistant_preview_metrics, public_chat_metrics
 from infrastructure.ai.providers import AIProvider
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,7 @@ class ScopedRetrieval(Protocol):
 
 class PublicAssistantLookup(Protocol):
     def get_by_slug(self, slug: str) -> Assistant: ...
+    def get_by_id(self, assistant_id: UUID) -> Assistant: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +55,7 @@ class PreparedPublicChat:
     insufficient_knowledge_response: str
     estimated_input_tokens: int
     clock: Callable[[], float]
+    mode: Literal["public", "preview"] = "public"
 
     def events(self) -> Iterator[PublicChatEvent]:
         """Produce one request-local typed stream with exactly one terminal event."""
@@ -59,9 +63,10 @@ class PreparedPublicChat:
         if self.prompt is None:
             yield PublicChatEvent("delta", {"text": self.insufficient_knowledge_response})
             yield PublicChatEvent("complete", {"finishReason": "stop"})
-            public_chat_metrics.insufficient.inc()
-            public_chat_metrics.completed.inc()
-            public_chat_metrics.total_duration.observe(self.clock() - self.started_at)
+            if self.mode == "public":
+                public_chat_metrics.insufficient.inc()
+                public_chat_metrics.completed.inc()
+                public_chat_metrics.total_duration.observe(self.clock() - self.started_at)
             self._log("insufficient_knowledge")
             return
 
@@ -94,26 +99,32 @@ class PreparedPublicChat:
                 if not delta:
                     continue
                 if not emitted_text:
-                    public_chat_metrics.time_to_first_token.observe(elapsed)
+                    if self.mode == "public":
+                        public_chat_metrics.time_to_first_token.observe(elapsed)
                 emitted_text = True
                 estimated_output_tokens += len(delta.encode("utf-8"))
                 yield PublicChatEvent("delta", {"text": delta})
             if not emitted_text:
                 raise RuntimeError("Generation completed without text.")
-            public_chat_metrics.generation_duration.observe(self.clock() - generation_started_at)
+            if self.mode == "public":
+                public_chat_metrics.generation_duration.observe(
+                    self.clock() - generation_started_at
+                )
         except GeneratorExit:
             close = getattr(provider_stream, "close", None)
             if close is not None:
                 close()
-            public_chat_metrics.cancelled.inc()
+            if self.mode == "public":
+                public_chat_metrics.cancelled.inc()
             self._log("cancelled")
             raise
         except TimeoutError:
             close = getattr(provider_stream, "close", None)
             if close is not None:
                 close()
-            public_chat_metrics.timeouts.inc()
-            public_chat_metrics.total_duration.observe(self.clock() - self.started_at)
+            if self.mode == "public":
+                public_chat_metrics.timeouts.inc()
+                public_chat_metrics.total_duration.observe(self.clock() - self.started_at)
             self._log("timed_out")
             yield PublicChatEvent(
                 "error",
@@ -125,11 +136,15 @@ class PreparedPublicChat:
             return
         except Exception:
             logger.error(
-                "Public assistant chat generation failed",
+                "Public assistant chat generation failed"
+                if self.mode == "public"
+                else "assistant_preview_generation_failed",
                 extra={"assistant_slug": self.assistant_slug},
             )
-            public_chat_metrics.failures.inc()
-            public_chat_metrics.total_duration.observe(self.clock() - self.started_at)
+            if self.mode == "public":
+                public_chat_metrics.failures.inc()
+                public_chat_metrics.total_duration.observe(self.clock() - self.started_at)
+            self._log("failed")
             yield PublicChatEvent(
                 "error",
                 {
@@ -140,12 +155,31 @@ class PreparedPublicChat:
             return
 
         yield PublicChatEvent("complete", {"finishReason": "stop"})
-        public_chat_metrics.estimated_output_tokens.observe(estimated_output_tokens)
-        public_chat_metrics.completed.inc()
-        public_chat_metrics.total_duration.observe(self.clock() - self.started_at)
+        if self.mode == "public":
+            public_chat_metrics.estimated_output_tokens.observe(estimated_output_tokens)
+            public_chat_metrics.completed.inc()
+            public_chat_metrics.total_duration.observe(self.clock() - self.started_at)
         self._log("completed")
 
     def _log(self, outcome: str) -> None:
+        if self.mode == "preview":
+            operation_outcome = (
+                "completed" if outcome in {"completed", "insufficient_knowledge"} else "failed"
+            )
+            try:
+                assistant_preview_metrics.operations.labels(outcome=operation_outcome).inc()
+            except Exception:
+                pass
+            logger.info(
+                f"assistant_preview_{operation_outcome}",
+                extra={
+                    "request_id": self.request_id,
+                    "assistant_slug": self.assistant_slug,
+                    "generation_outcome": outcome,
+                    "accepted_context_count": len(self.chunks),
+                },
+            )
+            return
         logger.info(
             "Public assistant chat finished",
             extra={
@@ -172,6 +206,7 @@ class PublicAssistantChatService:
         prompt_builder: PromptBuilder | None = None,
         settings: PublicAssistantChatSettings | None = None,
         clock: Callable[[], float] = perf_counter,
+        behaviour_repository: AssistantBehaviourRepository | None = None,
     ) -> None:
         self._assistant_repository = assistant_repository
         self._retrieval_factory = retrieval_factory
@@ -179,6 +214,7 @@ class PublicAssistantChatService:
         self._prompt_builder = prompt_builder or PromptBuilder()
         self._settings = settings or get_public_assistant_chat_settings()
         self._clock = clock
+        self._behaviour_repository = behaviour_repository
 
     def prepare(self, assistant_slug: str, request: PublicChatRequest) -> PreparedPublicChat:
         started_at = self._clock()
@@ -188,14 +224,47 @@ class PublicAssistantChatService:
             assistant.status is not AssistantStatus.active
             or assistant.visibility is not AssistantVisibility.public
         ):
+            # Resolve availability before behaviour so unavailable lifecycle states
+            # remain indistinguishable from a missing Assistant to public callers.
+            raise AssistantNotFound("Assistant not found.")
+        return self.prepare_resolved(
+            assistant,
+            request,
+            started_at=started_at,
+            enforce_public_availability=False,
+            instructions=(
+                self._behaviour_repository.get_published(assistant.id).instructions
+                if self._behaviour_repository is not None
+                else DEFAULT_ASSISTANT_INSTRUCTIONS
+            ),
+        )
+
+    def prepare_resolved(
+        self,
+        assistant: Assistant,
+        request: PublicChatRequest,
+        *,
+        started_at: float | None = None,
+        enforce_public_availability: bool,
+        instructions: str,
+        mode: Literal["public", "preview"] = "public",
+    ) -> PreparedPublicChat:
+        """Prepare one grounded request for public or authenticated preview execution."""
+        started_at = self._clock() if started_at is None else started_at
+        if enforce_public_availability and (
+            assistant.status is not AssistantStatus.active
+            or assistant.visibility is not AssistantVisibility.public
+        ):
             # Public callers cannot distinguish unavailable assistants from absent ones.
             raise AssistantNotFound("Assistant not found.")
 
         retrieval_started_at = self._clock()
         chunks = self._retrieval_factory(assistant.id).retrieve(request.message)
-        public_chat_metrics.retrieval_duration.observe(self._clock() - retrieval_started_at)
+        if mode == "public":
+            public_chat_metrics.retrieval_duration.observe(self._clock() - retrieval_started_at)
         if self._clock() - started_at >= self._settings.request_timeout_seconds:
-            public_chat_metrics.timeouts.inc()
+            if mode == "public":
+                public_chat_metrics.timeouts.inc()
             raise PublicChatRequestTimedOut
         budget = TokenBudget(
             max_input_tokens=self._settings.maximum_input_tokens,
@@ -215,7 +284,9 @@ class PublicAssistantChatService:
                 selected_index += 1
         chunks = selected_chunks
         prompt = (
-            self._prompt_builder.build_public_chat(request.message, request.history, chunks)
+            self._prompt_builder.build_public_chat(
+                request.message, request.history, chunks, instructions
+            )
             if chunks
             else None
         )
@@ -224,11 +295,13 @@ class PublicAssistantChatService:
                 budget.validate_prompt(prompt.system_prompt, prompt.user_prompt) if prompt else 0
             )
         except ValueError as exc:
-            public_chat_metrics.input_limit_rejections.inc()
+            if mode == "public":
+                public_chat_metrics.input_limit_rejections.inc()
             raise PublicChatInputLimitExceeded from exc
-        public_chat_metrics.estimated_input_tokens.observe(estimated_input_tokens)
+        if mode == "public":
+            public_chat_metrics.estimated_input_tokens.observe(estimated_input_tokens)
         logger.info(
-            "Public assistant chat prepared",
+            "Public assistant chat prepared" if mode == "public" else "assistant_preview_prepared",
             extra={
                 "request_id": request_id_context.get(),
                 "assistant_id": str(assistant.id),
@@ -255,6 +328,7 @@ class PublicAssistantChatService:
             ),
             estimated_input_tokens=estimated_input_tokens,
             clock=self._clock,
+            mode=mode,
         )
 
 
@@ -264,3 +338,56 @@ class PublicChatInputLimitExceeded(ValueError):
 
 class PublicChatRequestTimedOut(TimeoutError):
     pass
+
+
+class AssistantPreviewChatService:
+    """Prepare admin preview through the same retrieval, prompt, and provider pipeline."""
+
+    def __init__(
+        self,
+        assistant_repository: PublicAssistantLookup,
+        behaviour_repository: AssistantBehaviourRepository,
+        retrieval_factory: Callable[[UUID], ScopedRetrieval],
+        provider: AIProvider,
+        prompt_builder: PromptBuilder | None = None,
+        settings: PublicAssistantChatSettings | None = None,
+        clock: Callable[[], float] = perf_counter,
+    ) -> None:
+        self._assistant_repository = assistant_repository
+        self._behaviour_repository = behaviour_repository
+        self._preparation = PublicAssistantChatService(
+            assistant_repository,
+            retrieval_factory,
+            provider,
+            prompt_builder,
+            settings,
+            clock,
+            behaviour_repository,
+        )
+
+    def prepare(self, assistant_id: UUID, request: PublicChatRequest) -> PreparedPublicChat:
+        assistant = self._assistant_repository.get_by_id(assistant_id)
+        # Resolve exactly once so the request remains internally consistent during later saves.
+        draft = self._behaviour_repository.get_state(assistant_id).draft
+        logger.info(
+            "assistant_preview_started",
+            extra={"assistant_id": str(assistant_id), "draft_revision": draft.revision},
+        )
+        try:
+            return self._preparation.prepare_resolved(
+                assistant,
+                request,
+                enforce_public_availability=False,
+                instructions=draft.instructions,
+                mode="preview",
+            )
+        except Exception:
+            try:
+                assistant_preview_metrics.operations.labels(outcome="failed").inc()
+            except Exception:
+                pass
+            logger.error(
+                "assistant_preview_failed",
+                extra={"assistant_id": str(assistant_id), "draft_revision": draft.revision},
+            )
+            raise

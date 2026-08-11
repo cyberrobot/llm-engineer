@@ -3,6 +3,9 @@
 Administrator lifecycle operations for direct-text and single-page URL knowledge are documented in
 [`docs/knowledge-source-management.md`](docs/knowledge-source-management.md).
 
+Assistant behaviour drafts, explicit publishing, authenticated preview, concurrency, and prompt
+security are documented in [Assistant behaviour](docs/assistant-behaviour.md).
+
 FastAPI backend for the AI Discovery Assistant.
 
 Operational ingestion retention, reconciliation, dry-run commands, scheduling guidance, and

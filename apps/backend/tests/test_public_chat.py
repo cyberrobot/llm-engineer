@@ -16,6 +16,9 @@ from assistant.application.public_chat import (
 from assistant.domain import KnowledgeChunk, KnowledgeDocument
 from assistant.domain.assistant import Assistant, AssistantStatus, AssistantVisibility
 from assistant.domain.assistant_repository import AssistantNotFound
+from assistant.infrastructure.repositories.assistant_behaviour import (
+    InMemoryAssistantBehaviourRepository,
+)
 from assistant.schemas.public_chat import (
     MAX_HISTORY_MESSAGES,
     MAX_HISTORY_TOTAL_LENGTH,
@@ -221,6 +224,42 @@ def test_public_chat_service_streams_fixed_fallback_without_model_call():
     assert [event.type for event in events] == ["start", "delta", "complete"]
     assert events[1].payload == {"text": INSUFFICIENT_KNOWLEDGE_RESPONSE}
     assert provider.stream_calls == []
+
+
+def test_public_chat_uses_published_revision_and_ignores_newer_saved_draft():
+    redmoor = assistant()
+    assistants = AssistantRepositoryStub((redmoor,))
+    behaviours = InMemoryAssistantBehaviourRepository(assistants)  # type: ignore[arg-type]
+    initial = behaviours.get_state(redmoor.id)
+    saved = behaviours.save_draft(
+        redmoor.id,
+        expected_token=initial.concurrency_token,
+        instructions="NEW DRAFT INSTRUCTIONS",
+        welcome_message="",
+        input_placeholder="Ask",
+        suggested_questions=(),
+        at=initial.updated_at,
+    )
+    provider = StreamingProvider()
+    service = PublicAssistantChatService(
+        assistants,
+        RetrievalFactory({redmoor.id: [knowledge()]}),
+        provider,
+        behaviour_repository=behaviours,
+    )
+
+    list(service.prepare("redmoor", PublicChatRequest(message="Question")).events())
+    assert "NEW DRAFT INSTRUCTIONS" not in provider.stream_calls[-1][0]
+    assert initial.draft.instructions in provider.stream_calls[-1][0]
+
+    behaviours.publish(
+        redmoor.id,
+        expected_token=saved.concurrency_token,
+        draft_revision=saved.draft.revision,
+        at=saved.updated_at,
+    )
+    list(service.prepare("redmoor", PublicChatRequest(message="Question")).events())
+    assert "NEW DRAFT INSTRUCTIONS" in provider.stream_calls[-1][0]
 
 
 @pytest.mark.parametrize(
