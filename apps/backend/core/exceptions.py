@@ -12,6 +12,7 @@ from infrastructure.ai.exceptions import (
     AITimeoutError,
     AIUnavailableError,
 )
+from operations.domain.administration import OperationsDependencyUnavailable
 
 
 def rate_limit_handler(request: Request, exc: Exception) -> Response:
@@ -119,6 +120,16 @@ async def request_validation_error_handler(request: Request, exc: Exception) -> 
                 }
             },
         )
+    if request.url.path.startswith("/admin/operations"):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": {
+                    "code": "invalid_admin_request",
+                    "message": "The administrative request is invalid.",
+                }
+            },
+        )
     if request.url.path.startswith("/admin/assistants"):
         return JSONResponse(
             status_code=422,
@@ -145,9 +156,27 @@ async def request_validation_error_handler(request: Request, exc: Exception) -> 
     )
 
 
+def operations_dependency_unavailable_handler(request: Request, exc: Exception) -> Response:
+    del request
+    if not isinstance(exc, OperationsDependencyUnavailable):
+        raise exc
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": {
+                "code": "dependency_unavailable",
+                "message": "A required dependency is unavailable.",
+            }
+        },
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
     app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
     app.add_exception_handler(AIProviderError, ai_provider_error_handler)
     app.add_exception_handler(IngestionJobNotFound, ingestion_job_not_found_handler)
     app.add_exception_handler(IngestionFailedError, ingestion_failed_handler)
+    app.add_exception_handler(
+        OperationsDependencyUnavailable, operations_dependency_unavailable_handler
+    )

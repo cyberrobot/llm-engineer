@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from core.authentication import ApiPrincipal
+from operations.api.administration_router import router as administration_router
 from operations.api.dependencies import require_operations_read, utc_now
 from operations.api.health_dependencies import get_health_service
 from operations.api.models import (
@@ -21,6 +22,7 @@ router = APIRouter(
     tags=["Operations Administration"],
     dependencies=[Depends(require_operations_read)],
 )
+router.include_router(administration_router)
 
 
 @router.get(
@@ -32,7 +34,7 @@ router = APIRouter(
         403: {"model": AdministrativeErrorResponse, "description": "Permission denied"},
     },
     summary="Describe the operations administration API",
-    description="Requires administrative read access. No operational capabilities are enabled yet.",
+    description="Requires administrative read access.",
 )
 def get_operations_root(
     principal: Annotated[ApiPrincipal, Depends(require_operations_read)],
@@ -42,7 +44,17 @@ def get_operations_root(
         "admin_route_accessed",
         extra={"access_level": "read", "principal_id": principal.identifier},
     )
-    return OperationsRootResponse(generated_at=generated_at, capabilities=["health"])
+    return OperationsRootResponse(
+        generated_at=generated_at,
+        capabilities=[
+            "health",
+            "cache",
+            "audit",
+            "maintenance",
+            "jobs",
+            "summary",
+        ],
+    )
 
 
 @router.get(
