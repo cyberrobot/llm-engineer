@@ -16,8 +16,18 @@ def upgrade(cursor: Any) -> None:
         )
     """)
     cursor.execute("""
-        ALTER TABLE operations_runtime_state
-        DROP CONSTRAINT IF EXISTS operations_runtime_state_check
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'operations_runtime_state_check'
+                  AND conrelid = 'operations_runtime_state'::regclass
+            ) THEN
+                ALTER TABLE operations_runtime_state
+                DROP CONSTRAINT operations_runtime_state_check;
+            END IF;
+        END
+        $$
     """)
     cursor.execute("""
         INSERT INTO operations_runtime_state (singleton)
@@ -34,17 +44,36 @@ def upgrade(cursor: Any) -> None:
             request_id TEXT NOT NULL,
             correlation_id TEXT NOT NULL,
             duration_ms BIGINT NOT NULL CHECK (duration_ms >= 0),
-            metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            CONSTRAINT operations_audit_logs_result_check
+                CHECK (result IN ('STARTED', 'SUCCESS', 'FAILURE'))
         )
     """)
     cursor.execute("""
-        ALTER TABLE operations_audit_logs
-        DROP CONSTRAINT IF EXISTS operations_audit_logs_result_check
-    """)
-    cursor.execute("""
-        ALTER TABLE operations_audit_logs
-        ADD CONSTRAINT operations_audit_logs_result_check
-        CHECK (result IN ('STARTED', 'SUCCESS', 'FAILURE'))
+        DO $$
+        DECLARE
+            current_definition TEXT;
+        BEGIN
+            SELECT pg_get_constraintdef(oid)
+            INTO current_definition
+            FROM pg_constraint
+            WHERE conname = 'operations_audit_logs_result_check'
+              AND conrelid = 'operations_audit_logs'::regclass;
+
+            IF current_definition IS NOT NULL
+               AND position('STARTED' IN current_definition) = 0 THEN
+                ALTER TABLE operations_audit_logs
+                DROP CONSTRAINT operations_audit_logs_result_check;
+                current_definition := NULL;
+            END IF;
+
+            IF current_definition IS NULL THEN
+                ALTER TABLE operations_audit_logs
+                ADD CONSTRAINT operations_audit_logs_result_check
+                CHECK (result IN ('STARTED', 'SUCCESS', 'FAILURE'));
+            END IF;
+        END
+        $$
     """)
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS operations_audit_logs_timestamp_idx

@@ -66,6 +66,7 @@ app = FastAPI(
 app.openapi = create_openapi_schema(app)  # type: ignore[method-assign]
 configure_logging()
 
+app.add_middleware(MaintenanceModeMiddleware, service_factory=get_maintenance_service)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(get_admin_authentication_settings().trusted_origins),
@@ -73,7 +74,6 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
-app.add_middleware(MaintenanceModeMiddleware, service_factory=get_maintenance_service)
 app.add_middleware(RequestCorrelationMiddleware)
 
 app.state.limiter = limiter

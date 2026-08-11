@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from psycopg import sql
 
 from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.document_ingestion_job import DocumentIngestionJob
@@ -12,6 +13,7 @@ from assistant.infrastructure.repositories.document_ingestion_job import (
 )
 from core.config import DATABASE_URL
 from infrastructure.database.connection import get_connection, init_db
+from infrastructure.database.migrations.operations_administration import upgrade
 from operations.application.administration import AuditQueryService
 from operations.domain.administration import AuditFilters, AuditResult, MaintenanceState
 from operations.infrastructure.audit import PostgresOperationsAuditStore
@@ -146,3 +148,84 @@ def test_postgres_runtime_audit_filters_and_existing_job_repository_persist():
         with suppress(Exception), get_connection() as connection:
             connection.execute("DELETE FROM document_ingestion_jobs WHERE id=%s", (str(job.id),))
             connection.execute("DELETE FROM documents WHERE id=%s", (document_id,))
+
+
+def test_operations_migration_upgrades_provisional_constraints_once_without_losing_data():
+    require_database()
+    schema = f"operations_administration_{uuid4().hex}"
+    audit_id = uuid4()
+
+    try:
+        with get_connection() as connection:
+            connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            connection.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
+            connection.execute("""
+                CREATE TABLE operations_runtime_state (
+                    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+                    maintenance_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                    maintenance_message TEXT,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_by TEXT,
+                    CONSTRAINT operations_runtime_state_check
+                        CHECK (NOT maintenance_enabled OR maintenance_message IS NOT NULL)
+                )
+            """)
+            connection.execute(
+                """INSERT INTO operations_runtime_state
+                   (singleton,maintenance_enabled,maintenance_message,updated_by)
+                   VALUES (TRUE,FALSE,NULL,'existing-operator')"""
+            )
+            connection.execute("""
+                CREATE TABLE operations_audit_logs (
+                    id UUID PRIMARY KEY,
+                    timestamp TIMESTAMPTZ NOT NULL,
+                    actor TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    resource TEXT NOT NULL,
+                    result TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    correlation_id TEXT NOT NULL,
+                    duration_ms BIGINT NOT NULL CHECK (duration_ms >= 0),
+                    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    CONSTRAINT operations_audit_logs_result_check
+                        CHECK (result IN ('SUCCESS', 'FAILURE'))
+                )
+            """)
+            connection.execute(
+                """INSERT INTO operations_audit_logs
+                   (id,timestamp,actor,action,resource,result,request_id,correlation_id,
+                    duration_ms,metadata)
+                   VALUES (%s,NOW(),'existing-operator','cache.clear','cache','SUCCESS',
+                           'request','correlation',3,'{}'::jsonb)""",
+                (audit_id,),
+            )
+
+            with connection.cursor() as cursor:
+                upgrade(cursor)
+                upgrade(cursor)
+
+            definition = connection.execute(
+                """SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                   WHERE conname='operations_audit_logs_result_check'
+                     AND conrelid='operations_audit_logs'::regclass"""
+            ).fetchone()[0]
+            obsolete_runtime_constraints = connection.execute(
+                """SELECT count(*) FROM pg_constraint
+                   WHERE conname='operations_runtime_state_check'
+                     AND conrelid='operations_runtime_state'::regclass"""
+            ).fetchone()[0]
+            stored_audit = connection.execute(
+                "SELECT actor,result FROM operations_audit_logs WHERE id=%s", (audit_id,)
+            ).fetchone()
+            stored_runtime = connection.execute(
+                """SELECT maintenance_enabled,maintenance_message,updated_by
+                   FROM operations_runtime_state WHERE singleton=TRUE"""
+            ).fetchone()
+
+        assert "STARTED" in definition
+        assert obsolete_runtime_constraints == 0
+        assert stored_audit == ("existing-operator", "SUCCESS")
+        assert stored_runtime == (False, None, "existing-operator")
+    finally:
+        with suppress(Exception), get_connection() as connection:
+            connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))

@@ -292,7 +292,10 @@ def test_maintenance_centrally_blocks_public_assistant_traffic_but_not_admin_or_
             legacy_request_id = str(uuid4())
             legacy_blocked = client.post(
                 path,
-                headers={"X-Request-ID": legacy_request_id},
+                headers={
+                    "Origin": "http://localhost:5173",
+                    "X-Request-ID": legacy_request_id,
+                },
                 json={},
             )
             assert legacy_blocked.status_code == 503
@@ -300,6 +303,9 @@ def test_maintenance_centrally_blocks_public_assistant_traffic_but_not_admin_or_
                 "code": "maintenance_mode",
                 "message": "The service is undergoing maintenance.",
             }
+            assert legacy_blocked.headers["access-control-allow-origin"] == (
+                "http://localhost:5173"
+            )
             assert legacy_blocked.headers["x-request-id"] == legacy_request_id
         assert (
             client.get("/admin/operations", headers={"X-API-Key": "admin-secret"}).status_code
