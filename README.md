@@ -8,6 +8,9 @@ An AI discovery assistant monorepo containing a Retrieval-Augmented Generation (
 | --- | --- | --- |
 | Backend | `apps/backend` | FastAPI, PostgreSQL + pgvector, Redis, OpenAI |
 | RAG UI | `apps/rag-ui` | React, TypeScript, Tailwind CSS, Vite |
+| Assistant demo | `apps/assistant-demo` | React, TypeScript, Vite |
+
+The publishable `@redmoor/assistant-widget` package lives in `packages/assistant-widget`.
 
 ## Prerequisites
 

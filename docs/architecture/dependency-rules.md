@@ -163,32 +163,28 @@ API client
 
 ↓
 
-Assistant client package
-
-↓
-
 Backend API
 
 Components must never perform HTTP requests directly.
 
 ---
 
-# Public client package
+# Public widget package
 
-packages/assistant-client
+packages/assistant-widget
 
 Responsible for:
 
-- Public API
+- React component API
 - Type definitions
 - Request models
 - Response models
+- Public backend transport
 
 Must NOT:
 
-- Import React
 - Depend on backend implementation
-- Depend on admin application
+- Depend on demo or admin applications
 
 ---
 
@@ -198,11 +194,11 @@ Widget components
 
 ↓
 
-Hooks
+Conversation state
 
 ↓
 
-Assistant client package
+Public chat client
 
 ↓
 
@@ -232,25 +228,25 @@ Admin components must not access repositories or database code.
 
 Allowed
 
-apps/assistant
+apps/assistant-demo
 ↓
-packages/assistant-client
+packages/assistant-widget
 
 Allowed
 
 apps/admin
 ↓
-packages/assistant-client
+packages/assistant-widget
 
 Not allowed
 
-packages/assistant-client
+packages/assistant-widget
 ↓
-apps/assistant
+apps/assistant-demo
 
 Not allowed
 
-packages/assistant-client
+packages/assistant-widget
 ↓
 apps/admin
 
