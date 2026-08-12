@@ -110,7 +110,8 @@ package and creates or updates the Changesets Release PR. Review and merge that 
 the calculated package version, lockfile, and changelog changes. The same workflow then publishes
 the unpublished widget through `changeset publish` and creates the standard
 `@redmoor/assistant-widget@<version>` tag and GitHub release. `workflow_dispatch` runs this same path;
-it does not bypass the Release PR state or quality gates.
+it does not bypass the Release PR state or quality gates. Select the `main` branch when dispatching
+the workflow manually; the release job does not run for any other branch or tag.
 
 Before the first release, configure npm trusted publishing for `@redmoor/assistant-widget` with the
 GitHub repository owner and name, workflow filename `publish-assistant-widget.yml`, environment

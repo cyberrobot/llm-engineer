@@ -14,8 +14,8 @@ rules.
 - `compose.yaml` — local PostgreSQL/pgvector and Redis services.
 - `.codex/tasks/TEMPLATE.md` — template for scoped implementation tasks.
 
-The npm workspace is `apps/*`. Run workspace commands from the repository root unless an
-application document says otherwise.
+The npm workspaces are `apps/*` and `packages/*`. Run workspace commands from the repository root
+unless an application document says otherwise.
 
 ## Applications
 
