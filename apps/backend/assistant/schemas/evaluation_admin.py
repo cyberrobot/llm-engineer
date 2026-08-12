@@ -11,6 +11,7 @@ from assistant.evaluation import (
     CaseComparisonResult,
     EvaluationComparisonResult,
     EvaluationRegressionPolicy,
+    EvaluationReportMetadata,
     EvaluationRun,
     EvaluationRunOptions,
     MetricComparisonResult,
@@ -243,7 +244,7 @@ class EvaluationRunListItemResponse(_ApiModel):
     summary: EvaluationSummaryResponse | None
 
     @classmethod
-    def from_domain(cls, run: EvaluationRun):
+    def from_domain(cls, run: EvaluationReportMetadata):
         return cls(
             id=run.id,
             dataset_name=run.dataset_name,

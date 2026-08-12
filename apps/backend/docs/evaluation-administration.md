@@ -34,7 +34,9 @@ application directory, so process working-directory changes do not alter resourc
 - `POST /admin/evaluation/runs` executes one server-managed dataset synchronously and optionally
   persists its terminal report.
 - `GET /admin/evaluation/runs?limit=50&offset=0` lists persisted reports newest first when report
-  timestamps are present. Pagination is bounded to 100 items.
+  timestamps are present. Pagination is bounded to 100 items. Discovery streams and validates only
+  the report envelope and summary, skipping case results so stored answers and retrieved content are
+  not materialized for list responses.
 - `GET /admin/evaluation/runs/{run_id}` loads a persisted report through the canonical report
   validator using its server-managed run identity.
 - `POST /admin/evaluation/comparisons` compares a candidate and baseline report using the existing
@@ -63,10 +65,11 @@ rewrite those files.
 Known dataset, report, option, persistence, and compatibility failures use structured administrator
 errors with stable codes and safe messages. Examples include `evaluation_dataset_not_found`,
 `malformed_evaluation_dataset`, `unsupported_dataset_schema`, `invalid_evaluation_options`,
-`evaluation_bootstrap_failed`, `evaluation_report_not_found`, `malformed_evaluation_report`,
-`unsupported_report_schema`, `evaluation_report_persistence_failed`, and
-`incompatible_evaluation_comparison`. Internal paths and underlying provider details are not
-included. Unexpected programming failures remain observable server errors.
+`evaluation_bootstrap_failed`, `evaluation_run_failed`, `evaluation_report_not_found`,
+`malformed_evaluation_report`, `unsupported_report_schema`,
+`evaluation_report_persistence_failed`, and `incompatible_evaluation_comparison`. Internal paths and
+underlying provider details are not included. Unexpected programming failures remain observable
+server errors.
 
 Execution is synchronous and sequential because those are the current `EvaluationRunner` and
 production service contracts. The endpoint does not create queues, background work, polling state,

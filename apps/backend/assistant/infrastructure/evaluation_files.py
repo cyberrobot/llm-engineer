@@ -7,9 +7,11 @@ from stat import S_ISREG
 from assistant.application.evaluation_admin import EvaluationDatasetResource
 from assistant.evaluation import (
     EvaluationReportExistsError,
+    EvaluationReportMetadata,
     EvaluationRun,
     load_evaluation_dataset,
     load_evaluation_report,
+    load_evaluation_report_metadata,
     save_evaluation_report_to_directory,
 )
 
@@ -77,28 +79,29 @@ class FileSystemEvaluationResources:
             overwrite=False,
         )
 
-    def list_reports(self) -> list[EvaluationRun]:
-        reports: list[EvaluationRun] = []
+    def list_reports(self) -> list[EvaluationReportMetadata]:
+        reports: list[EvaluationReportMetadata] = []
         seen_ids: set[str] = set()
         for path in self._json_files(self._report_directory):
-            run = load_evaluation_report(path)
-            if not _is_safe_identifier(run.id):
+            metadata = load_evaluation_report_metadata(path)
+            if not _is_safe_identifier(metadata.id):
                 raise EvaluationResourceCatalogError(
                     "A repository-managed evaluation report has an unsafe run identifier"
                 )
-            if run.id in seen_ids:
+            if metadata.id in seen_ids:
                 raise EvaluationResourceCatalogError(
                     "Repository-managed evaluation reports contain a duplicate run identifier"
                 )
-            seen_ids.add(run.id)
-            reports.append(run)
+            seen_ids.add(metadata.id)
+            reports.append(metadata)
         return sorted(reports, key=_report_order, reverse=True)
 
     def get_report(self, run_id: str) -> EvaluationRun:
         _validate_identifier(run_id)
-        for run in self.list_reports():
-            if run.id == run_id:
-                return run
+        for path in self._json_files(self._report_directory):
+            metadata = load_evaluation_report_metadata(path)
+            if metadata.id == run_id:
+                return load_evaluation_report(path)
         raise EvaluationReportResourceNotFound(run_id)
 
     @staticmethod
@@ -134,11 +137,11 @@ def _is_safe_identifier(identifier: str) -> bool:
     return bool(_SAFE_IDENTIFIER.fullmatch(identifier)) and ".." not in identifier
 
 
-def _report_order(run: EvaluationRun) -> tuple[object, ...]:
-    completed = run.completed_at or run.started_at
+def _report_order(report: EvaluationReportMetadata) -> tuple[object, ...]:
+    completed = report.completed_at or report.started_at
     return (
         completed is not None,
         completed.isoformat() if completed is not None else "",
-        run.started_at.isoformat() if run.started_at is not None else "",
-        run.id,
+        report.started_at.isoformat() if report.started_at is not None else "",
+        report.id,
     )

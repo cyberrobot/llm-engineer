@@ -238,6 +238,19 @@ def execute_evaluation(
             "Evaluation services could not be configured.",
             503,
         ) from exc
+    except Exception as exc:
+        logger.error(
+            "administrator_evaluation_run_failed",
+            extra={
+                "dataset_id": request.dataset_id,
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise _error(
+            "evaluation_run_failed",
+            "The evaluation run failed.",
+            500,
+        ) from exc
     logger.info(
         "administrator_evaluation_completed",
         extra={

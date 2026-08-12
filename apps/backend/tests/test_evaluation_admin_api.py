@@ -1,6 +1,9 @@
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -17,6 +20,7 @@ from assistant.evaluation import (
     AnswerEvaluationResult,
     EvaluationCaseResult,
     EvaluationCaseStatus,
+    EvaluationReportWriteError,
     EvaluationRun,
     EvaluationRunOptions,
     EvaluationRunStatus,
@@ -27,6 +31,7 @@ from assistant.evaluation import (
 )
 from assistant.infrastructure.evaluation_files import FileSystemEvaluationResources
 from core.exceptions import register_exception_handlers
+from infrastructure.ai.exceptions import AIConfigurationError
 
 NOW = datetime(2026, 8, 12, 9, 30, tzinfo=timezone.utc)
 
@@ -153,6 +158,16 @@ class RecordingRunner:
     def run_dataset(self, dataset, *, options=None):
         self.options.append(options or EvaluationRunOptions())
         return _run(self.run_id)
+
+
+class FixedRunRunner(RecordingRunner):
+    def __init__(self, run: EvaluationRun) -> None:
+        super().__init__(run.id)
+        self.run = run
+
+    def run_dataset(self, dataset, *, options=None):
+        self.options.append(options or EvaluationRunOptions())
+        return self.run
 
 
 def _client(
@@ -346,6 +361,143 @@ def test_execution_uses_runner_defaults_and_filters_sensitive_result_content(
     assert "private" not in serialized
 
 
+def test_execution_preserves_failed_error_and_skipped_statuses_with_safe_diagnostics(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = tmp_path / "datasets"
+    _write_dataset(dataset_dir, "suite")
+    results = [
+        EvaluationCaseResult(
+            case_id="failed",
+            question="Failed question?",
+            status=EvaluationCaseStatus.FAILED,
+            answer=AnswerEvaluationResult(
+                answer="sensitive failed answer",
+                passed=False,
+                missing_expected_fragments=["required"],
+                failure_reasons=["missing_expected_fragments"],
+            ),
+        ),
+        EvaluationCaseResult(
+            case_id="error",
+            question="Errored question?",
+            status=EvaluationCaseStatus.ERROR,
+            error="evaluation case failed (RuntimeError)",
+        ),
+        EvaluationCaseResult(
+            case_id="skipped",
+            question="Skipped question?",
+            status=EvaluationCaseStatus.SKIPPED,
+            metadata={"diagnostic_reasons": ["no_evaluable_expectations"]},
+        ),
+    ]
+    run = _run("terminal-mix").model_copy(
+        update={
+            "results": results,
+            "summary": EvaluationSummary(
+                total_cases=3,
+                passed_cases=0,
+                failed_cases=1,
+                error_cases=1,
+                skipped_cases=1,
+                average_duration_ms=None,
+            ),
+        }
+    )
+    client, _runner = _client(
+        dataset_dir,
+        tmp_path / "reports",
+        runner_factory=lambda: FixedRunRunner(run),
+    )
+
+    response = client.post("/admin/evaluation/runs", json={"dataset_id": "suite"})
+
+    assert response.status_code == 200
+    payload = response.json()["run"]
+    assert payload["status"] == "completed"
+    assert payload["summary"] == {
+        "total_cases": 3,
+        "passed_cases": 0,
+        "failed_cases": 1,
+        "error_cases": 1,
+        "skipped_cases": 1,
+        "retrieval_precision_at_k": None,
+        "retrieval_recall_at_k": None,
+        "retrieval_hit_rate": None,
+        "mean_reciprocal_rank": None,
+        "answer_pass_rate": None,
+        "average_duration_ms": None,
+    }
+    assert [item["status"] for item in payload["results"]] == ["failed", "error", "skipped"]
+    assert payload["results"][1]["error"] == "evaluation case failed (RuntimeError)"
+    assert payload["results"][2]["diagnostics"] == ["no_evaluable_expectations"]
+    assert "sensitive failed answer" not in response.text
+
+
+def test_evaluation_bootstrap_failure_is_safe_and_does_not_persist(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "datasets"
+    report_dir = tmp_path / "reports"
+    _write_dataset(dataset_dir, "suite")
+
+    def fail_bootstrap():
+        raise AIConfigurationError("OPENAI_API_KEY=secret-value")
+
+    client, _runner = _client(dataset_dir, report_dir, runner_factory=fail_bootstrap)
+
+    response = client.post(
+        "/admin/evaluation/runs",
+        json={"dataset_id": "suite", "persist_report": True},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "evaluation_bootstrap_failed",
+        "message": "Evaluation services could not be configured.",
+    }
+    assert "secret-value" not in response.text
+    assert not report_dir.exists()
+
+
+def test_evaluation_run_failure_is_safe_and_does_not_persist(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    dataset_dir = tmp_path / "datasets"
+    report_dir = tmp_path / "reports"
+    _write_dataset(dataset_dir, "suite")
+
+    class FailingRunner(RecordingRunner):
+        def run_dataset(self, dataset, *, options=None):
+            raise RuntimeError("provider response contained secret-value")
+
+    client, _runner = _client(
+        dataset_dir,
+        report_dir,
+        runner_factory=lambda: FailingRunner(),
+    )
+
+    response = client.post(
+        "/admin/evaluation/runs",
+        json={"dataset_id": "suite", "persist_report": True},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == {
+        "code": "evaluation_run_failed",
+        "message": "The evaluation run failed.",
+    }
+    assert "secret-value" not in response.text
+    assert not report_dir.exists()
+    record = next(
+        record
+        for record in caplog.records
+        if record.message == "administrator_evaluation_run_failed"
+    )
+    assert getattr(record, "dataset_id") == "suite"
+    assert getattr(record, "error_type") == "RuntimeError"
+    assert "secret-value" not in caplog.text
+
+
 def test_execution_maps_supported_options_and_persists_once_server_side(tmp_path: Path) -> None:
     dataset_dir = tmp_path / "datasets"
     report_dir = tmp_path / "reports"
@@ -411,6 +563,40 @@ def test_repeated_persistence_never_overwrites_or_duplicates_a_run_report(tmp_pa
     assert reports[0].read_bytes() == original
 
 
+def test_report_persistence_failure_is_safe_and_never_reports_success(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "datasets"
+    report_dir = tmp_path / "reports"
+    _write_dataset(dataset_dir, "suite")
+
+    class FailingResources(FileSystemEvaluationResources):
+        def save_report(self, run: EvaluationRun) -> None:
+            raise EvaluationReportWriteError("failed path contains /private/secret")
+
+    service = EvaluationAdministrationService(
+        FailingResources(dataset_directory=dataset_dir, report_directory=report_dir),
+        runner_factory=lambda: cast(Any, RecordingRunner()),
+    )
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(router)
+    app.dependency_overrides[get_evaluation_administration_service] = lambda: service
+    app.dependency_overrides[require_administrator_role] = lambda: object()
+    app.dependency_overrides[require_trusted_admin_origin] = lambda: None
+
+    response = TestClient(app).post(
+        "/admin/evaluation/runs",
+        json={"dataset_id": "suite", "persist_report": True},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == {
+        "code": "evaluation_report_persistence_failed",
+        "message": "The evaluation report could not be persisted.",
+    }
+    assert "private" not in response.text
+    assert not report_dir.exists()
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -458,6 +644,27 @@ def test_report_listing_detail_and_pagination_are_newest_first_and_safe(tmp_path
     assert "generated approved answer" not in serialized
 
 
+def test_report_listing_uses_metadata_discovery_without_loading_complete_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import assistant.infrastructure.evaluation_files as evaluation_files
+
+    report_dir = tmp_path / "reports"
+    save_evaluation_report_to_directory(_run("run-1"), output_dir=report_dir)
+    monkeypatch.setattr(
+        evaluation_files,
+        "load_evaluation_report",
+        lambda _path: pytest.fail("listing must not load complete evaluation runs"),
+    )
+    client, _runner = _client(tmp_path / "datasets", report_dir)
+
+    response = client.get("/admin/evaluation/runs")
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == ["run-1"]
+
+
 def test_report_selection_rejects_missing_traversal_and_malformed_reports(tmp_path: Path) -> None:
     report_dir = tmp_path / "reports"
     report_dir.mkdir()
@@ -475,6 +682,29 @@ def test_report_selection_rejects_missing_traversal_and_malformed_reports(tmp_pa
     assert malformed.status_code == 422
     assert malformed.json()["detail"]["code"] == "malformed_evaluation_report"
     assert str(report_dir) not in malformed.text
+
+
+def test_unsupported_report_schema_is_safe_for_detail_and_comparison(tmp_path: Path) -> None:
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    payload = _run("unsupported").model_dump(mode="json")
+    payload["schema_version"] = "99"
+    (report_dir / "unsupported.json").write_text(json.dumps(payload), encoding="utf-8")
+    client, _runner = _client(tmp_path / "datasets", report_dir)
+
+    detail = client.get("/admin/evaluation/runs/unsupported")
+    comparison = client.post(
+        "/admin/evaluation/comparisons",
+        json={"candidate_run_id": "unsupported", "baseline_run_id": "unsupported"},
+    )
+
+    for response in (detail, comparison):
+        assert response.status_code == 422
+        assert response.json()["detail"] == {
+            "code": "unsupported_report_schema",
+            "message": "The evaluation report schema is not supported.",
+        }
+        assert "99" not in response.text
 
 
 def test_comparison_uses_persisted_reports_without_mutation(tmp_path: Path) -> None:
@@ -496,6 +726,51 @@ def test_comparison_uses_persisted_reports_without_mutation(tmp_path: Path) -> N
     assert response.json()["baseline_run_id"] == "baseline"
     assert response.json()["current_run_id"] == "candidate"
     assert response.json()["regressed"] is False
+    assert {path.name: path.read_bytes() for path in report_dir.iterdir()} == before
+
+
+def test_comparison_exposes_existing_regression_result_without_mutating_reports(
+    tmp_path: Path,
+) -> None:
+    report_dir = tmp_path / "reports"
+    baseline = _run("baseline")
+    failed_result = baseline.results[0].model_copy(update={"status": EvaluationCaseStatus.FAILED})
+    candidate = _run("candidate").model_copy(
+        update={
+            "results": [failed_result],
+            "summary": baseline.summary.model_copy(
+                update={
+                    "passed_cases": 0,
+                    "failed_cases": 1,
+                    "answer_pass_rate": 0.0,
+                }
+            )
+            if baseline.summary is not None
+            else None,
+        }
+    )
+    save_evaluation_report_to_directory(baseline, output_dir=report_dir)
+    save_evaluation_report_to_directory(candidate, output_dir=report_dir)
+    before = {path.name: path.read_bytes() for path in report_dir.iterdir()}
+    client, _runner = _client(tmp_path / "datasets", report_dir)
+
+    response = client.post(
+        "/admin/evaluation/comparisons",
+        json={"candidate_run_id": "candidate", "baseline_run_id": "baseline"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["compatible"] is True
+    assert payload["regressed"] is True
+    assert payload["newly_failed_case_ids"] == ["case-1"]
+    assert payload["regression_reasons"] == ["new_failed_case"]
+    answer_metric = next(
+        item for item in payload["metric_results"] if item["metric"] == "answer_pass_rate"
+    )
+    assert answer_metric["baseline_value"] == 1.0
+    assert answer_metric["current_value"] == 0.0
+    assert answer_metric["status"] == "regressed"
     assert {path.name: path.read_bytes() for path in report_dir.iterdir()} == before
 
 
@@ -540,6 +815,92 @@ def test_separate_requests_create_separate_runner_state(tmp_path: Path) -> None:
     assert second.json()["run"]["id"] == "run-2"
     assert len(created) == 2
     assert all(len(runner.options) == 1 for runner in created)
+
+
+@pytest.mark.parametrize("provider_fails", [False, True])
+def test_production_composition_reuses_and_closes_managed_provider_after_evaluation_requests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_fails: bool,
+) -> None:
+    import main
+    from assistant.api import dependencies
+    from core.config import EvaluationAdminSettings
+
+    dataset_dir = tmp_path / "datasets"
+    _write_dataset(dataset_dir, "suite")
+    created: list[object] = []
+
+    class Provider:
+        name = "fake"
+        model = "fake-model"
+
+        def __init__(self) -> None:
+            self.closed = False
+            self.embedding_calls = 0
+            self.answer_calls = 0
+
+        def generate_embedding(self, *, text: str) -> list[float]:
+            self.embedding_calls += 1
+            if provider_fails:
+                raise RuntimeError("provider token=must-not-escape")
+            return []
+
+        def generate_response(self, *, system_prompt: str, user_prompt: str) -> str:
+            self.answer_calls += 1
+            return "approved"
+
+        def close(self) -> None:
+            self.closed = True
+
+    @lru_cache
+    def provider_factory():
+        provider = Provider()
+        created.append(provider)
+        return provider
+
+    monkeypatch.setattr(dependencies, "get_ai_provider", provider_factory)
+    monkeypatch.setattr(main, "get_ai_provider", provider_factory)
+    monkeypatch.setattr(dependencies, "get_vector_store", lambda: object())
+    monkeypatch.setattr(dependencies, "get_knowledge_repository", lambda _store: SimpleNamespace())
+    monkeypatch.setattr(
+        dependencies,
+        "get_evaluation_admin_settings",
+        lambda: EvaluationAdminSettings(
+            dataset_directory=dataset_dir,
+            report_directory=tmp_path / "reports",
+        ),
+    )
+    monkeypatch.setattr(main, "validate_startup_configuration", lambda: None)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    service = dependencies.get_evaluation_administration_service()
+    app = FastAPI()
+    register_exception_handlers(app)
+    app.include_router(router)
+    app.dependency_overrides[get_evaluation_administration_service] = lambda: service
+    app.dependency_overrides[require_administrator_role] = lambda: object()
+    app.dependency_overrides[require_trusted_admin_origin] = lambda: None
+    client = TestClient(app)
+
+    async def execute_requests() -> tuple[dict[str, Any], dict[str, Any]]:
+        async with main.lifespan(main.app):
+            first = client.post("/admin/evaluation/runs", json={"dataset_id": "suite"})
+            second = client.post("/admin/evaluation/runs", json={"dataset_id": "suite"})
+            assert first.status_code == 200
+            assert second.status_code == 200
+            return first.json(), second.json()
+
+    first, second = asyncio.run(execute_requests())
+
+    assert first["run"]["id"] != second["run"]["id"]
+    assert len(created) == 1
+    provider = cast(Provider, created[0])
+    assert provider.embedding_calls == 2
+    assert provider.answer_calls == (0 if provider_fails else 2)
+    assert provider.closed is True
+    if provider_fails:
+        assert first["run"]["results"][0]["status"] == "error"
+        assert "must-not-escape" not in json.dumps(first)
 
 
 def test_registered_openapi_exposes_only_the_authenticated_admin_namespace() -> None:

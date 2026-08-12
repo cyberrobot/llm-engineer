@@ -8,6 +8,7 @@ from assistant.evaluation import (
     EvaluationComparisonResult,
     EvaluationDataset,
     EvaluationRegressionPolicy,
+    EvaluationReportMetadata,
     EvaluationRun,
     EvaluationRunner,
     EvaluationRunOptions,
@@ -38,7 +39,7 @@ class EvaluationResourceRepository(Protocol):
 
     def save_report(self, run: EvaluationRun) -> None: ...
 
-    def list_reports(self) -> Sequence[EvaluationRun]: ...
+    def list_reports(self) -> Sequence[EvaluationReportMetadata]: ...
 
     def get_report(self, run_id: str) -> EvaluationRun: ...
 
@@ -75,7 +76,9 @@ class EvaluationAdministrationService:
             self._resources.save_report(run)
         return EvaluationExecutionResult(run=run, report_persisted=persist_report)
 
-    def list_reports(self, *, limit: int, offset: int) -> tuple[Sequence[EvaluationRun], int]:
+    def list_reports(
+        self, *, limit: int, offset: int
+    ) -> tuple[Sequence[EvaluationReportMetadata], int]:
         reports = self._resources.list_reports()
         return reports[offset : offset + limit], len(reports)
 
