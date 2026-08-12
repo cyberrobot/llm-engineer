@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -9,8 +10,10 @@ from fastapi.testclient import TestClient
 from admin_auth.dependencies import require_administrator_role, require_trusted_admin_origin
 from assistant.api.dependencies import get_evaluation_administration_service
 from assistant.api.evaluation_admin import router
+from assistant.api.routes import router as assistant_router
 from assistant.application.evaluation_admin import EvaluationAdministrationService
 from assistant.evaluation import (
+    AnswerEvaluationOptions,
     AnswerEvaluationResult,
     EvaluationCaseResult,
     EvaluationCaseStatus,
@@ -53,7 +56,7 @@ def _dataset_payload(
     }
 
 
-def _write_dataset(directory: Path, identifier: str, **overrides: object) -> Path:
+def _write_dataset(directory: Path, identifier: str, **overrides: Any) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{identifier}.json"
     path.write_text(json.dumps(_dataset_payload(**overrides)), encoding="utf-8")
@@ -228,7 +231,7 @@ def test_execution_requires_trusted_origin_without_side_effects(tmp_path: Path) 
 
 def test_non_administrator_access_is_forbidden(tmp_path: Path) -> None:
     client, _runner = _client(tmp_path / "datasets", tmp_path / "reports")
-    app = client.app
+    app = cast(FastAPI, client.app)
     app.dependency_overrides[require_administrator_role] = lambda: (_ for _ in ()).throw(
         HTTPException(
             status_code=403,
@@ -377,16 +380,35 @@ def test_execution_maps_supported_options_and_persists_once_server_side(tmp_path
             retrieval_k=4,
             continue_on_error=False,
             require_all_expected_sources=False,
-            answer_options={
-                "case_sensitive": True,
-                "normalise_whitespace": False,
-                "require_all_expected_fragments": False,
-                "require_citations_when_sources_expected": False,
-                "validate_citations_against_retrieval": False,
-            },
+            answer_options=AnswerEvaluationOptions(
+                case_sensitive=True,
+                normalise_whitespace=False,
+                require_all_expected_fragments=False,
+                require_citations_when_sources_expected=False,
+                validate_citations_against_retrieval=False,
+            ),
         )
     ]
     assert len(list(report_dir.glob("*.json"))) == 1
+
+
+def test_repeated_persistence_never_overwrites_or_duplicates_a_run_report(tmp_path: Path) -> None:
+    dataset_dir = tmp_path / "datasets"
+    report_dir = tmp_path / "reports"
+    _write_dataset(dataset_dir, "suite")
+    client, _runner = _client(dataset_dir, report_dir)
+    request = {"dataset_id": "suite", "persist_report": True}
+
+    first = client.post("/admin/evaluation/runs", json=request)
+    original = next(report_dir.glob("*.json")).read_bytes()
+    second = client.post("/admin/evaluation/runs", json=request)
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.json()["detail"]["code"] == "evaluation_report_exists"
+    reports = list(report_dir.glob("*.json"))
+    assert len(reports) == 1
+    assert reports[0].read_bytes() == original
 
 
 @pytest.mark.parametrize(
@@ -518,3 +540,28 @@ def test_separate_requests_create_separate_runner_state(tmp_path: Path) -> None:
     assert second.json()["run"]["id"] == "run-2"
     assert len(created) == 2
     assert all(len(runner.options) == 1 for runner in created)
+
+
+def test_registered_openapi_exposes_only_the_authenticated_admin_namespace() -> None:
+    app = FastAPI()
+    app.include_router(assistant_router)
+
+    schema = app.openapi()
+    paths = schema["paths"]
+
+    assert set(paths["/admin/evaluation/datasets"]) == {"get"}
+    assert set(paths["/admin/evaluation/datasets/{dataset_id}"]) == {"get"}
+    assert set(paths["/admin/evaluation/runs"]) == {"get", "post"}
+    assert set(paths["/admin/evaluation/runs/{run_id}"]) == {"get"}
+    assert set(paths["/admin/evaluation/comparisons"]) == {"post"}
+    for path in (
+        "/admin/evaluation/datasets",
+        "/admin/evaluation/datasets/{dataset_id}",
+        "/admin/evaluation/runs",
+        "/admin/evaluation/runs/{run_id}",
+        "/admin/evaluation/comparisons",
+    ):
+        assert all(operation["security"] for operation in paths[path].values())
+    assert not any(path.startswith("/evaluation") for path in paths)
+    execute_schema = schema["components"]["schemas"]["ExecuteEvaluationRequest"]
+    assert set(execute_schema["properties"]) == {"dataset_id", "persist_report", "options"}
