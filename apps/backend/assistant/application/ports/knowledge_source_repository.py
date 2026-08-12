@@ -1,4 +1,5 @@
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
@@ -9,6 +10,12 @@ from assistant.domain.knowledge_source import KnowledgeSource
 
 class KnowledgeSourceConflict(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeSourceAggregate:
+    total: int
+    enabled: int
 
 
 class KnowledgeSourceTransaction(Protocol):
@@ -34,6 +41,7 @@ class KnowledgeSourceTransaction(Protocol):
 
 
 class KnowledgeSourceRepository(Protocol):
+    def aggregate_counts(self) -> KnowledgeSourceAggregate: ...
     def transaction(self) -> AbstractContextManager[KnowledgeSourceTransaction]: ...
     def get(self, assistant_id: UUID, source_id: UUID) -> KnowledgeSource | None: ...
     def list(

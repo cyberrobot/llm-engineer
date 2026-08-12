@@ -91,6 +91,7 @@ class OperationalJob:
     retry_count: int
     last_error: str | None
     execution_node: str | None = None
+    job_type: str = "ingestion"
 
     @property
     def duration_ms(self) -> int | None:
@@ -114,15 +115,42 @@ class JobCounts:
 
 
 @dataclass(frozen=True)
+class AssistantCounts:
+    total: int
+    published: int
+
+
+@dataclass(frozen=True)
+class KnowledgeSourceCounts:
+    total: int
+    enabled: int
+    failed: int | None
+
+
+@dataclass(frozen=True)
+class IngestionCounts:
+    queued: int
+    running: int
+    recoverable: int
+    failed: int
+    oldest_queued_age_seconds: float
+    workers_observed: int
+
+
+@dataclass(frozen=True)
 class HealthOverview:
     status: str
 
 
 @dataclass(frozen=True)
 class OperationalSummary:
+    generated_at: datetime
     health: str
     maintenance: bool
     cache_regions: int
     running_jobs: int
     failed_jobs: int
     audit_today: int
+    assistants: AssistantCounts
+    knowledge_sources: KnowledgeSourceCounts
+    ingestion: IngestionCounts

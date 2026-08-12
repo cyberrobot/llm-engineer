@@ -1,8 +1,12 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
+import psycopg
 import pytest
 
+from assistant.application.ingestion_observability import IngestionOperationalStatus
+from assistant.application.ports.knowledge_source_repository import KnowledgeSourceAggregate
+from assistant.domain.assistant_repository import AssistantAggregate
 from assistant.domain.document_ingestion_job import DocumentIngestionJob
 from assistant.infrastructure.repositories.document_ingestion_job import (
     InMemoryDocumentIngestionJobRepository,
@@ -14,14 +18,22 @@ from operations.application.administration import (
     OperationsSummaryService,
 )
 from operations.domain.administration import (
+    AssistantCounts,
     AuditEntry,
     AuditFilters,
     AuditResult,
     CacheKeyNotFound,
     CacheRegionNotFound,
     HealthOverview,
+    IngestionCounts,
     JobCounts,
+    KnowledgeSourceCounts,
     OperationsDependencyUnavailable,
+)
+from operations.infrastructure.dashboard import (
+    AssistantSummaryStore,
+    IngestionSummaryStore,
+    KnowledgeSourceSummaryStore,
 )
 from operations.infrastructure.jobs import IngestionJobOperationsStore
 from operations.infrastructure.memory import (
@@ -191,10 +203,21 @@ def test_job_visibility_reuses_ingestion_repository_with_safe_projection_and_pag
     assert "private-token" not in repr(failures.items[0])
     assert store.get(failed.id) == failures.items[0]
     assert store.counts() == JobCounts(running=0, failed=1)
+    assert failures.items[0].job_type == "ingestion"
 
 
 def test_summary_aggregates_each_service_once():
-    calls = {"health": 0, "maintenance": 0, "cache": 0, "jobs": 0, "audit": 0}
+    calls = {
+        "health": 0,
+        "maintenance": 0,
+        "cache": 0,
+        "jobs": 0,
+        "audit": 0,
+        "assistants": 0,
+        "knowledge": 0,
+        "ingestion": 0,
+        "now": 0,
+    }
 
     def value(name, result):
         calls[name] += 1
@@ -206,6 +229,22 @@ def test_summary_aggregates_each_service_once():
         cache=lambda: value("cache", 2),
         jobs=lambda: value("jobs", JobCounts(running=1, failed=3)),
         audit=lambda: value("audit", 7),
+        assistants=lambda: value("assistants", AssistantCounts(total=4, published=3)),
+        knowledge=lambda: value(
+            "knowledge", KnowledgeSourceCounts(total=9, enabled=8, failed=None)
+        ),
+        ingestion=lambda now: value(
+            "ingestion",
+            IngestionCounts(
+                queued=5,
+                running=2,
+                recoverable=1,
+                failed=6,
+                oldest_queued_age_seconds=84.5,
+                workers_observed=2,
+            ),
+        ),
+        now=lambda: value("now", NOW),
     )
 
     summary = service.get()
@@ -216,7 +255,41 @@ def test_summary_aggregates_each_service_once():
     assert summary.running_jobs == 1
     assert summary.failed_jobs == 3
     assert summary.audit_today == 7
-    assert calls == {"health": 1, "maintenance": 1, "cache": 1, "jobs": 1, "audit": 1}
+    assert summary.generated_at == NOW
+    assert summary.assistants == AssistantCounts(total=4, published=3)
+    assert summary.knowledge_sources == KnowledgeSourceCounts(total=9, enabled=8, failed=None)
+    assert summary.ingestion.failed == 6
+    assert calls == {
+        "health": 1,
+        "maintenance": 1,
+        "cache": 1,
+        "jobs": 1,
+        "audit": 1,
+        "assistants": 1,
+        "knowledge": 1,
+        "ingestion": 1,
+        "now": 1,
+    }
+
+
+def test_summary_preserves_authoritative_zero_state_without_inventing_source_failures():
+    service = OperationsSummaryService(
+        health=lambda: HealthOverview(status="healthy"),
+        maintenance=lambda: False,
+        cache=lambda: 0,
+        jobs=lambda: JobCounts(running=0, failed=0),
+        audit=lambda: 0,
+        assistants=lambda: AssistantCounts(total=0, published=0),
+        knowledge=lambda: KnowledgeSourceCounts(total=0, enabled=0, failed=None),
+        ingestion=lambda _now: IngestionCounts(0, 0, 0, 0, 0.0, 0),
+        now=lambda: NOW,
+    )
+
+    summary = service.get()
+
+    assert summary.assistants.total == 0
+    assert summary.knowledge_sources.failed is None
+    assert summary.ingestion == IngestionCounts(0, 0, 0, 0, 0.0, 0)
 
 
 def test_summary_propagates_dependency_failure_for_the_standard_operations_error_contract():
@@ -229,7 +302,69 @@ def test_summary_propagates_dependency_failure_for_the_standard_operations_error
         cache=lambda: 0,
         jobs=lambda: JobCounts(running=0, failed=0),
         audit=lambda: 0,
+        assistants=lambda: AssistantCounts(total=0, published=0),
+        knowledge=lambda: KnowledgeSourceCounts(total=0, enabled=0, failed=None),
+        ingestion=lambda _now: IngestionCounts(0, 0, 0, 0, 0.0, 0),
+        now=lambda: NOW,
     )
 
     with pytest.raises(OperationsDependencyUnavailable):
         service.get()
+
+
+def test_dashboard_stores_use_authoritative_aggregate_queries_and_preserve_queue_age():
+    class Assistants:
+        def aggregate_counts(self):
+            return AssistantAggregate(total=5, published=4)
+
+    class Knowledge:
+        def aggregate_counts(self):
+            return KnowledgeSourceAggregate(total=12, enabled=9)
+
+    class Ingestion:
+        def get(self, *, now):
+            assert now == NOW
+            return IngestionOperationalStatus(
+                queued_jobs=7,
+                running_jobs=3,
+                recoverable_jobs=2,
+                oldest_queued_age_seconds=125.25,
+                workers_observed=2,
+                failed_jobs=6,
+            )
+
+    assert AssistantSummaryStore(Assistants()).counts() == AssistantCounts(5, 4)
+    assert KnowledgeSourceSummaryStore(Knowledge()).counts() == KnowledgeSourceCounts(12, 9, None)
+    assert IngestionSummaryStore(Ingestion()).counts(NOW) == IngestionCounts(7, 3, 2, 6, 125.25, 2)
+
+
+@pytest.mark.parametrize(
+    "store",
+    [
+        AssistantSummaryStore(
+            type("Assistants", (), {"aggregate_counts": lambda self: _database_failure()})(),
+        ),
+        KnowledgeSourceSummaryStore(
+            type("Knowledge", (), {"aggregate_counts": lambda self: _database_failure()})()
+        ),
+        IngestionSummaryStore(
+            type("Ingestion", (), {"get": lambda self, *, now: _database_failure()})()
+        ),
+    ],
+)
+def test_dashboard_stores_map_database_failures_to_operations_dependency_unavailable(store):
+    with pytest.raises(OperationsDependencyUnavailable):
+        store.counts(NOW) if isinstance(store, IngestionSummaryStore) else store.counts()
+
+
+def test_knowledge_summary_reports_an_unconfigured_dependency_instead_of_zero():
+    repository = type(
+        "Knowledge", (), {"aggregate_counts": lambda self: KnowledgeSourceAggregate(0, 0)}
+    )()
+
+    with pytest.raises(OperationsDependencyUnavailable):
+        KnowledgeSourceSummaryStore(repository, configured=False).counts()
+
+
+def _database_failure():
+    raise psycopg.OperationalError("private database address")

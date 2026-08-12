@@ -32,7 +32,38 @@ routes additionally require `operations:execute`.
   `limit` (1–200), and `offset`. `GET /admin/operations/audit/{id}` includes request/correlation IDs,
   duration, outcome, and redacted safe metadata.
 - `GET /admin/operations/summary` aggregates health, maintenance, cache-region count, running/failed
-  job counts, and today's administrative audit count from the owning services.
+  job counts, and today's administrative audit count from the owning services. It also returns a
+  server-generated UTC `generated_at` timestamp and dashboard aggregates for Assistants, Knowledge
+  Sources, and ingestion. Existing summary fields remain unchanged.
+
+The additive dashboard sections have this shape:
+
+```json
+{
+  "generated_at": "2026-08-11T10:00:00Z",
+  "assistants": {"total": 3, "published": 2},
+  "knowledge_sources": {"total": 7, "enabled": 5, "failed": null},
+  "ingestion": {
+    "queued": 4,
+    "running": 1,
+    "recoverable": 1,
+    "failed": 2,
+    "oldest_queued_age_seconds": 90.0,
+    "workers_observed": 1
+  }
+}
+```
+
+`assistants.published` counts Assistants with an authoritative published behaviour revision. It is
+not inferred from Assistant status or visibility. Knowledge Sources currently have only
+enabled/disabled retrieval lifecycle state, so `knowledge_sources.failed` is `null`; the API does
+not infer a source failure from an ingestion job or silently report an unsupported count as zero.
+
+The ingestion section reuses the established operational-status query. `recoverable` counts running
+jobs whose lease is absent or expired. `workers_observed` counts distinct worker identifiers on
+running jobs with a lease beyond the summary timestamp; it is an observation of current leased work,
+not a registry of all deployed workers. `oldest_queued_age_seconds` is calculated against the same
+server timestamp returned as `generated_at`. `failed` counts authoritative failed ingestion jobs.
 
 ## State, safety, and errors
 
@@ -52,7 +83,8 @@ audit records. Browsing also reapplies redaction to protect older records.
 
 Job visibility is a read-only projection over the established document-ingestion job repository;
 it does not query the table through a parallel operations repository or add mutation capabilities.
-Only the existing safe failure code is exposed, not the persisted failure message.
+Only the existing safe failure code is exposed, not the persisted failure message. Job responses
+also expose the safe `job_type` discriminator (`ingestion`) without provider or execution details.
 
 Mutating responses include `request_id` and `correlation_id`. This service currently uses the
 validated request ID as the correlation ID so logs, responses, and audit records share one stable

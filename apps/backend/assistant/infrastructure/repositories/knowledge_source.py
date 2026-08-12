@@ -6,6 +6,7 @@ from uuid import UUID
 import psycopg
 
 from assistant.application.ports.knowledge_source_repository import (
+    KnowledgeSourceAggregate,
     KnowledgeSourceConflict,
     KnowledgeSourceTransaction,
 )
@@ -32,6 +33,15 @@ class PostgresKnowledgeSourceRepository:
                 (str(source_id), str(assistant_id)),
             ).fetchone()
         return _source(row) if row else None
+
+    def aggregate_counts(self) -> KnowledgeSourceAggregate:
+        with self._connection_factory() as connection:
+            row = connection.execute(
+                """SELECT count(*),
+                          count(*) FILTER (WHERE retrieval_state = 'enabled')
+                   FROM knowledge_sources"""
+            ).fetchone()
+        return KnowledgeSourceAggregate(total=int(row[0]), enabled=int(row[1]))
 
     def list(
         self, assistant_id: UUID, *, limit: int, offset: int

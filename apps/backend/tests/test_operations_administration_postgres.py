@@ -8,9 +8,14 @@ from psycopg import sql
 
 from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.document_ingestion_job import DocumentIngestionJob
+from assistant.infrastructure.repositories.assistant import PostgresAssistantRepository
 from assistant.infrastructure.repositories.document_ingestion_job import (
     PostgresDocumentIngestionJobRepository,
 )
+from assistant.infrastructure.repositories.ingestion_observability import (
+    PostgresIngestionOperationalStatusRepository,
+)
+from assistant.infrastructure.repositories.knowledge_source import PostgresKnowledgeSourceRepository
 from core.config import DATABASE_URL
 from infrastructure.database.connection import get_connection, init_db
 from infrastructure.database.migrations.operations_administration import upgrade
@@ -29,6 +34,25 @@ def require_database() -> None:
             connection.execute("SELECT 1")
     except psycopg.OperationalError as exc:
         pytest.skip(f"PostgreSQL test database is unavailable: {exc}")
+
+
+def test_dashboard_aggregate_queries_use_authoritative_postgres_read_models():
+    require_database()
+    init_db()
+    now = datetime.now(timezone.utc)
+
+    assistants = PostgresAssistantRepository().aggregate_counts()
+    knowledge = PostgresKnowledgeSourceRepository().aggregate_counts()
+    ingestion = PostgresIngestionOperationalStatusRepository().get(now=now)
+
+    assert 0 <= assistants.published <= assistants.total
+    assert 0 <= knowledge.enabled <= knowledge.total
+    assert ingestion.queued_jobs >= 0
+    assert ingestion.running_jobs >= 0
+    assert ingestion.recoverable_jobs >= 0
+    assert ingestion.failed_jobs >= 0
+    assert ingestion.oldest_queued_age_seconds >= 0
+    assert ingestion.workers_observed >= 0
 
 
 def test_postgres_runtime_audit_filters_and_existing_job_repository_persist():

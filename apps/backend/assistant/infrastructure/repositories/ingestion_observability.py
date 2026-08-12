@@ -349,7 +349,8 @@ class PostgresIngestionOperationalStatusRepository(IngestionOperationalStatusRep
                               FROM document_ingestion_jobs WHERE status = 'queued'), 0),
                     (SELECT count(DISTINCT worker_id) FROM document_ingestion_jobs
                      WHERE status = 'running' AND worker_id IS NOT NULL
-                       AND lease_expires_at > %s)
+                       AND lease_expires_at > %s),
+                    (SELECT count(*) FROM document_ingestion_jobs WHERE status = 'failed')
                 """,
                 (now, now, now),
             ).fetchone()
@@ -359,4 +360,5 @@ class PostgresIngestionOperationalStatusRepository(IngestionOperationalStatusRep
             recoverable_jobs=int(row[2]),
             oldest_queued_age_seconds=max(0, float(row[3])),
             workers_observed=int(row[4]),
+            failed_jobs=int(row[5]),
         )
