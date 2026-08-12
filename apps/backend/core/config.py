@@ -408,6 +408,14 @@ class AdminAuthenticationSettings:
                 raise ValueError(f"{name} must be greater than zero")
 
 
+@dataclass(frozen=True)
+class EvaluationAdminSettings:
+    """Server-controlled locations exposed through evaluation administration."""
+
+    dataset_directory: Path
+    report_directory: Path
+
+
 def get_ai_settings() -> AISettings:
     """Read AI configuration from the environment at the composition boundary."""
     timeout = _env_float("AI_REQUEST_TIMEOUT", 30)
@@ -668,6 +676,35 @@ def get_admin_authentication_settings() -> AdminAuthenticationSettings:
     )
 
 
+def get_evaluation_admin_settings() -> EvaluationAdminSettings:
+    backend_root = Path(__file__).resolve().parents[1]
+    dataset_directory = _evaluation_directory(
+        "EVALUATION_DATASET_DIR",
+        default=backend_root / "examples" / "evaluation",
+        backend_root=backend_root,
+    )
+    report_directory = _evaluation_directory(
+        "EVALUATION_REPORT_DIR",
+        default=backend_root / "evaluation-reports",
+        backend_root=backend_root,
+    )
+    return EvaluationAdminSettings(
+        dataset_directory=dataset_directory,
+        report_directory=report_directory,
+    )
+
+
+def _evaluation_directory(name: str, *, default: Path, backend_root: Path) -> Path:
+    configured = os.getenv(name)
+    if configured is None:
+        return default
+    value = configured.strip()
+    if not value:
+        raise ValueError(f"{name} must not be empty")
+    path = Path(value)
+    return path if path.is_absolute() else backend_root / path
+
+
 def get_max_upload_bytes() -> int:
     return _env_int("MAX_UPLOAD_MB", 25) * 1024 * 1024
 
@@ -693,6 +730,7 @@ def validate_startup_configuration() -> None:
     get_database_settings()
     get_health_check_settings()
     get_public_assistant_chat_settings()
+    get_evaluation_admin_settings()
     admin_auth = get_admin_authentication_settings()
     if get_max_upload_bytes() <= 0:
         raise ValueError("MAX_UPLOAD_MB must be greater than zero")

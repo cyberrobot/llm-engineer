@@ -12,6 +12,7 @@ from assistant.application.assistant_admin_service import AssistantAdministratio
 from assistant.application.assistant_behaviour_service import AssistantBehaviourService
 from assistant.application.chat import ChatService
 from assistant.application.content_processing_service import ContentProcessingService
+from assistant.application.evaluation_admin import EvaluationAdministrationService
 from assistant.application.ingestion_job_service import DocumentIngestionJobService
 from assistant.application.ingestion_pipeline import (
     IngestionPipelineDefinition,
@@ -52,6 +53,8 @@ from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
 from assistant.domain.assistant_behaviour_repository import AssistantBehaviourRepository
 from assistant.domain.assistant_repository import AssistantRepository
 from assistant.domain.document_ingestion_job import IngestionStep
+from assistant.evaluation import EvaluationRunner
+from assistant.infrastructure.evaluation_files import FileSystemEvaluationResources
 from assistant.infrastructure.ingestion.html_content_extractor import HtmlContentExtractor
 from assistant.infrastructure.ingestion.normalising_text_cleaner import NormalisingTextCleaner
 from assistant.infrastructure.ingestion.semantic_text_chunker import SemanticTextChunker
@@ -88,6 +91,7 @@ from core.config import (
     REDIS_URL,
     get_ai_settings,
     get_content_processing_settings,
+    get_evaluation_admin_settings,
     get_ingestion_retry_settings,
     get_knowledge_persistence_settings,
     get_public_assistant_chat_settings,
@@ -136,6 +140,28 @@ def get_chat_service(
 ) -> ChatService:
     """Provide the application service used by Assistant chat routes."""
     return ChatService(ai_provider, retrieval_service, PromptBuilder())
+
+
+def get_evaluation_administration_service() -> EvaluationAdministrationService:
+    """Build a request-local evaluation coordinator over app-lifetime provider resources."""
+
+    settings = get_evaluation_admin_settings()
+    resources = FileSystemEvaluationResources(
+        dataset_directory=settings.dataset_directory,
+        report_directory=settings.report_directory,
+    )
+
+    def runner_factory() -> EvaluationRunner:
+        provider = get_ai_provider()
+        repository = get_knowledge_repository(get_vector_store())
+        retrieval_service = get_retrieval_service(provider, repository)
+        answer_service = get_chat_service(provider, retrieval_service)
+        return EvaluationRunner(
+            retrieval_service=retrieval_service,
+            answer_service=answer_service,
+        )
+
+    return EvaluationAdministrationService(resources, runner_factory=runner_factory)
 
 
 @lru_cache
