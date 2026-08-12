@@ -197,10 +197,7 @@ class SummaryIngestionResponse(BaseModel):
     workers_observed: int
 
 
-class OperationsSummaryResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    generated_at: AwareDatetime
+class OperationsSummaryResponse(OperationsResponseMetadata):
     health: str
     maintenance: bool
     cache: SummaryCacheResponse

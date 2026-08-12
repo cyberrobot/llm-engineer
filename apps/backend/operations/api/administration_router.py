@@ -322,7 +322,10 @@ def get_job(
 
 
 @router.get(
-    "/summary", response_model=OperationsSummaryResponse, summary="Read the operational summary"
+    "/summary",
+    response_model=OperationsSummaryResponse,
+    response_model_exclude={"request_id"},
+    summary="Read the operational summary",
 )
 async def get_summary(
     summary_service: Annotated[OperationsSummaryService, Depends(get_operations_summary_service)],

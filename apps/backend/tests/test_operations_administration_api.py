@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -14,6 +14,7 @@ from operations.api.administration_dependencies import (
     get_runtime_state_store,
 )
 from operations.api.health_dependencies import get_health_service
+from operations.api.models import OperationsResponseMetadata, OperationsSummaryResponse
 from operations.application.administration import (
     AuditQueryService,
     CacheAdministrationService,
@@ -94,6 +95,30 @@ def _client(monkeypatch):
 
 def _cleanup():
     app.dependency_overrides.clear()
+
+
+def test_summary_response_reuses_operations_metadata_and_normalizes_generated_at_to_utc():
+    response = OperationsSummaryResponse(
+        generated_at=datetime(2026, 8, 12, 12, tzinfo=timezone(timedelta(hours=3))),
+        health="healthy",
+        maintenance=False,
+        cache={"regions": 0},
+        jobs={"running": 0, "failed": 0},
+        audit={"today": 0},
+        assistants={"total": 0, "published": 0},
+        knowledge_sources={"total": 0, "enabled": 0, "failed": None},
+        ingestion={
+            "queued": 0,
+            "running": 0,
+            "recoverable": 0,
+            "failed": 0,
+            "oldest_queued_age_seconds": 0,
+            "workers_observed": 0,
+        },
+    )
+
+    assert issubclass(OperationsSummaryResponse, OperationsResponseMetadata)
+    assert response.generated_at == datetime(2026, 8, 12, 9, tzinfo=timezone.utc)
 
 
 def test_administration_endpoints_are_secure_mutations_are_audited_and_reads_are_safe(monkeypatch):
