@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: [
-      { find: '@redmoor/assistant-widget', replacement: resolve(import.meta.dirname, '../assistant/src/index.ts') },
+      { find: '@redmoor/assistant-widget', replacement: resolve(import.meta.dirname, '../../packages/assistant-widget/src/index.ts') },
     ],
   },
 });

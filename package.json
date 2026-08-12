@@ -3,14 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
     "dev": "npm run dev --workspace @ai-discovery-assistant/rag-ui",
     "dev:api": "npm run dev --workspace @ai-discovery-assistant/backend",
     "dev:worker": "npm run worker --workspace @ai-discovery-assistant/backend",
     "dev:web": "npm run dev --workspace @ai-discovery-assistant/rag-ui",
-    "dev:assistant": "npm run dev --workspace @redmoor/assistant-widget",
+    "dev:assistant": "npm run dev --workspace @ai-discovery-assistant/assistant-demo",
     "dev:admin": "npm run dev --workspace @ai-discovery-assistant/admin",
     "build": "npm run build --workspace @ai-discovery-assistant/rag-ui",
     "build:admin": "npm run build --workspace @ai-discovery-assistant/admin",
@@ -20,6 +21,11 @@
     "test": "npm run test --workspaces --if-present",
     "test:api": "npm run test --workspace @ai-discovery-assistant/backend",
     "test:admin": "npm run test --workspace @ai-discovery-assistant/admin",
-    "test:storybook": "npm run test-storybook --workspace @ai-discovery-assistant/rag-ui"
+    "test:storybook": "npm run test-storybook --workspace @ai-discovery-assistant/rag-ui",
+    "changeset": "changeset",
+    "release": "changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.1"
   }
 }

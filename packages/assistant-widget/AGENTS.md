@@ -11,7 +11,7 @@ affected public or internal boundary:
 - `src/components/assistant-widget/` for rendered conversation behaviour and bounded state.
 - `src/publicChatClient.ts` and `src/api/` for the public backend transport contract.
 - `src/config/` for validated browser configuration.
-- `src/demo/` only for local consumer behaviour.
+- `apps/assistant-demo/src/` only for local consumer behaviour that depends on the package API.
 - `test-fixtures/consumer/` and `scripts/` only when package exports or distributable contents change.
 
 Follow component imports and public exports from the affected file; do not scan all widget source or

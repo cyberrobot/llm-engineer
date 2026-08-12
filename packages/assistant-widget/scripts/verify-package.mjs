@@ -47,7 +47,7 @@ try {
 
   const metadata = JSON.parse(await readFile(join(packageDirectory, 'package.json'), 'utf8'))
   assert(metadata.name === '@redmoor/assistant-widget', 'Package name is incorrect')
-  assert(metadata.version === '0.1.0', 'Package version is incorrect')
+  assert(packResult.version === metadata.version, 'Packed package version differs from its manifest')
   assert(metadata.private === false, 'Package must be publishable')
   assert(metadata.exports?.['.']?.import === './dist/index.js', 'JavaScript export is incorrect')
   assert(metadata.exports?.['.']?.types === './dist/index.d.ts', 'Type export is incorrect')

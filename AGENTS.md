@@ -23,7 +23,7 @@ enumerate the entire repository as a default discovery step.
 Current scoped guidance:
 
 - `apps/backend/AGENTS.md` applies to backend code, tests, migrations, operations, and backend docs.
-- `apps/assistant/AGENTS.md` applies to the published assistant widget, its demo, package fixtures,
+- `packages/assistant-widget/AGENTS.md` applies to the published assistant widget, package fixtures,
   and tests.
 - `apps/rag-ui/` currently has no scoped file, so this root file and the architecture documents
   remain authoritative there.
@@ -34,7 +34,7 @@ For every task:
    relevant README, manifest, configuration, and tests.
 2. Search by a concrete symbol, route, configuration key, business concept, or filename within the
    selected subtree. Prefer scoped commands such as `rg <pattern> apps/backend/assistant` or
-   `rg --files apps/assistant/src` over repository-wide searches.
+   `rg --files packages/assistant-widget/src` over repository-wide searches.
 3. Follow direct imports, callers, ports, adapters, registrations, and tests outward from the primary
    change area. Expand into another subtree only when this dependency trail or a public contract
    requires it.
@@ -53,9 +53,10 @@ Route initial inspection by change area:
   `apps/backend/infrastructure/database/migrations/` and relevant persistence tests.
 - Internal RAG UI changes: start in `apps/rag-ui/src/components/`, follow calls into
   `apps/rag-ui/src/services/` and `src/utils/`, and inspect colocated stories or tests.
-- Published assistant widget changes: start at `apps/assistant/src/index.ts`, the public widget facade,
-  or the affected `src/components/assistant-widget/` code; inspect `src/publicChatClient.ts`, package
-  exports, consumer fixtures, and demo code only as required by the affected contract.
+- Published assistant widget changes: start at `packages/assistant-widget/src/index.ts`, the public
+  widget facade, or the affected `src/components/assistant-widget/` code; inspect
+  `src/publicChatClient.ts`, package exports, consumer fixtures, and `apps/assistant-demo/` only as
+  required by the affected contract.
 - Documentation or workflow changes: start with the named document plus the implementation,
   manifest, or command it describes; verify referenced paths without walking unrelated source trees.
 
