@@ -493,8 +493,8 @@ def test_evaluation_run_failure_is_safe_and_does_not_persist(
         for record in caplog.records
         if record.message == "administrator_evaluation_run_failed"
     )
-    assert getattr(record, "dataset_id") == "suite"
-    assert getattr(record, "error_type") == "RuntimeError"
+    assert record.__dict__["dataset_id"] == "suite"
+    assert record.__dict__["error_type"] == "RuntimeError"
     assert "secret-value" not in caplog.text
 
 
