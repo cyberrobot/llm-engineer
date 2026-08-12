@@ -5,8 +5,11 @@ from fastapi import APIRouter, Depends, Response, status
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict
 
+from operations.api.administration_dependencies import get_maintenance_service
 from operations.api.health_dependencies import get_health_service
+from operations.application.administration import MaintenanceService
 from operations.application.health import HealthService
+from operations.domain.administration import OperationsDependencyUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +51,14 @@ async def liveness() -> LivenessResponse:
 async def readiness(
     response: Response,
     health_service: Annotated[HealthService, Depends(get_health_service)],
+    maintenance_service: Annotated[MaintenanceService, Depends(get_maintenance_service)],
 ) -> ReadinessResponse:
     diagnostic = await health_service.diagnose()
-    if not diagnostic.ready:
+    try:
+        maintenance_enabled = maintenance_service.get().enabled
+    except OperationsDependencyUnavailable:
+        maintenance_enabled = True
+    if maintenance_enabled or not diagnostic.ready:
         logger.warning(
             "readiness_check_failed",
             extra={"health_status": diagnostic.status.value},
@@ -70,9 +78,14 @@ async def readiness(
 async def health_check(
     response: Response,
     health_service: Annotated[HealthService, Depends(get_health_service)],
+    maintenance_service: Annotated[MaintenanceService, Depends(get_maintenance_service)],
 ) -> LegacyHealthResponse:
     diagnostic = await health_service.diagnose()
-    if not diagnostic.ready:
+    try:
+        maintenance_enabled = maintenance_service.get().enabled
+    except OperationsDependencyUnavailable:
+        maintenance_enabled = True
+    if maintenance_enabled or not diagnostic.ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return LegacyHealthResponse(status="unhealthy")
     return LegacyHealthResponse(status="healthy")

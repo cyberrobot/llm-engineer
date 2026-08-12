@@ -34,6 +34,9 @@ from infrastructure.database.migrations.ingestion_retry_recovery import (
 from infrastructure.database.migrations.knowledge_source_management import (
     upgrade as upgrade_knowledge_source_management,
 )
+from infrastructure.database.migrations.operations_administration import (
+    upgrade as upgrade_operations_administration,
+)
 from infrastructure.database.migrations.transactional_ingestion_persistence import (
     upgrade as upgrade_transactional_ingestion_persistence,
 )
@@ -57,6 +60,7 @@ def init_db():
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
             cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
             upgrade_administrator_authentication(cur)
+            upgrade_operations_administration(cur)
             cur.execute("""
                 DO $$
                 BEGIN
