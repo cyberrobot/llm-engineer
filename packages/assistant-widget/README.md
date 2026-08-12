@@ -83,47 +83,46 @@ From the repository root:
 ```sh
 npm install
 npm run dev:assistant
+npm run test --workspace @ai-discovery-assistant/assistant-demo
 npm test --workspace @redmoor/assistant-widget
 npm run pack:verify --workspace @redmoor/assistant-widget
 ```
 
-The local Vite demo and package-consumer fixture are development tools and are excluded from the
-published tarball.
+The private Vite demo lives in `apps/assistant-demo` and imports the widget through
+`@redmoor/assistant-widget`. The package-consumer fixture remains beside the package. Neither is
+included in the published tarball.
 
 ## Releasing
 
-Package versions are changed manually in `apps/assistant/package.json` and the repository lockfile.
-Before the first release, create an npm trusted publisher for `@redmoor/assistant-widget` with the
-GitHub repository owner and name, workflow filename `publish-assistant-widget.yml`, and environment
-`npm`. Create that GitHub environment as well; configure required reviewers and deployment branch
-or tag rules there when release approval is required. The workflow uses npm's public registry and
-GitHub OIDC, so it does not require a long-lived npm token. The npm package must permit public
-publication for this scoped package.
+Changesets owns package versions, changelog updates, publication, and release tags. Do not edit the
+widget version or create a release tag manually.
 
-To release a version:
+For every pull request that changes the published widget contract or artifact:
 
-1. Update the `version` in `apps/assistant/package.json` with `npm version <version> --workspace
-   @redmoor/assistant-widget --no-git-tag-version`, review the resulting manifest and lockfile
-   changes, and merge them through the normal review process.
-2. From the merged commit, run the widget lint, tests, build, and `pack:verify` checks.
-3. Create and push an annotated tag matching the package version exactly:
+1. Run `npm run changeset`, select `@redmoor/assistant-widget`, and choose the appropriate semantic
+   version impact.
+2. Edit the generated summary so it describes the consumer-visible change, then commit the
+   `.changeset/*.md` file with the implementation.
+3. Run the widget lint, tests, build, and `pack:verify` checks before merging.
 
-   ```sh
-   git tag -a assistant-widget-v0.1.0 -m "Release assistant widget 0.1.0"
-   git push origin assistant-widget-v0.1.0
-   ```
+After the pull request merges to `main`, the **Release assistant widget** workflow verifies the
+package and creates or updates the Changesets Release PR. Review and merge that Release PR to apply
+the calculated package version, lockfile, and changelog changes. The same workflow then publishes
+the unpublished widget through `changeset publish` and creates the standard
+`@redmoor/assistant-widget@<version>` tag and GitHub release. `workflow_dispatch` runs this same path;
+it does not bypass the Release PR state or quality gates.
 
-The tag starts the **Publish assistant widget** workflow. It checks out that exact tag, rejects a
-malformed tag or a tag that differs from `apps/assistant/package.json`, repeats all package checks,
-and publishes only `@redmoor/assistant-widget` with public access and npm provenance. An existing
-tag can also be selected explicitly with the workflow's manual `release_tag` input.
+Before the first release, configure npm trusted publishing for `@redmoor/assistant-widget` with the
+GitHub repository owner and name, workflow filename `publish-assistant-widget.yml`, environment
+`npm`, and permission to run `npm publish`. Create the matching GitHub environment and enable the
+repository setting that allows GitHub Actions to create pull requests. The workflow uses GitHub OIDC
+and requests `id-token: write`; it does not use a long-lived npm token. Publishing uses the public
+registry and npm provenance.
 
-If validation or a package check fails, fix the problem through a reviewed commit, update the
-package version when appropriate, and create a new matching tag; do not move a published release
-tag. If publication fails before npm accepts the package, re-run the same workflow after correcting
-the npm trusted-publisher or GitHub environment configuration. If npm already contains that version,
-a retry fails safely because npm versions are immutable: bump the package version and release a new
-matching tag instead.
+If a package check fails, fix it in a reviewed pull request and let Changesets update the Release PR.
+If publication fails before npm accepts the version, correct the trusted-publisher or environment
+configuration and re-run the workflow manually. Changesets skips versions already present on npm;
+never move an existing release tag or edit a released version.
 
 ### Connected backend demo
 
@@ -132,7 +131,7 @@ same public client as a host application, keeps conversation history in memory, 
 logs questions and answers. Only automated tests intercept HTTP; normal local use requires a running
 backend.
 
-Create `apps/assistant/.env` from `apps/assistant/.env.example`:
+Create `apps/assistant-demo/.env` from `apps/assistant-demo/.env.example`:
 
 ```dotenv
 VITE_ASSISTANT_API_BASE_URL=http://localhost:8000
@@ -174,7 +173,7 @@ it when overriding the comma-separated list. Do not use a wildcard origin or bro
 
 Troubleshooting:
 
-- A configuration page names missing or invalid frontend variables; update `apps/assistant/.env`
+- A configuration page names missing or invalid frontend variables; update `apps/assistant-demo/.env`
   and restart Vite.
 - A browser CORS error means the exact frontend origin is absent from
   `PUBLIC_CHAT_ALLOWED_ORIGINS` or the backend was not restarted after it changed.

@@ -87,22 +87,39 @@ Inspect these paths first:
 Keep user-visible behaviour covered through rendered interactions and accessible selectors. Add or
 update stories for meaningful reusable-component states, and keep backend access behind `src/services/`.
 
-### `apps/assistant`
+### `packages/assistant-widget`
 
-Publishable `@redmoor/assistant-widget` React package plus a local Vite demo. The supported package
-surface is declared by `apps/assistant/src/index.ts` and `apps/assistant/package.json`.
+Publishable `@redmoor/assistant-widget` React package. The supported package surface is declared by
+`packages/assistant-widget/src/index.ts` and `packages/assistant-widget/package.json`.
 
 Inspect these paths first:
 
-- `apps/assistant/src/AssistantWidget.tsx` and `apps/assistant/src/AssistantWidget.types.ts` — public
-  component facade and public types.
-- `apps/assistant/src/components/assistant-widget/` — widget UI and bounded conversation state.
-- `apps/assistant/src/publicChatClient.ts` and `apps/assistant/src/api/` — public chat transport.
-- `apps/assistant/src/config/` — validated browser configuration.
-- `apps/assistant/src/demo/` — local consumer demo; it is not part of the published package.
-- `apps/assistant/test-fixtures/consumer/` — package-consumer and deep-import verification fixture.
-- `apps/assistant/scripts/` — package dry-run and export verification.
-- `apps/assistant/README.md` — public usage, contract, local development, and current limitations.
+- `packages/assistant-widget/src/AssistantWidget.tsx` and
+  `packages/assistant-widget/src/AssistantWidget.types.ts` — public component facade and public
+  types.
+- `packages/assistant-widget/src/components/assistant-widget/` — widget UI and bounded conversation
+  state.
+- `packages/assistant-widget/src/publicChatClient.ts` and `packages/assistant-widget/src/api/` —
+  public chat transport.
+- `packages/assistant-widget/src/config/` — validated browser configuration.
+- `packages/assistant-widget/test-fixtures/consumer/` — package-consumer and deep-import verification
+  fixture.
+- `packages/assistant-widget/scripts/` — package dry-run and export verification.
+- `packages/assistant-widget/README.md` — public usage, contract, release workflow, and current
+  limitations.
+
+### `apps/assistant-demo`
+
+Private Vite application for exercising the public assistant widget against a backend. Its source
+imports `@redmoor/assistant-widget` through the package root; it does not own or publish widget
+implementation code.
+
+Inspect these paths first:
+
+- `apps/assistant-demo/src/AssistantWidgetDemo.tsx` — public-package consumer integration.
+- `apps/assistant-demo/src/assistantWidgetDemoConfig.ts` — validated public browser configuration.
+- `apps/assistant-demo/vite.config.ts` and `apps/assistant-demo/vitest.config.ts` — local mapping of
+  the package name to its public source entry for development and tests.
 
 Assistant package rules:
 
@@ -116,8 +133,8 @@ Assistant package rules:
 
 ## Cross-application rules
 
-- `apps/rag-ui` and `apps/assistant` communicate with the backend through HTTP contracts; they do
-  not import backend implementation modules.
+- `apps/rag-ui`, `apps/assistant-demo`, and `packages/assistant-widget` communicate with the backend
+  through HTTP contracts; they do not import backend implementation modules.
 - The backend owns authentication, authorization, validation, persistence, idempotency, and safe
   provider-error mapping. Frontend visibility or client-side checks are not security boundaries.
 - Provider-specific code stays behind backend adapters. Never place credentials, raw provider

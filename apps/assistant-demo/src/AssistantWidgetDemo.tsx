@@ -1,4 +1,4 @@
-import { AssistantWidget } from '../index'
+import { AssistantWidget } from '@redmoor/assistant-widget'
 import { readAssistantWidgetDemoConfig } from './assistantWidgetDemoConfig'
 
 const redmoorSuggestions = [
