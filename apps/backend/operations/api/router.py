@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 
 from core.authentication import ApiPrincipal
 from operations.api.administration_router import router as administration_router
-from operations.api.dependencies import require_operations_read, utc_now
+from operations.api.dependencies import prevent_operations_caching, require_operations_read, utc_now
 from operations.api.health_dependencies import get_health_service
 from operations.api.models import (
     AdministrativeErrorResponse,
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/admin/operations",
     tags=["Operations Administration"],
-    dependencies=[Depends(require_operations_read)],
+    dependencies=[Depends(require_operations_read), Depends(prevent_operations_caching)],
 )
 router.include_router(administration_router)
 

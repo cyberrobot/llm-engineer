@@ -145,6 +145,9 @@ def test_health_routes_are_documented_with_public_and_protected_security():
     assert schema["paths"]["/health/live"]["get"].get("security", []) == []
     assert schema["paths"]["/health/ready"]["get"].get("security", []) == []
     operation = schema["paths"]["/admin/operations/health"]["get"]
-    assert operation["security"] == [{"AdminApiKey": []}]
+    assert operation["security"] == [
+        {"AdminApiKey": []},
+        {"AdministratorSessionCookie": []},
+    ]
     assert "401" in operation["responses"]
     assert "403" in operation["responses"]

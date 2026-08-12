@@ -4,6 +4,10 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from admin_auth.dependencies import get_administrator_auth_service
+from admin_auth.passwords import AdministratorPasswordService
+from admin_auth.repository import InMemoryAdministratorAuthRepository
+from admin_auth.service import AdministratorAuthenticationService
 from main import app
 from operations.api.administration_dependencies import (
     get_audit_query_service,
@@ -41,6 +45,8 @@ from operations.infrastructure.memory import (
 )
 
 NOW = datetime(2026, 8, 11, 10, tzinfo=timezone.utc)
+PASSWORD = "correct horse battery staple"
+ORIGIN = "http://localhost:5173"
 
 
 def _client(monkeypatch):
@@ -95,6 +101,24 @@ def _client(monkeypatch):
 
 def _cleanup():
     app.dependency_overrides.clear()
+
+
+def _authenticate_browser(client: TestClient):
+    repository = InMemoryAdministratorAuthRepository()
+    service = AdministratorAuthenticationService(
+        repository,
+        AdministratorPasswordService(),
+        session_ttl_seconds=3600,
+        login_max_failures=3,
+        login_lockout_seconds=300,
+        clock=lambda: NOW,
+        token_factory=lambda: "operations-browser-session",
+    )
+    service.bootstrap("admin@example.com", PASSWORD)
+    login = service.login("admin@example.com", PASSWORD)
+    app.dependency_overrides[get_administrator_auth_service] = lambda: service
+    client.cookies.set("redmoor_admin_session", login.session_token)
+    return login.administrator
 
 
 def test_summary_response_reuses_operations_metadata_and_normalizes_generated_at_to_utc():
@@ -202,6 +226,123 @@ def test_administration_endpoints_are_secure_mutations_are_audited_and_reads_are
                 "workers_observed": 1,
             },
         }
+    finally:
+        _cleanup()
+
+
+def test_browser_session_can_read_every_operations_dashboard_endpoint(monkeypatch):
+    client, _audit = _client(monkeypatch)
+    _authenticate_browser(client)
+    try:
+        for path in (
+            "/admin/operations",
+            "/admin/operations/summary",
+            "/admin/operations/health",
+            "/admin/operations/cache",
+            "/admin/operations/maintenance",
+            "/admin/operations/audit",
+            "/admin/operations/jobs",
+        ):
+            response = client.get(path)
+            assert response.status_code == 200, (path, response.text)
+
+        jobs = client.get("/admin/operations/jobs").json()["items"]
+        assert client.get(f"/admin/operations/jobs/{jobs[0]['id']}").status_code == 200
+
+        created = client.put(
+            "/admin/operations/maintenance",
+            headers={"Origin": ORIGIN},
+            json={"enabled": True},
+        )
+        assert created.status_code == 200
+        audit_items = client.get("/admin/operations/audit").json()["items"]
+        assert client.get(f"/admin/operations/audit/{audit_items[0]['id']}").status_code == 200
+    finally:
+        _cleanup()
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        ("post", "/admin/operations/cache/clear", None),
+        ("post", "/admin/operations/cache/regions/assistant/clear", None),
+        (
+            "post",
+            "/admin/operations/cache/key",
+            {"region": "assistant", "key": "assistant:123"},
+        ),
+        ("put", "/admin/operations/maintenance", {"enabled": True}),
+    ],
+)
+def test_browser_mutations_require_trusted_origin_before_execution(
+    monkeypatch, method, path, payload
+):
+    client, audit = _client(monkeypatch)
+    _authenticate_browser(client)
+    try:
+        missing = client.request(method, path, json=payload)
+        untrusted = client.request(
+            method, path, headers={"Origin": "https://evil.example"}, json=payload
+        )
+
+        assert missing.status_code == untrusted.status_code == 403
+        assert missing.json()["detail"]["code"] == "admin_permission_denied"
+        assert untrusted.json() == missing.json()
+        assert audit.list(AuditFilters(), limit=10, offset=0).total == 0
+
+        allowed = client.request(method, path, headers={"Origin": ORIGIN}, json=payload)
+        assert allowed.status_code == 200
+    finally:
+        _cleanup()
+
+
+def test_browser_and_api_key_mutations_keep_distinct_audit_actors(monkeypatch):
+    client, audit = _client(monkeypatch)
+    administrator = _authenticate_browser(client)
+    try:
+        browser = client.put(
+            "/admin/operations/maintenance",
+            headers={"Origin": ORIGIN, "X-Request-ID": str(uuid4())},
+            json={"enabled": True},
+        )
+        api_key = client.put(
+            "/admin/operations/maintenance",
+            headers={"X-API-Key": "admin-secret", "X-Request-ID": str(uuid4())},
+            json={"enabled": False},
+        )
+
+        assert browser.status_code == api_key.status_code == 200
+        entries = audit.list(AuditFilters(), limit=10, offset=0).items
+        assert {entry.actor for entry in entries} == {
+            "admin-api-key",
+            str(administrator.id),
+        }
+        assert all("operations-browser-session" not in repr(entry) for entry in entries)
+        assert all("admin-secret" not in repr(entry) for entry in entries)
+    finally:
+        _cleanup()
+
+
+def test_failed_browser_mutation_uses_administrator_actor_and_safe_metadata(monkeypatch):
+    client, audit = _client(monkeypatch)
+    administrator = _authenticate_browser(client)
+    try:
+        response = client.post(
+            "/admin/operations/cache/key",
+            headers={"Origin": ORIGIN, "X-Request-ID": str(uuid4())},
+            json={"region": "assistant", "key": "missing-sensitive-key"},
+        )
+
+        assert response.status_code == 404
+        entries = audit.list(AuditFilters(result=AuditResult.failure), limit=10, offset=0).items
+        assert len(entries) == 1
+        assert entries[0].actor == str(administrator.id)
+        assert entries[0].metadata == {
+            "region": "assistant",
+            "failure_type": "CacheKeyNotFound",
+        }
+        assert "missing-sensitive-key" not in repr(entries[0])
+        assert "operations-browser-session" not in repr(entries[0])
     finally:
         _cleanup()
 
