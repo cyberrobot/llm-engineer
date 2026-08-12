@@ -152,6 +152,7 @@ class OperationalJobResponse(BaseModel):
     retry_count: int
     last_error: str | None
     execution_node: str | None
+    job_type: str
 
 
 class OperationalJobsResponse(BaseModel):
@@ -176,11 +177,35 @@ class SummaryAuditResponse(BaseModel):
     today: int
 
 
+class SummaryAssistantsResponse(BaseModel):
+    total: int
+    published: int
+
+
+class SummaryKnowledgeSourcesResponse(BaseModel):
+    total: int
+    enabled: int
+    failed: int | None
+
+
+class SummaryIngestionResponse(BaseModel):
+    queued: int
+    running: int
+    recoverable: int
+    failed: int
+    oldest_queued_age_seconds: float
+    workers_observed: int
+
+
 class OperationsSummaryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    generated_at: AwareDatetime
     health: str
     maintenance: bool
     cache: SummaryCacheResponse
     jobs: SummaryJobsResponse
     audit: SummaryAuditResponse
+    assistants: SummaryAssistantsResponse
+    knowledge_sources: SummaryKnowledgeSourcesResponse
+    ingestion: SummaryIngestionResponse

@@ -18,6 +18,7 @@ from assistant.domain.assistant_behaviour import (
     DEFAULT_WELCOME_MESSAGE,
 )
 from assistant.domain.assistant_repository import (
+    AssistantAggregate,
     AssistantConcurrentUpdate,
     AssistantDeletionBlocked,
     AssistantDependencySummary,
@@ -87,6 +88,18 @@ class PostgresAssistantRepository(AssistantRepository):
                 raise DuplicateAssistantSlug("Assistant slug already exists.") from exc
             raise
         return assistant
+
+    def aggregate_counts(self) -> AssistantAggregate:
+        with self._connection_factory() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT count(assistants.id),
+                          count(assistant_behaviour_states.published_revision)
+                   FROM assistants
+                   LEFT JOIN assistant_behaviour_states
+                     ON assistant_behaviour_states.assistant_id = assistants.id"""
+            )
+            row = cursor.fetchone()
+            return AssistantAggregate(total=int(row[0]), published=int(row[1]))
 
     def list(
         self,
@@ -238,6 +251,12 @@ class InMemoryAssistantRepository(AssistantRepository):
             return self._by_id[assistant_id]
         except KeyError as exc:
             raise AssistantNotFound("Assistant not found.") from exc
+
+    def aggregate_counts(self) -> AssistantAggregate:
+        # In-memory Assistants use the same canonical published default as
+        # persistence, and no unpublish operation exists.
+        total = len(self._by_id)
+        return AssistantAggregate(total=total, published=total)
 
     def create(self, assistant: Assistant) -> Assistant:
         if assistant.slug in self._by_slug:

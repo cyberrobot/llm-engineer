@@ -33,9 +33,12 @@ from operations.api.models import (
     OperationalJobResponse,
     OperationalJobsResponse,
     OperationsSummaryResponse,
+    SummaryAssistantsResponse,
     SummaryAuditResponse,
     SummaryCacheResponse,
+    SummaryIngestionResponse,
     SummaryJobsResponse,
+    SummaryKnowledgeSourcesResponse,
 )
 from operations.application.administration import (
     AuditQueryService,
@@ -328,11 +331,15 @@ async def get_summary(
     diagnostic = await health_service.diagnose()
     summary = summary_service.get(health_override=HealthOverview(diagnostic.status.value))
     return OperationsSummaryResponse(
+        generated_at=summary.generated_at,
         health=summary.health,
         maintenance=summary.maintenance,
         cache=SummaryCacheResponse(regions=summary.cache_regions),
         jobs=SummaryJobsResponse(running=summary.running_jobs, failed=summary.failed_jobs),
         audit=SummaryAuditResponse(today=summary.audit_today),
+        assistants=SummaryAssistantsResponse(**vars(summary.assistants)),
+        knowledge_sources=SummaryKnowledgeSourcesResponse(**vars(summary.knowledge_sources)),
+        ingestion=SummaryIngestionResponse(**vars(summary.ingestion)),
     )
 
 
@@ -358,4 +365,5 @@ def _job(job: OperationalJob) -> OperationalJobResponse:
         retry_count=job.retry_count,
         last_error=job.last_error,
         execution_node=job.execution_node,
+        job_type=job.job_type,
     )

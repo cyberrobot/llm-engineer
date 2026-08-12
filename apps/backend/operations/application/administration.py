@@ -6,6 +6,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from operations.domain.administration import (
+    AssistantCounts,
     AuditEntry,
     AuditEntryNotFound,
     AuditFilters,
@@ -15,8 +16,10 @@ from operations.domain.administration import (
     CacheRegionNotFound,
     CacheRegionStatistics,
     HealthOverview,
+    IngestionCounts,
     JobCounts,
     JobPage,
+    KnowledgeSourceCounts,
     MaintenanceState,
     OperationalJob,
     OperationalJobNotFound,
@@ -239,26 +242,42 @@ class OperationsSummaryService:
         cache: Callable[[], int],
         jobs: Callable[[], JobCounts],
         audit: Callable[[], int],
+        assistants: Callable[[], AssistantCounts],
+        knowledge: Callable[[], KnowledgeSourceCounts],
+        ingestion: Callable[[datetime], IngestionCounts],
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self._health = health
         self._maintenance = maintenance
         self._cache = cache
         self._jobs = jobs
         self._audit = audit
+        self._assistants = assistants
+        self._knowledge = knowledge
+        self._ingestion = ingestion
+        self._now = now or (lambda: datetime.now(timezone.utc))
 
     def get(self, *, health_override: HealthOverview | None = None) -> OperationalSummary:
+        generated_at = self._now()
         health = health_override or self._health()
         maintenance = self._maintenance()
         cache_regions = self._cache()
         jobs = self._jobs()
         audit_today = self._audit()
+        assistants = self._assistants()
+        knowledge_sources = self._knowledge()
+        ingestion = self._ingestion(generated_at)
         return OperationalSummary(
+            generated_at=generated_at,
             health=health.status,
             maintenance=maintenance,
             cache_regions=cache_regions,
             running_jobs=jobs.running,
             failed_jobs=jobs.failed,
             audit_today=audit_today,
+            assistants=assistants,
+            knowledge_sources=knowledge_sources,
+            ingestion=ingestion,
         )
 
 

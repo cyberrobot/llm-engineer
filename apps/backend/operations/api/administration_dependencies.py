@@ -5,10 +5,20 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from assistant.api.dependencies import get_document_ingestion_job_repository
+from assistant.api.dependencies import (
+    get_assistant_repository,
+    get_document_ingestion_job_repository,
+    get_ingestion_operational_status_repository,
+    get_knowledge_source_repository,
+)
+from assistant.domain.assistant_repository import AssistantRepository
 from assistant.infrastructure.repositories.document_ingestion_job import (
     DocumentIngestionJobRepository,
 )
+from assistant.infrastructure.repositories.ingestion_observability import (
+    IngestionOperationalStatusRepository,
+)
+from assistant.infrastructure.repositories.knowledge_source import PostgresKnowledgeSourceRepository
 from core.config import DATABASE_URL, get_health_check_settings
 from infrastructure.cache.client import redis_client
 from operations.application.administration import (
@@ -22,6 +32,11 @@ from operations.application.administration import (
 from operations.domain.administration import HealthOverview
 from operations.infrastructure.audit import PostgresOperationsAuditStore
 from operations.infrastructure.cache import RedisCacheRegion
+from operations.infrastructure.dashboard import (
+    AssistantSummaryStore,
+    IngestionSummaryStore,
+    KnowledgeSourceSummaryStore,
+)
 from operations.infrastructure.jobs import IngestionJobOperationsStore
 from operations.infrastructure.memory import (
     InMemoryAuditStore,
@@ -71,14 +86,30 @@ def get_operations_summary_service(
     audit: Annotated[AuditQueryService, Depends(get_audit_query_service)],
     maintenance: Annotated[MaintenanceService, Depends(get_maintenance_service)],
     jobs: Annotated[JobOperationsService, Depends(get_job_operations_service)],
+    assistants: Annotated[AssistantRepository, Depends(get_assistant_repository)],
+    knowledge_sources: Annotated[
+        PostgresKnowledgeSourceRepository, Depends(get_knowledge_source_repository)
+    ],
+    ingestion_status: Annotated[
+        IngestionOperationalStatusRepository,
+        Depends(get_ingestion_operational_status_repository),
+    ],
 ) -> OperationsSummaryService:
     today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    assistant_summary = AssistantSummaryStore(assistants)
+    ingestion_summary = IngestionSummaryStore(ingestion_status)
+    knowledge_summary = KnowledgeSourceSummaryStore(
+        knowledge_sources, configured=bool(DATABASE_URL)
+    )
     return OperationsSummaryService(
         health=lambda: _unknown_health(),
         maintenance=lambda: maintenance.get().enabled,
         cache=lambda: len(cache.list_regions()),
         jobs=jobs.counts,
         audit=lambda: audit.count_since(today),
+        assistants=assistant_summary.counts,
+        knowledge=knowledge_summary.counts,
+        ingestion=ingestion_summary.counts,
     )
 
 

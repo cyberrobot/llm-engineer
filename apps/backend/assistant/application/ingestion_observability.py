@@ -94,3 +94,4 @@ class IngestionOperationalStatus:
     recoverable_jobs: int
     oldest_queued_age_seconds: float
     workers_observed: int
+    failed_jobs: int = 0

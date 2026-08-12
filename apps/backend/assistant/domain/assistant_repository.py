@@ -28,8 +28,15 @@ class AssistantDependencySummary:
     has_dependencies: bool
 
 
+@dataclass(frozen=True, slots=True)
+class AssistantAggregate:
+    total: int
+    published: int
+
+
 class AssistantRepository(Protocol):
     def create(self, assistant: Assistant) -> Assistant: ...
+    def aggregate_counts(self) -> AssistantAggregate: ...
     def list(
         self,
         *,

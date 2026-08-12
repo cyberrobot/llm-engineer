@@ -7,6 +7,7 @@ import pytest
 
 from assistant.domain.assistant import Assistant, AssistantStatus, AssistantVisibility
 from assistant.domain.assistant_repository import (
+    AssistantAggregate,
     AssistantNotFound,
     DuplicateAssistantSlug,
 )
@@ -33,6 +34,14 @@ def test_assistant_repository_looks_up_by_id_and_slug():
     assert by_slug.get_by_slug(" reviewer ").visibility is AssistantVisibility.private
     assert id_cursor.execute.call_args.args[1] == (str(assistant_id),)
     assert slug_cursor.execute.call_args.args[1] == ("reviewer",)
+
+
+def test_assistant_repository_counts_total_and_published_in_one_aggregate_query():
+    repository, cursor = repository_with_row((8, 6))
+
+    assert repository.aggregate_counts() == AssistantAggregate(total=8, published=6)
+    assert cursor.execute.call_count == 1
+    assert "LEFT JOIN assistant_behaviour_states" in cursor.execute.call_args.args[0]
 
 
 def test_assistant_repository_uses_safe_not_found_error():

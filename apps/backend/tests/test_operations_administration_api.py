@@ -23,9 +23,12 @@ from operations.application.administration import (
 )
 from operations.application.health import HealthService
 from operations.domain.administration import (
+    AssistantCounts,
     AuditFilters,
     AuditResult,
+    IngestionCounts,
     JobCounts,
+    KnowledgeSourceCounts,
     OperationalJob,
     OperationsDependencyUnavailable,
 )
@@ -67,6 +70,24 @@ def _client(monkeypatch):
     app.dependency_overrides[get_job_operations_service] = lambda: JobOperationsService(jobs)
     app.dependency_overrides[get_health_service] = lambda: HealthService(
         [], timeout_seconds=1, now=lambda: NOW
+    )
+    app.dependency_overrides[get_operations_summary_service] = lambda: OperationsSummaryService(
+        health=lambda: None,
+        maintenance=lambda: runtime.get_maintenance().enabled,
+        cache=lambda: 1,
+        jobs=jobs.counts,
+        audit=lambda: audit.count_since(NOW.replace(hour=0)),
+        assistants=lambda: AssistantCounts(total=3, published=2),
+        knowledge=lambda: KnowledgeSourceCounts(total=7, enabled=5, failed=None),
+        ingestion=lambda _now: IngestionCounts(
+            queued=4,
+            running=1,
+            recoverable=1,
+            failed=2,
+            oldest_queued_age_seconds=90.0,
+            workers_observed=1,
+        ),
+        now=lambda: NOW,
     )
     return TestClient(app), audit
 
@@ -120,6 +141,7 @@ def test_administration_endpoints_are_secure_mutations_are_audited_and_reads_are
         jobs = client.get("/admin/operations/jobs", headers=headers)
         assert jobs.status_code == 200
         assert jobs.json()["items"][0]["last_error"] == "Safe failure summary."
+        assert jobs.json()["items"][0]["job_type"] == "ingestion"
         job_id = jobs.json()["items"][0]["id"]
         assert client.get(f"/admin/operations/jobs/{job_id}", headers=headers).status_code == 200
 
@@ -138,17 +160,31 @@ def test_administration_endpoints_are_secure_mutations_are_audited_and_reads_are
         summary = client.get("/admin/operations/summary", headers=headers)
         assert summary.status_code == 200
         assert summary.json() == {
+            "generated_at": "2026-08-11T10:00:00Z",
             "health": "healthy",
             "maintenance": True,
             "cache": {"regions": 1},
             "jobs": {"running": 0, "failed": 1},
             "audit": {"today": 4},
+            "assistants": {"total": 3, "published": 2},
+            "knowledge_sources": {"total": 7, "enabled": 5, "failed": None},
+            "ingestion": {
+                "queued": 4,
+                "running": 1,
+                "recoverable": 1,
+                "failed": 2,
+                "oldest_queued_age_seconds": 90.0,
+                "workers_observed": 1,
+            },
         }
     finally:
         _cleanup()
 
 
-@pytest.mark.parametrize("path", ["/admin/operations/audit", "/admin/operations/jobs"])
+@pytest.mark.parametrize(
+    "path",
+    ["/admin/operations/audit", "/admin/operations/jobs", "/admin/operations/summary"],
+)
 def test_audit_and_job_visibility_use_shared_administrator_authorization(monkeypatch, path):
     client, _ = _client(monkeypatch)
     try:
@@ -241,6 +277,10 @@ def test_summary_dependency_failure_uses_safe_standard_error(monkeypatch):
         cache=lambda: 0,
         jobs=lambda: JobCounts(running=0, failed=0),
         audit=lambda: 0,
+        assistants=lambda: AssistantCounts(total=0, published=0),
+        knowledge=lambda: KnowledgeSourceCounts(total=0, enabled=0, failed=None),
+        ingestion=lambda _now: IngestionCounts(0, 0, 0, 0, 0.0, 0),
+        now=lambda: NOW,
     )
     try:
         response = client.get("/admin/operations/summary", headers={"X-API-Key": "admin-secret"})
