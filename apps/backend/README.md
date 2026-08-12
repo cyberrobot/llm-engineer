@@ -33,6 +33,10 @@ Public chat remains available only for assistants that are both active and publi
 knowledge-source administration remains available regardless of assistant status or visibility and
 status/visibility changes do not mutate knowledge-source state.
 
+Administrator-only evaluation dataset discovery, synchronous execution, server-managed report
+history, and baseline comparison are documented in
+[evaluation administration](docs/evaluation-administration.md).
+
 The deployment-gated public widget chat request, grounding, error, and SSE contracts are documented
 in [public assistant chat](docs/public-assistant-chat.md).
 

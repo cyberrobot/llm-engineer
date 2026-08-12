@@ -23,6 +23,7 @@ from assistant.evaluation import (
     UnsupportedEvaluationReportSchemaError,
     build_evaluation_report_path,
     load_evaluation_report,
+    load_evaluation_report_metadata,
     save_evaluation_report,
     save_evaluation_report_to_directory,
 )
@@ -116,6 +117,41 @@ def test_failed_terminal_report_and_compact_output_round_trip(tmp_path):
 
     assert "\n" not in path.read_text(encoding="utf-8").rstrip("\n")
     assert load_evaluation_report(path) == run
+
+
+def test_metadata_loader_returns_validated_listing_fields_without_case_results(tmp_path):
+    run = _run()
+    path = tmp_path / "report.json"
+    save_evaluation_report(run, path)
+
+    metadata = load_evaluation_report_metadata(path)
+
+    assert metadata.id == run.id
+    assert metadata.dataset_name == run.dataset_name
+    assert metadata.dataset_version == run.dataset_version
+    assert metadata.status is EvaluationRunStatus.COMPLETED
+    assert metadata.schema_version == "1.0"
+    assert metadata.started_at == run.started_at
+    assert metadata.completed_at == run.completed_at
+    assert metadata.summary == run.summary
+    assert not hasattr(metadata, "results")
+
+
+@pytest.mark.parametrize(
+    ("content", "error_type"),
+    [
+        ('{"schema_version":"1.0","results":{}}', EvaluationReportJsonError),
+        ('{"schema_version":"1.0","results":[}', EvaluationReportJsonError),
+        ('{"schema_version":"2.0","results":[]}', UnsupportedEvaluationReportSchemaError),
+        ('{"schema_version":"1.0","id":"run"}', EvaluationReportValidationError),
+    ],
+)
+def test_metadata_loader_rejects_invalid_report_envelopes(tmp_path, content, error_type):
+    path = tmp_path / "report.json"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(error_type):
+        load_evaluation_report_metadata(path)
 
 
 @pytest.mark.parametrize("status", [EvaluationRunStatus.PENDING, EvaluationRunStatus.RUNNING])

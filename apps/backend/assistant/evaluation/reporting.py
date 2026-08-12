@@ -4,13 +4,15 @@ import json
 import os
 import re
 import tempfile
-from datetime import timezone
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from io import TextIOBase
 from pathlib import Path
 from stat import S_ISREG
 
 from pydantic import ValidationError
 
-from assistant.evaluation.models import EvaluationRun, EvaluationRunStatus
+from assistant.evaluation.models import EvaluationRun, EvaluationRunStatus, EvaluationSummary
 
 _SUPPORTED_SCHEMA_VERSIONS = ("1.0",)
 _TERMINAL_STATUSES = frozenset({EvaluationRunStatus.COMPLETED, EvaluationRunStatus.FAILED})
@@ -55,6 +57,20 @@ class UnsupportedEvaluationReportSchemaError(EvaluationReportError):
     """Raised when a report declares a schema version this loader cannot read."""
 
 
+@dataclass(frozen=True, slots=True)
+class EvaluationReportMetadata:
+    """Validated report-listing fields without materialized case results or content."""
+
+    id: str
+    dataset_name: str
+    dataset_version: str
+    status: EvaluationRunStatus
+    schema_version: str
+    started_at: datetime | None
+    completed_at: datetime | None
+    summary: EvaluationSummary | None
+
+
 def save_evaluation_report(
     run: EvaluationRun,
     path: str | Path,
@@ -78,6 +94,97 @@ def load_evaluation_report(path: str | Path) -> EvaluationRun:
     report_path = Path(path)
     content = _read_report_file(report_path)
     return _parse_report_json(content, source=str(report_path))
+
+
+def load_evaluation_report_metadata(path: str | Path) -> EvaluationReportMetadata:
+    """Stream and validate report-listing fields without retaining complete case results."""
+
+    report_path = Path(path)
+    try:
+        if not S_ISREG(report_path.stat().st_mode):
+            raise EvaluationReportReadError(
+                f"Evaluation report path '{report_path}' is not a regular file"
+            )
+        with report_path.open("r", encoding="utf-8") as report_file:
+            data, fields = _JsonEnvelopeReader(report_file).read_object(
+                capture={
+                    "id",
+                    "dataset_name",
+                    "dataset_version",
+                    "status",
+                    "schema_version",
+                    "started_at",
+                    "completed_at",
+                    "summary",
+                }
+            )
+    except EvaluationReportReadError:
+        raise
+    except FileNotFoundError as exc:
+        raise EvaluationReportReadError(
+            f"Evaluation report file not found: '{report_path}'"
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise EvaluationReportReadError(
+            f"Evaluation report file '{report_path}' is not valid UTF-8"
+        ) from exc
+    except OSError as exc:
+        raise EvaluationReportReadError(
+            f"Could not read evaluation report file '{report_path}': {exc}"
+        ) from exc
+    except _JsonEnvelopeError as exc:
+        raise EvaluationReportJsonError(
+            f"Invalid evaluation report JSON in '{report_path}' at "
+            f"line {exc.line}, column {exc.column}: {exc}"
+        ) from exc
+
+    if "schema_version" not in fields:
+        details: list[dict[str, object]] = [
+            {
+                "type": "missing",
+                "loc": ("schema_version",),
+                "msg": "Persisted evaluation reports must explicitly declare schema_version",
+            }
+        ]
+        raise EvaluationReportValidationError(
+            _validation_message(details, source=str(report_path)), errors=details
+        )
+    schema_version = data.get("schema_version")
+    if schema_version not in _SUPPORTED_SCHEMA_VERSIONS:
+        supported = ", ".join(_SUPPORTED_SCHEMA_VERSIONS)
+        raise UnsupportedEvaluationReportSchemaError(
+            f"Unsupported evaluation report schema version '{schema_version}' "
+            f"in '{report_path}'; supported versions: {supported}"
+        )
+
+    candidate = dict(data)
+    if "results" in fields:
+        candidate["results"] = []
+    try:
+        run = EvaluationRun.model_validate(candidate)
+    except ValidationError as exc:
+        details = [
+            dict(error)
+            for error in exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            )
+        ]
+        raise EvaluationReportValidationError(
+            _validation_message(details, source=str(report_path)), errors=details
+        ) from exc
+    _validate_terminal_run(run)
+    return EvaluationReportMetadata(
+        id=run.id,
+        dataset_name=run.dataset_name,
+        dataset_version=run.dataset_version,
+        status=run.status,
+        schema_version=run.schema_version,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        summary=run.summary,
+    )
 
 
 def build_evaluation_report_path(
@@ -299,3 +406,195 @@ def _format_location(location: object) -> str:
     if isinstance(location, (tuple, list)):
         return ".".join(str(part) for part in location) or "<root>"
     return str(location)
+
+
+class _JsonEnvelopeError(ValueError):
+    def __init__(self, message: str, *, line: int, column: int) -> None:
+        super().__init__(message)
+        self.line = line
+        self.column = column
+
+
+class _JsonEnvelopeReader:
+    """Validate one JSON object while retaining only selected top-level values."""
+
+    _CHUNK_SIZE = 8192
+
+    def __init__(self, source: TextIOBase) -> None:
+        self._source = source
+        self._buffer = ""
+        self._position = 0
+        self._eof = False
+        self._line = 1
+        self._column = 1
+        self._capture: list[str] | None = None
+
+    def read_object(self, *, capture: set[str]) -> tuple[dict[str, object], set[str]]:
+        values: dict[str, object] = {}
+        fields: set[str] = set()
+        self._skip_whitespace()
+        self._expect("{")
+        self._skip_whitespace()
+        if self._peek() == "}":
+            self._take()
+        else:
+            while True:
+                key = self._read_captured_string()
+                fields.add(key)
+                self._skip_whitespace()
+                self._expect(":")
+                self._skip_whitespace()
+                if key == "results" and self._peek() != "[":
+                    self._fail("results must be a JSON array")
+                if key in capture:
+                    values[key] = self._read_captured_value()
+                else:
+                    self._skip_value()
+                self._skip_whitespace()
+                separator = self._take()
+                if separator == "}":
+                    break
+                if separator != ",":
+                    self._fail("expected ',' or '}'")
+                self._skip_whitespace()
+        self._skip_whitespace()
+        if self._peek():
+            self._fail("unexpected content after the JSON object")
+        return values, fields
+
+    def _read_captured_string(self) -> str:
+        captured = self._capture_with(self._skip_string)
+        value = json.loads(captured)
+        if not isinstance(value, str):
+            self._fail("object keys must be strings")
+        return value
+
+    def _read_captured_value(self) -> object:
+        return json.loads(self._capture_with(self._skip_value))
+
+    def _capture_with(self, operation) -> str:
+        if self._capture is not None:
+            self._fail("nested JSON capture is not supported")
+        captured: list[str] = []
+        self._capture = captured
+        try:
+            operation()
+        finally:
+            self._capture = None
+        return "".join(captured)
+
+    def _skip_value(self) -> None:
+        self._skip_whitespace()
+        character = self._peek()
+        if character == '"':
+            self._skip_string()
+        elif character == "{":
+            self._skip_object()
+        elif character == "[":
+            self._skip_array()
+        elif character:
+            self._skip_primitive()
+        else:
+            self._fail("expected a JSON value")
+
+    def _skip_object(self) -> None:
+        self._expect("{")
+        self._skip_whitespace()
+        if self._peek() == "}":
+            self._take()
+            return
+        while True:
+            self._skip_string()
+            self._skip_whitespace()
+            self._expect(":")
+            self._skip_value()
+            self._skip_whitespace()
+            separator = self._take()
+            if separator == "}":
+                return
+            if separator != ",":
+                self._fail("expected ',' or '}'")
+            self._skip_whitespace()
+
+    def _skip_array(self) -> None:
+        self._expect("[")
+        self._skip_whitespace()
+        if self._peek() == "]":
+            self._take()
+            return
+        while True:
+            self._skip_value()
+            self._skip_whitespace()
+            separator = self._take()
+            if separator == "]":
+                return
+            if separator != ",":
+                self._fail("expected ',' or ']'")
+            self._skip_whitespace()
+
+    def _skip_string(self) -> None:
+        self._expect('"')
+        while True:
+            character = self._take()
+            if not character:
+                self._fail("unterminated JSON string")
+            if character == '"':
+                return
+            if ord(character) < 0x20:
+                self._fail("unescaped control character in JSON string")
+            if character != "\\":
+                continue
+            escape = self._take()
+            if escape in {'"', "\\", "/", "b", "f", "n", "r", "t"}:
+                continue
+            if escape != "u":
+                self._fail("invalid JSON string escape")
+            for _ in range(4):
+                hexadecimal = self._take()
+                if hexadecimal not in "0123456789abcdefABCDEF":
+                    self._fail("invalid Unicode escape in JSON string")
+
+    def _skip_primitive(self) -> None:
+        captured: list[str] = []
+        while True:
+            character = self._peek()
+            if not character or character.isspace() or character in ",]}":
+                break
+            captured.append(self._take())
+        token = "".join(captured)
+        try:
+            json.loads(token)
+        except json.JSONDecodeError:
+            self._fail("invalid JSON value")
+
+    def _skip_whitespace(self) -> None:
+        while self._peek() in {" ", "\t", "\r", "\n"}:
+            self._take()
+
+    def _expect(self, expected: str) -> None:
+        if self._take() != expected:
+            self._fail(f"expected '{expected}'")
+
+    def _peek(self) -> str:
+        if self._position >= len(self._buffer) and not self._eof:
+            self._buffer = self._source.read(self._CHUNK_SIZE)
+            self._position = 0
+            self._eof = not self._buffer
+        return self._buffer[self._position] if self._position < len(self._buffer) else ""
+
+    def _take(self) -> str:
+        character = self._peek()
+        if not character:
+            return ""
+        self._position += 1
+        if self._capture is not None:
+            self._capture.append(character)
+        if character == "\n":
+            self._line += 1
+            self._column = 1
+        else:
+            self._column += 1
+        return character
+
+    def _fail(self, message: str) -> None:
+        raise _JsonEnvelopeError(message, line=self._line, column=self._column)

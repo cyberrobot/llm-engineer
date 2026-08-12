@@ -130,6 +130,16 @@ async def request_validation_error_handler(request: Request, exc: Exception) -> 
                 }
             },
         )
+    if request.url.path.startswith("/admin/evaluation"):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": {
+                    "code": "invalid_evaluation_options",
+                    "message": "The evaluation administrator request is invalid.",
+                }
+            },
+        )
     if request.url.path.startswith("/admin/assistants"):
         return JSONResponse(
             status_code=422,
