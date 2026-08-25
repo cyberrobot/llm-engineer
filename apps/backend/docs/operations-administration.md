@@ -1,9 +1,20 @@
 # Operations administration
 
 The operations module owns production runtime administration independently from assistant editing,
-retrieval, ingestion execution, and publishing. All routes are under `/admin/operations` and require
-the `X-API-Key` administrator credential. Read routes require `operations:read`; state-changing
-routes additionally require `operations:execute`.
+retrieval, ingestion execution, and publishing. All routes are under `/admin/operations` and support
+two authentication modes: the server-side `X-API-Key` administrator credential for operational
+clients, or the existing opaque HTTP-only administrator session cookie for the browser application.
+Read routes require `operations:read`; state-changing routes additionally require
+`operations:execute`. The current `administrator` role is explicitly mapped to both permissions at
+the Operations API boundary, while API keys retain their configured permission sets.
+
+Credential selection is deterministic. If an `X-API-Key` header is present, it takes precedence and
+must authenticate on its own; an invalid or ingestion-only key cannot fall back to a valid browser
+cookie. When the header is absent, the administrator authentication service validates the cookie,
+including session expiry/revocation and the account's current active status. Supplying both valid
+credentials uses the API-key identity. Missing or invalid authentication returns the Operations
+`admin_authentication_required` error, and an authenticated caller without the required permission
+returns `admin_permission_denied`.
 
 ## Capabilities
 
@@ -66,6 +77,23 @@ not a registry of all deployed workers. `oldest_queued_age_seconds` is calculate
 server timestamp returned as `generated_at`. `failed` counts authoritative failed ingestion jobs.
 
 ## State, safety, and errors
+
+Cookie-authenticated mutations must include an exact `Origin` from `ADMIN_TRUSTED_ORIGINS`; missing
+or untrusted origins are rejected before the operation or its audit intent executes. This reuses the
+same trusted-origin policy as other administrator browser APIs. API-key-authenticated mutations keep
+their machine-to-machine contract and do not require an `Origin` header. Credentialed browser CORS
+also uses the existing explicit trusted-origin list with credentials enabled; wildcard origins are
+never used.
+
+Successful browser mutations use the stable administrator UUID as the audit actor. API-key actions
+continue to use the configured principal identifier (`admin-api-key`). Session tokens, API keys,
+cache keys, maintenance messages, authorization values, and request payloads are never copied into
+audit metadata. Operations responses disable caching with `Cache-Control: no-store` and
+`Pragma: no-cache`.
+
+`ADMIN_API_KEY` is a server-side operational credential. It must never be returned to frontend code
+or configured through `VITE_*` or any other browser-visible environment variable. The administrator
+dashboard must call these routes with browser credentials enabled so the HTTP-only cookie is sent.
 
 Production and staging deployments with `DATABASE_URL` store maintenance state and administrative
 audit records in PostgreSQL. This shared state keeps maintenance behaviour consistent across

@@ -1,7 +1,8 @@
 # Administrator authentication
 
 The administrator API uses persistent accounts and revocable server-managed sessions. It is
-separate from assistant visibility and the existing operations API-key authorization.
+separate from assistant visibility. Operations routes adapt a validated administrator session into
+their existing permission model while preserving API-key authentication for operational clients.
 
 ## Bootstrap
 
@@ -66,9 +67,11 @@ with a missing or untrusted Origin receive `403 forbidden`. The same list config
 CORS; wildcard origins are not used. The defaults support `http://localhost:5173` and the same-site
 production frontend. Non-browser scripts must deliberately send an allowed `Origin` header.
 
-Future routes should depend on `require_authenticated_administrator` to load an active account and
-on `require_administrator_role` for the constrained `administrator` role. State-changing routes
-must also depend on `require_trusted_admin_origin`.
+Future browser routes should depend on `require_authenticated_administrator` to load an active
+account and on `require_administrator_role` for the constrained `administrator` role.
+Cookie-authenticated state-changing routes must also enforce `require_trusted_admin_origin`.
+Operations API-key mutations are intentionally exempt from browser Origin requirements; they do not
+use ambient browser credentials.
 
 ## Brute-force controls
 
