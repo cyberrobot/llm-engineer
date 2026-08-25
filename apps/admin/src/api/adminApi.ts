@@ -77,7 +77,7 @@ async function request(baseUrl: string, path: string, init: RequestInit): Promis
   }
 }
 
-async function failure(response: Response, context: 'login' | 'session' | 'logout' | 'assistant'): Promise<never> {
+async function failure(response: Response, context: 'login' | 'session' | 'logout' | 'assistant' | 'operations'): Promise<never> {
   let code: unknown;
   try {
     const body: unknown = await response.json();
@@ -126,6 +126,11 @@ export function createAdminApi(baseUrl: string): AdminApi {
       const response = await request(baseUrl, '/admin/auth/logout', { method: 'POST', signal });
       if (!response.ok) return failure(response, 'logout');
       if (response.status !== 204) throw new AdminApiError('invalid_response');
+    },
+    async getOperationsSummary(signal?: AbortSignal) {
+      const response = await request(baseUrl, '/admin/operations/summary', { method: 'GET', signal });
+      if (!response.ok) return failure(response, 'operations');
+      return operationsSummaryFrom(await successfulJson(response));
     },
     async listAssistants(options = {}, signal?: AbortSignal) {
       const params = new URLSearchParams();
@@ -286,6 +291,25 @@ export type KnowledgeSourceList = { items: KnowledgeSource[]; total: number; lim
 export type CreateKnowledgeSource =
   | { source_type: 'direct_text'; name: string; direct_text: string }
   | { source_type: 'url'; name: string; url: string };
+export type OperationsHealth = 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
+export type OperationsSummary = {
+  generatedAt: string;
+  health: OperationsHealth;
+  maintenance: boolean;
+  cache: { regions: number };
+  jobs: { running: number; failed: number };
+  audit: { today: number };
+  assistants: { total: number; published: number };
+  knowledgeSources: { total: number; enabled: number; failed: number | null };
+  ingestion: {
+    queued: number;
+    running: number;
+    recoverable: number;
+    failed: number;
+    oldestQueuedAgeSeconds: number;
+    workersObserved: number;
+  };
+};
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const slug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -312,6 +336,51 @@ const awareTimestamp = /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/;
 function validTimestamp(value: unknown): value is string { return timestamp(value) && awareTimestamp.test(value); }
 function nullableTimestamp(value: unknown): value is string | null { return value === null || validTimestamp(value); }
 function nullableString(value: unknown): value is string | null { return value === null || typeof value === 'string'; }
+function nonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+function exactCountSection(value: unknown, keys: string[]): value is Record<string, number> {
+  return isRecord(value) && hasExactKeys(value, keys) && keys.every((key) => nonNegativeInteger(value[key]));
+}
+function operationsSummaryFrom(value: unknown): OperationsSummary {
+  const topLevelKeys = ['generated_at','health','maintenance','cache','jobs','audit','assistants','knowledge_sources','ingestion'];
+  if (!isRecord(value) || !hasExactKeys(value, topLevelKeys) || !validTimestamp(value.generated_at) ||
+    !['healthy','degraded','unhealthy','unknown'].includes(String(value.health)) || typeof value.maintenance !== 'boolean' ||
+    !exactCountSection(value.cache, ['regions']) || !exactCountSection(value.jobs, ['running','failed']) ||
+    !exactCountSection(value.audit, ['today']) || !exactCountSection(value.assistants, ['total','published']) ||
+    !isRecord(value.knowledge_sources) || !hasExactKeys(value.knowledge_sources, ['total','enabled','failed']) ||
+    !nonNegativeInteger(value.knowledge_sources.total) || !nonNegativeInteger(value.knowledge_sources.enabled) ||
+    !(value.knowledge_sources.failed === null || nonNegativeInteger(value.knowledge_sources.failed)) ||
+    !isRecord(value.ingestion) || !hasExactKeys(value.ingestion, ['queued','running','recoverable','failed','oldest_queued_age_seconds','workers_observed']) ||
+    !nonNegativeInteger(value.ingestion.queued) || !nonNegativeInteger(value.ingestion.running) ||
+    !nonNegativeInteger(value.ingestion.recoverable) || !nonNegativeInteger(value.ingestion.failed) ||
+    typeof value.ingestion.oldest_queued_age_seconds !== 'number' || !Number.isFinite(value.ingestion.oldest_queued_age_seconds) ||
+    value.ingestion.oldest_queued_age_seconds < 0 || !nonNegativeInteger(value.ingestion.workers_observed)) {
+    throw new AdminApiError('invalid_response');
+  }
+  return {
+    generatedAt: value.generated_at,
+    health: value.health as OperationsHealth,
+    maintenance: value.maintenance,
+    cache: { regions: value.cache.regions },
+    jobs: { running: value.jobs.running, failed: value.jobs.failed },
+    audit: { today: value.audit.today },
+    assistants: { total: value.assistants.total, published: value.assistants.published },
+    knowledgeSources: {
+      total: value.knowledge_sources.total,
+      enabled: value.knowledge_sources.enabled,
+      failed: value.knowledge_sources.failed,
+    },
+    ingestion: {
+      queued: value.ingestion.queued,
+      running: value.ingestion.running,
+      recoverable: value.ingestion.recoverable,
+      failed: value.ingestion.failed,
+      oldestQueuedAgeSeconds: value.ingestion.oldest_queued_age_seconds,
+      workersObserved: value.ingestion.workers_observed,
+    },
+  };
+}
 function knowledgeJobFrom(value: unknown): KnowledgeSourceJob | null {
   if (value === null) return null;
   if (!isRecord(value) || !hasExactKeys(value, ['id','status','current_step','created_at','started_at','completed_at','failure_code','failure_message']) ||
@@ -392,6 +461,7 @@ export interface AdminApi {
   login(email: string, password: string, signal?: AbortSignal): Promise<Administrator>;
   currentUser(signal?: AbortSignal): Promise<Administrator>;
   logout(signal?: AbortSignal): Promise<void>;
+  getOperationsSummary(signal?: AbortSignal): Promise<OperationsSummary>;
   listAssistants(options?: { limit?: number; offset?: number; status?: AssistantStatus; visibility?: AssistantVisibility }, signal?: AbortSignal): Promise<AssistantList>;
   getAssistant(id: string, signal?: AbortSignal): Promise<AssistantDetail>;
   createAssistant(input: CreateAssistant, signal?: AbortSignal): Promise<Assistant>;

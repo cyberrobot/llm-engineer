@@ -42,6 +42,7 @@ const base: AdminApi = {
   currentUser: async () => ({ id: 'admin', email: 'admin@example.test', role: 'administrator' }),
   login: async () => ({ id: 'admin', email: 'admin@example.test', role: 'administrator' }),
   logout: async () => undefined,
+  getOperationsSummary: async () => ({ generatedAt:'2026-08-25T10:00:00Z',health:'healthy',maintenance:false,cache:{regions:0},jobs:{running:0,failed:0},audit:{today:0},assistants:{total:0,published:0},knowledgeSources:{total:0,enabled:0,failed:null},ingestion:{queued:0,running:0,recoverable:0,failed:0,oldestQueuedAgeSeconds:0,workersObserved:0} }),
   listAssistants: async () => ({ items: [assistant], total: 1, limit: 50, offset: 0 }),
   getAssistant: async () => assistant,
   createAssistant: async () => assistant,

@@ -1,6 +1,22 @@
 # Redmoor Admin
 
-Private React application for Redmoor administration. It provides cookie-backed administrator authentication, Assistant management, and Assistant-scoped knowledge and retrieval configuration. Evaluations, metrics, and operations remain out of scope.
+Private React application for Redmoor administration. It provides cookie-backed administrator authentication, an operational Dashboard, Assistant management, and Assistant-scoped knowledge and retrieval configuration. Evaluations, detailed metrics, and production-affecting operations remain out of scope.
+
+## Operational Dashboard
+
+The authenticated `/admin` route loads `GET /admin/operations/summary` once to show service health,
+maintenance state, Assistant and Knowledge Source aggregates, ingestion state, workers observed,
+cache-region count, operational jobs, and administrative activity today. It does not reconstruct
+these values by loading lists or infrastructure-specific endpoints.
+
+Conditions requiring attention are derived only from the current summary: non-healthy service state,
+maintenance mode, failed operational or ingestion jobs, recoverable ingestion, queued ingestion with
+no workers observed, and an authoritative non-zero Knowledge Source failure count. This is current
+state, not an incident history. A null Knowledge Source failure count is shown as not reported.
+
+The Dashboard supports manual refresh and safe retry without polling. An expired session follows the
+existing login flow; forbidden, network, server, and malformed successful responses never render as
+a healthy empty Dashboard.
 
 ## Assistant management
 

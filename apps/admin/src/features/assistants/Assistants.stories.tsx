@@ -9,6 +9,7 @@ import { AssistantFormPage, AssistantsPage, Badge } from './Assistants';
 const item: Assistant = { id:'11111111-1111-4111-8111-111111111111',slug:'legal-review',name:'Legal review',status:'inactive',visibility:'private',createdAt:'2026-08-01T09:00:00Z',updatedAt:'2026-08-04T09:00:00Z',concurrencyToken:'2026-08-04T09:00:00Z' };
 const base: AdminApi = {
   currentUser: async()=>({id:'admin',email:'admin@example.test',role:'administrator'}), login:async()=>({id:'admin',email:'admin@example.test',role:'administrator'}), logout:async()=>undefined,
+  getOperationsSummary:async()=>({generatedAt:'2026-08-25T10:00:00Z',health:'healthy',maintenance:false,cache:{regions:0},jobs:{running:0,failed:0},audit:{today:0},assistants:{total:0,published:0},knowledgeSources:{total:0,enabled:0,failed:null},ingestion:{queued:0,running:0,recoverable:0,failed:0,oldestQueuedAgeSeconds:0,workersObserved:0}}),
   listAssistants:async()=>({items:[item,{...item,id:'22222222-2222-4222-8222-222222222222',slug:'support',name:'Support',status:'active',visibility:'public'}],total:2,limit:50,offset:0}),
   getAssistant:async()=>({...item,knowledgeSourceCount:0,deletionAllowed:true}),createAssistant:async()=>item,updateAssistant:async()=>item,deleteAssistant:async()=>undefined,
   getAssistantBehaviour:async()=>{throw new AdminApiError('not_found')},updateAssistantBehaviour:async()=>{throw new AdminApiError('invalid_request')},publishAssistantBehaviour:async()=>{throw new AdminApiError('invalid_request')},previewAssistantMessage:async()=>{throw new AdminApiError('invalid_request')},
