@@ -11,6 +11,13 @@ describe('admin API', () => {
     status: 'inactive', visibility: 'private', created_at: '2026-08-04T00:00:00Z',
     updated_at: '2026-08-04T00:00:00Z', concurrency_token: '2026-08-04T00:00:00Z',
   };
+  const operationsSummary = {
+    generated_at: '2026-08-25T10:00:00Z', health: 'healthy', maintenance: false,
+    cache: { regions: 3 }, jobs: { running: 1, failed: 0 }, audit: { today: 4 },
+    assistants: { total: 2, published: 1 },
+    knowledge_sources: { total: 5, enabled: 4, failed: null },
+    ingestion: { queued: 2, running: 1, recoverable: 0, failed: 0, oldest_queued_age_seconds: 4320.5, workers_observed: 2 },
+  };
   it('uses the login contract and credentialed request', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(input).toBe(`${base}/admin/auth/login`);
@@ -51,6 +58,75 @@ describe('admin API', () => {
     expect(fetchMock.mock.calls[1]?.[1]).toEqual(
       expect.objectContaining({ credentials: 'include', method: 'POST' }),
     );
+  });
+
+  it('loads and maps the exact credentialed Operations Summary contract', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(operationsSummary));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createAdminApi(base).getOperationsSummary(controller.signal)).resolves.toEqual({
+      generatedAt: '2026-08-25T10:00:00Z', health: 'healthy', maintenance: false,
+      cache: { regions: 3 }, jobs: { running: 1, failed: 0 }, audit: { today: 4 },
+      assistants: { total: 2, published: 1 },
+      knowledgeSources: { total: 5, enabled: 4, failed: null },
+      ingestion: { queued: 2, running: 1, recoverable: 0, failed: 0, oldestQueuedAgeSeconds: 4320.5, workersObserved: 2 },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(`${base}/admin/operations/summary`, expect.objectContaining({
+      method: 'GET', credentials: 'include', signal: controller.signal,
+    }));
+  });
+
+  it.each([
+    ['invalid generated timestamp', { ...operationsSummary, generated_at: 'today' }],
+    ['unknown health state', { ...operationsSummary, health: 'ok' }],
+    ['negative count', { ...operationsSummary, jobs: { running: -1, failed: 0 } }],
+    ['fractional count', { ...operationsSummary, cache: { regions: 1.5 } }],
+    ['invalid queue age', { ...operationsSummary, ingestion: { ...operationsSummary.ingestion, oldest_queued_age_seconds: -1 } }],
+    ['missing nested field', { ...operationsSummary, ingestion: { queued: 0 } }],
+    ['unexpected top-level field', { ...operationsSummary, request_id: 'request-1' }],
+    ['invalid nullable count', { ...operationsSummary, knowledge_sources: { total: 5, enabled: 4, failed: 'unknown' } }],
+  ])('rejects a malformed Operations Summary: %s', async (_scenario, body) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(body)));
+    await expect(createAdminApi(base).getOperationsSummary()).rejects.toEqual(
+      expect.objectContaining({ kind: 'invalid_response' }),
+    );
+  });
+
+  it.each([[401, 'unauthenticated'], [403, 'forbidden'], [500, 'server']] as const)(
+    'maps Operations Summary HTTP %i safely', async (status, kind) => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status })));
+      await expect(createAdminApi(base).getOperationsSummary()).rejects.toEqual(expect.objectContaining({ kind }));
+    },
+  );
+
+  it('accepts authoritative zero counts and a reported zero Knowledge Source failure count', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      ...operationsSummary,
+      cache: { regions: 0 }, jobs: { running: 0, failed: 0 }, audit: { today: 0 },
+      assistants: { total: 0, published: 0 }, knowledge_sources: { total: 0, enabled: 0, failed: 0 },
+      ingestion: { queued: 0, running: 0, recoverable: 0, failed: 0, oldest_queued_age_seconds: 0, workers_observed: 0 },
+    })));
+    const result = await createAdminApi(base).getOperationsSummary();
+    expect(result.knowledgeSources.failed).toBe(0);
+    expect(result.ingestion.oldestQueuedAgeSeconds).toBe(0);
+  });
+
+  it('maps malformed JSON, network failure, and cancellation for Operations Summary', async () => {
+    const api = createAdminApi(base);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('not json', { status: 200 })));
+    await expect(api.getOperationsSummary()).rejects.toEqual(expect.objectContaining({ kind: 'invalid_response' }));
+
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')));
+    await expect(api.getOperationsSummary()).rejects.toEqual(expect.objectContaining({ kind: 'network' }));
+
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    })));
+    const controller = new AbortController();
+    const pending = api.getOperationsSummary(controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toEqual(expect.objectContaining({ name: 'AbortError' }));
   });
 
   it('maps contractual failures without exposing raw content', async () => {

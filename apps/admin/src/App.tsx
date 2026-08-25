@@ -5,6 +5,7 @@ import { FullPageStatus } from './components/FullPageStatus';
 import { LoginPage } from './components/LoginPage';
 import { AssistantFormPage, AssistantsPage } from './features/assistants/Assistants';
 import { AssistantBehaviourPage, AssistantPreviewPage } from './features/assistants/AssistantBehaviour';
+import { DashboardPage } from './features/dashboard/Dashboard';
 import { KnowledgeEntryPage, KnowledgeSourceCreatePage, KnowledgeSourceDetailPage, KnowledgeSourcesPage } from './features/knowledge-sources/KnowledgeSources';
 
 function Protected() {
@@ -35,23 +36,12 @@ function Protected() {
   return <AdminShell />;
 }
 
-function Placeholder({ children }: { children: string }) {
-  return (
-    <section className="placeholder">
-      <p>{children}</p>
-    </section>
-  );
-}
-
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<Protected />}>
-        <Route
-          path="/admin"
-          element={<Placeholder>Dashboard functionality is not implemented yet.</Placeholder>}
-        />
+        <Route path="/admin" element={<DashboardPage />} />
         <Route
           path="/admin/assistants"
           element={<AssistantsPage />}

@@ -13,6 +13,7 @@ const user: Administrator = {
   role: 'administrator',
 };
 const assistantMethods = {
+  getOperationsSummary: async () => ({ generatedAt:'2026-08-25T10:00:00Z',health:'healthy' as const,maintenance:false,cache:{regions:0},jobs:{running:0,failed:0},audit:{today:0},assistants:{total:0,published:0},knowledgeSources:{total:0,enabled:0,failed:null},ingestion:{queued:0,running:0,recoverable:0,failed:0,oldestQueuedAgeSeconds:0,workersObserved:0} }),
   listAssistants: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
   getAssistant: async () => { throw new AdminApiError('not_found'); },
   createAssistant: async () => { throw new AdminApiError('invalid_request'); },

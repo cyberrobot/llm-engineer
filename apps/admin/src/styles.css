@@ -499,6 +499,91 @@ dialog {
 dialog::backdrop {
   background: #001a1277;
 }
+.dashboard {
+  display: grid;
+  gap: 1.25rem;
+  max-width: 76rem;
+}
+.dashboard-intro,
+.dashboard-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.dashboard-intro p,
+.dashboard-card h2,
+.service-overview h2,
+.attention-panel h2 {
+  margin: 0;
+}
+.service-overview,
+.attention-panel,
+.dashboard-card,
+.dashboard-state {
+  background: #fff;
+  border: 1px solid #d7dfda;
+  border-radius: 0.7rem;
+  padding: 1.25rem;
+}
+.service-overview {
+  display: grid;
+  grid-template-columns: minmax(12rem, 0.7fr) minmax(0, 2fr);
+  align-items: center;
+  gap: 1.5rem;
+  border-left-width: 0.45rem;
+}
+.service-healthy { border-left-color: #2f8052; }
+.service-degraded,
+.service-unknown { border-left-color: #c98b2d; }
+.service-unhealthy { border-left-color: #9a2f24; }
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem;
+}
+.dashboard-card {
+  min-width: 0;
+}
+.dashboard-card-heading {
+  align-items: baseline;
+  margin-bottom: 1rem;
+}
+.dashboard-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 1rem;
+  margin: 0;
+}
+.dashboard-metrics > div {
+  min-width: 0;
+}
+.dashboard-metrics dt {
+  color: #53655e;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.dashboard-metrics dd {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+  font-size: 1.35rem;
+  font-weight: 800;
+}
+.service-metrics dd {
+  font-size: 1.1rem;
+}
+.attention-required {
+  background: #fff6df;
+  border-left: 0.45rem solid #c98b2d;
+}
+.attention-clear {
+  background: #e6f5eb;
+  border-left: 0.45rem solid #2f8052;
+}
+.attention-panel ul,
+.attention-panel p {
+  margin-bottom: 0;
+}
 @media (max-width: 700px) {
   .login-page {
     grid-template-columns: 1fr;
@@ -583,5 +668,14 @@ dialog::backdrop {
   }
   .assistant-preview-frame {
     padding: 0.5rem;
+  }
+  .dashboard-intro,
+  .dashboard-card-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .service-overview,
+  .dashboard-grid {
+    grid-template-columns: 1fr;
   }
 }
