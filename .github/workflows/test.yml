@@ -9,13 +9,12 @@ on:
       - main
 
 jobs:
-  detect-assistant-widget-changes:
-    name: Detect assistant widget changes
+  assistant-widget:
+    name: Assistant widget
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: read
-    outputs:
-      affected: ${{ steps.filter.outputs.affected }}
 
     steps:
       - name: Check for widget-relevant changes
@@ -32,21 +31,18 @@ jobs:
               - '.github/workflows/test.yml'
               - '.github/workflows/publish-assistant-widget.yml'
 
-  assistant-widget:
-    name: Assistant widget
-    needs: detect-assistant-widget-changes
-    if: >-
-      github.event_name == 'push' ||
-      needs.detect-assistant-widget-changes.outputs.affected == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
       - name: Check out repository
+        if: >-
+          github.event_name == 'push' ||
+          steps.filter.outputs.affected == 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Set up Node
+        if: >-
+          github.event_name == 'push' ||
+          steps.filter.outputs.affected == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -54,25 +50,41 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
+        if: >-
+          github.event_name == 'push' ||
+          steps.filter.outputs.affected == 'true'
         run: npm ci
 
       - name: Require a Changeset for package changes
         if: >-
           github.event_name == 'pull_request' &&
+          steps.filter.outputs.affected == 'true' &&
           (github.event.pull_request.head.repo.full_name != github.repository ||
           github.event.pull_request.head.ref != 'changeset-release/main')
         run: npx changeset status --since=${{ github.event.pull_request.base.sha }}
 
       - name: Lint widget
+        if: >-
+          github.event_name == 'push' ||
+          steps.filter.outputs.affected == 'true'
         run: npm run lint --workspace @redmoor/assistant-widget
 
       - name: Test widget
+        if: >-
+          github.event_name == 'push' ||
+          steps.filter.outputs.affected == 'true'
         run: npm run test --workspace @redmoor/assistant-widget
 
       - name: Build widget
+        if: >-
+          github.event_name == 'push' ||
+          steps.filter.outputs.affected == 'true'
         run: npm run build --workspace @redmoor/assistant-widget
 
       - name: Verify package
+        if: >-
+          github.event_name == 'push' ||
+          steps.filter.outputs.affected == 'true'
         run: npm run pack:verify --workspace @redmoor/assistant-widget
 
   pytest:
