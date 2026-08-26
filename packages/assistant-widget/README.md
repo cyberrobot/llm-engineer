@@ -113,17 +113,39 @@ the unpublished widget through `changeset publish` and creates the standard
 it does not bypass the Release PR state or quality gates. Select the `main` branch when dispatching
 the workflow manually; the release job does not run for any other branch or tag.
 
+Pull-request CI requires a Changeset for ordinary widget changes. The canonical same-repository
+`changeset-release/main` PR is exempt from that one check because `changeset version` has already
+consumed its pending Changesets into the version and changelog. Widget lint, tests, build, and
+package verification still run on the Release PR. A fork cannot obtain this exemption merely by
+using the same branch name.
+
 Before the first release, configure npm trusted publishing for `@redmoor/assistant-widget` with the
 GitHub repository owner and name, workflow filename `publish-assistant-widget.yml`, environment
-`npm`, and permission to run `npm publish`. Create the matching GitHub environment and enable the
-repository setting that allows GitHub Actions to create pull requests. The workflow uses GitHub OIDC
-and requests `id-token: write`; it does not use a long-lived npm token. Publishing uses the public
+`npm`, and permission to run `npm publish`. Create the matching GitHub environment. In GitHub, open
+**Settings → Actions → General → Workflow permissions** and enable **Allow GitHub Actions to create
+and approve pull requests**. Despite the setting's broad label, this workflow uses the permission to
+create or update the Changesets Release PR; merging that PR remains a human action. Repository
+administrators can verify the setting without changing it with:
+
+```sh
+gh api repos/OWNER/REPOSITORY/actions/permissions/workflow
+```
+
+`can_approve_pull_request_reviews` must be `true`. The workflow keeps the repository's default token
+permission read-only and grants only `contents: write`, `pull-requests: write`, and `id-token: write`
+for the release job. It uses GitHub OIDC and no long-lived npm token. Publishing uses the public
 registry and npm provenance.
+
+If the action reports that GitHub Actions is not permitted to create pull requests, enable the
+repository setting above and rerun the failed workflow. A failed attempt can leave
+`changeset-release/main` without an open pull request; do not delete the pending Changeset, edit
+versions, or create a second release branch. Rerunning the same workflow updates that canonical
+branch and creates the single Release PR.
 
 If a package check fails, fix it in a reviewed pull request and let Changesets update the Release PR.
 If publication fails before npm accepts the version, correct the trusted-publisher or environment
-configuration and re-run the workflow manually. Changesets skips versions already present on npm;
-never move an existing release tag or edit a released version.
+configuration and rerun the failed workflow or dispatch the workflow from `main`. Changesets skips
+versions already present on npm; never move an existing release tag or edit a released version.
 
 ### Connected backend demo
 
