@@ -490,11 +490,18 @@ td {
 .assistant-form fieldset { border: 1px solid #d7dfda; border-radius: 0.4rem; padding: 1rem; }
 .assistant-form fieldset label { display: inline-flex; align-items: center; margin-right: 1.5rem; }
 dialog {
+  position: fixed;
+  inset: 1rem;
+  width: min(32rem, calc(100vw - 2rem));
   max-width: 32rem;
+  max-height: calc(100dvh - 2rem);
+  margin: auto;
+  overflow: auto;
   border: 0;
   border-radius: 0.7rem;
   padding: 1.5rem;
   box-shadow: 0 1rem 4rem #001a1266;
+  z-index: 20;
 }
 dialog::backdrop {
   background: #001a1277;
@@ -684,6 +691,31 @@ dialog::backdrop {
     border: 0;
     padding: 0.45rem;
   }
+  .operations-page th[scope='row'] {
+    display: block;
+    padding: 0.45rem;
+  }
+  .operations-page td[data-label],
+  .operations-page table:has(thead th:nth-child(5):last-child) td {
+    display: grid;
+    grid-template-columns: minmax(5.5rem, 0.7fr) minmax(0, 1fr);
+    gap: 0.75rem;
+    overflow-wrap: anywhere;
+  }
+  .operations-page td[data-label]::before {
+    content: attr(data-label);
+    color: #53655e;
+    font-weight: 700;
+  }
+  .operations-page table:has(thead th:nth-child(5):last-child) td::before {
+    color: #53655e;
+    font-weight: 700;
+  }
+  .operations-page table:has(thead th:nth-child(5):last-child) td:nth-child(1)::before { content: 'Timestamp'; }
+  .operations-page table:has(thead th:nth-child(5):last-child) td:nth-child(2)::before { content: 'User'; }
+  .operations-page table:has(thead th:nth-child(5):last-child) td:nth-child(3)::before { content: 'Action'; }
+  .operations-page table:has(thead th:nth-child(5):last-child) td:nth-child(4)::before { content: 'Resource'; }
+  .operations-page table:has(thead th:nth-child(5):last-child) td:nth-child(5)::before { content: 'Result'; }
   .actions {
     margin-top: 0.5rem;
   }
