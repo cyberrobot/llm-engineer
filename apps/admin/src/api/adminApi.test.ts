@@ -797,6 +797,37 @@ describe('Operations API', () => {
     expect(fetchMock.mock.calls.every((call)=>call[1]?.credentials==='include'&&call[1]?.signal===signal)).toBe(true);
   });
 
+  it('accepts the backend health serialization when a null diagnostic code is omitted', async () => {
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({
+      generated_at:timestamp,status:'healthy',checks:[{
+        name:'postgres',status:'healthy',required:true,latency_ms:5,checked_at:timestamp,
+      }],
+    })));
+
+    await expect(createAdminApi(base).getOperationsHealth()).resolves.toEqual({
+      generatedAt:timestamp,status:'healthy',checks:[{
+        name:'postgres',status:'healthy',required:true,latencyMs:5,code:null,checkedAt:timestamp,
+      }],
+    });
+  });
+
+  it.each([
+    ['explicit null code',{name:'postgres',status:'healthy',required:true,latency_ms:5,code:null,checked_at:timestamp},null],
+    ['supported diagnostic code',{name:'postgres',status:'degraded',required:true,latency_ms:5,code:'dependency_timeout',checked_at:timestamp},'dependency_timeout'],
+  ])('accepts a health check with %s',async(_scenario,check,expectedCode)=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({generated_at:timestamp,status:check.status,checks:[check]})));
+    await expect(createAdminApi(base).getOperationsHealth()).resolves.toMatchObject({checks:[{code:expectedCode}]});
+  });
+
+  it.each([
+    ['unknown code',{name:'postgres',status:'unhealthy',required:true,latency_ms:5,code:'unknown_failure',checked_at:timestamp}],
+    ['unexpected property',{name:'postgres',status:'healthy',required:true,latency_ms:5,checked_at:timestamp,detail:'private'}],
+    ['missing required field',{name:'postgres',status:'healthy',latency_ms:5,checked_at:timestamp}],
+  ])('rejects a health check with %s',async(_scenario,check)=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({generated_at:timestamp,status:'healthy',checks:[check]})));
+    await expect(createAdminApi(base).getOperationsHealth()).rejects.toMatchObject({kind:'invalid_response'});
+  });
+
   it('uses exact cache mutation contracts, URL encoding, and validates success', async () => {
     const fetchMock=vi.fn().mockImplementation(async()=>Response.json(action));vi.stubGlobal('fetch',fetchMock);const api=createAdminApi(base);
     await api.clearCache(); await api.clearCacheRegion('assistant region'); await api.invalidateCacheKey({region:'assistant',key:'private key'});

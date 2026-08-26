@@ -481,8 +481,14 @@ function operationsRootFrom(value: unknown): OperationsRoot {
 function operationsHealthFrom(value: unknown): OperationsHealthDetail {
   if (!isRecord(value) || !hasExactKeys(value,['generated_at','status','checks']) || !validTimestamp(value.generated_at) || !oneOf(value.status,healthStates) || !Array.isArray(value.checks)) throw new AdminApiError('invalid_response');
   const checks=value.checks.map((item):DependencyHealth=>{
-    if (!isRecord(item) || !hasExactKeys(item,['name','status','required','latency_ms','code','checked_at']) || typeof item.name !== 'string' || !/^[a-z0-9_-]{1,64}$/.test(item.name) || !oneOf(item.status,healthStates) || typeof item.required !== 'boolean' || !nonNegativeInteger(item.latency_ms) || !(item.code===null||oneOf(item.code,healthCodes)) || !validTimestamp(item.checked_at)) throw new AdminApiError('invalid_response');
-    return {name:item.name,status:item.status,required:item.required,latencyMs:item.latency_ms,code:item.code,checkedAt:item.checked_at};
+    const requiredKeys=['name','status','required','latency_ms','checked_at'];
+    if (!isRecord(item) || !(hasExactKeys(item,requiredKeys)||hasExactKeys(item,[...requiredKeys,'code'])) || typeof item.name !== 'string' || !/^[a-z0-9_-]{1,64}$/.test(item.name) || !oneOf(item.status,healthStates) || typeof item.required !== 'boolean' || !nonNegativeInteger(item.latency_ms) || !validTimestamp(item.checked_at)) throw new AdminApiError('invalid_response');
+    let code:DependencyHealthCode|null=null;
+    if ('code' in item) {
+      if (!(item.code===null||oneOf(item.code,healthCodes))) throw new AdminApiError('invalid_response');
+      code=item.code;
+    }
+    return {name:item.name,status:item.status,required:item.required,latencyMs:item.latency_ms,code,checkedAt:item.checked_at};
   });
   return {generatedAt:value.generated_at,status:value.status,checks};
 }

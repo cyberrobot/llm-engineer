@@ -32,19 +32,19 @@ function errorText(error: unknown, missing = 'The requested record was not found
   return 'The request could not be completed.';
 }
 
-function useLoad<T>(loader: (signal: AbortSignal) => Promise<T>) {
+function useLoad<T>(loader: (signal: AbortSignal) => Promise<T>, onSuccess?: (data: T) => void) {
   const auth = useAuth();
   const [state, setState] = useState<{ data?: T; error?: unknown; loading: boolean }>({ loading: true });
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    loader(controller.signal).then((data) => setState({ data, loading: false })).catch((error) => {
+    loader(controller.signal).then((data) => { onSuccess?.(data); setState({ data, loading: false }); }).catch((error) => {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       if (error instanceof AdminApiError && error.kind === 'unauthenticated') return auth.sessionExpired();
       setState((current) => ({ data: current.data, error, loading: false }));
     });
     return () => controller.abort();
-  }, [attempt, auth, loader]);
+  }, [attempt, auth, loader, onSuccess]);
   return { ...state, refresh: () => { setState((current) => ({ data: current.data, loading: true })); setAttempt((value) => value + 1); } };
 }
 
@@ -119,12 +119,13 @@ export function OperationsHealthPage() {
 export function OperationsCachePage() {
   const auth = useAuth();
   const loader = useCallback((signal: AbortSignal) => auth.api.listCacheRegions(signal), [auth.api]);
-  const state = useLoad<CacheRegion[]>(loader);
   const [confirmation, setConfirmation] = useState<Confirmation>();
   const [pending, setPending] = useState(false);
   const [mutationError, setMutationError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [uncertain, setUncertain] = useState(false);
+  const reconciled = useCallback(() => setUncertain(false), []);
+  const state = useLoad<CacheRegion[]>(loader, reconciled);
   const [region, setRegion] = useState('');
   const [key, setKey] = useState('');
   const trigger = (title: string, description: ReactNode, confirmLabel: string, action: () => Promise<unknown>, success: string) => {
@@ -141,7 +142,7 @@ export function OperationsCachePage() {
     }});
   };
   const invalidate = (event: FormEvent) => { event.preventDefault(); if (!region || !key || uncertain) return; const submittedRegion=region, submittedKey=key; trigger('Invalidate cache key', <>Invalidate the entered key in <strong>{submittedRegion}</strong>? The key value will not be retained after success.</>, 'Invalidate key', () => auth.api.invalidateCacheKey({region:submittedRegion,key:submittedKey}), 'Cache key invalidated. Cache state refreshed.'); };
-  return <section className="operations-page"><div className="page-intro"><p>Statistics only; cache values are never exposed.</p><button disabled={state.loading} onClick={() => { setUncertain(false); state.refresh(); }}>Refresh cache</button></div>
+  return <section className="operations-page"><div className="page-intro"><p>Statistics only; cache values are never exposed.</p><button disabled={state.loading} onClick={state.refresh}>Refresh cache</button></div>
     <LoadState {...state} hasData={Boolean(state.data)} retry={state.refresh}/>{notice && <p className="success" role="status" tabIndex={-1}>{notice}</p>}{uncertain && <p className="alert" role="alert">The connection was lost after submission, so the outcome is unknown. Refresh authoritative cache state before trying another change.</p>}
     {state.data && <>{state.data.length === 0 ? <section className="empty"><h2>No cache regions</h2><p>No cache regions are registered.</p></section> : <div className="table-wrap"><table><caption className="visually-hidden">Registered cache region statistics</caption><thead><tr><th>Region</th><th>Entries</th><th>Memory</th><th>Hits</th><th>Misses</th><th>Hit ratio</th><th>Action</th></tr></thead><tbody>{state.data.map((item)=><tr key={item.name}><th scope="row">{item.name}</th><td data-label="Entries">{metric(item.entries)}</td><td data-label="Memory">{metric(item.estimatedMemoryBytes,' bytes')}</td><td data-label="Hits">{metric(item.hitCount)}</td><td data-label="Misses">{metric(item.missCount)}</td><td data-label="Hit ratio">{item.hitRatio===null?'Not available':`${(item.hitRatio*100).toFixed(1)}%`}</td><td data-label="Action"><button className="danger-link" disabled={pending||uncertain} onClick={()=>{const selected=item.name;trigger('Clear cache region',<>Clear every entry in the <strong>{selected}</strong> cache region?</>,'Clear region',()=>auth.api.clearCacheRegion(selected),`${selected} cache region cleared. Cache state refreshed.`)}}>Clear {item.name}</button></td></tr>)}</tbody></table></div>}
       <section className="operations-card mutation-panel"><h2>Invalidate one key</h2><form className="operation-form" onSubmit={invalidate}><label>Region<select value={region} required onChange={(e)=>setRegion(e.target.value)}><option value="">Select a region</option>{state.data.map((item)=><option key={item.name}>{item.name}</option>)}</select></label><label>Cache key<input value={key} required maxLength={512} onChange={(e)=>setKey(e.target.value)}/></label><button disabled={pending||uncertain}>Review invalidation</button></form></section>
@@ -150,10 +151,11 @@ export function OperationsCachePage() {
 }
 
 export function OperationsMaintenancePage() {
-  const auth=useAuth(); const loader=useCallback((signal:AbortSignal)=>auth.api.getMaintenance(signal),[auth.api]); const state=useLoad<MaintenanceState>(loader);
+  const auth=useAuth(); const loader=useCallback((signal:AbortSignal)=>auth.api.getMaintenance(signal),[auth.api]);
   const messageRef=useRef<HTMLTextAreaElement>(null); const [confirmation,setConfirmation]=useState<Confirmation>(); const [pending,setPending]=useState(false); const [mutationError,setMutationError]=useState<string>(); const [notice,setNotice]=useState<string>(); const [uncertain,setUncertain]=useState(false);
+  const reconciled=useCallback(()=>setUncertain(false),[]); const state=useLoad<MaintenanceState>(loader,reconciled);
   const prepare=(enabled:boolean)=>{const submittedMessage=enabled?(messageRef.current?.value||null):null;setMutationError(undefined);setConfirmation({title:enabled?'Enable maintenance mode':'Disable maintenance mode',description:enabled?'Enable maintenance mode and change production-facing application behaviour?':'Disable maintenance mode and restore normal application behaviour?',confirmLabel:enabled?'Enable maintenance':'Disable maintenance',run:async()=>{if(pending)return;setPending(true);try{await auth.api.updateMaintenance({enabled,message:submittedMessage});setConfirmation(undefined);setNotice(`Maintenance mode ${enabled?'enabled':'disabled'}. Authoritative state refreshed.`);setUncertain(false);state.refresh()}catch(error){if(error instanceof AdminApiError&&error.kind==='unauthenticated')return auth.sessionExpired();if(error instanceof AdminApiError&&error.kind==='network'){setUncertain(true);setConfirmation(undefined)}else setMutationError(errorText(error))}finally{setPending(false)}}})};
-  return <section className="operations-page"><div className="page-intro"><p>Maintenance enforcement remains owned by the backend.</p><button disabled={state.loading} onClick={()=>{setUncertain(false);state.refresh()}}>Refresh state</button></div><LoadState {...state} hasData={Boolean(state.data)} retry={state.refresh}/>{notice&&<p className="success" role="status">{notice}</p>}{uncertain&&<p className="alert" role="alert">The connection was lost after submission, so maintenance state may have changed. Refresh authoritative state before another update.</p>}
+  return <section className="operations-page"><div className="page-intro"><p>Maintenance enforcement remains owned by the backend.</p><button disabled={state.loading} onClick={state.refresh}>Refresh state</button></div><LoadState {...state} hasData={Boolean(state.data)} retry={state.refresh}/>{notice&&<p className="success" role="status">{notice}</p>}{uncertain&&<p className="alert" role="alert">The connection was lost after submission, so maintenance state may have changed. Refresh authoritative state before another update.</p>}
   {state.data&&<section className="operations-card"><h2>Current state: {state.data.enabled?'Enabled':'Disabled'}</h2><dl><dt>Message</dt><dd>{state.data.message??'No message'}</dd><dt>Updated</dt><dd>{dateTime(state.data.updatedAt)}</dd><dt>Updated by</dt><dd>{state.data.updatedBy??'Not reported'}</dd></dl><div className="operation-form"><label>Maintenance message<textarea key={`${state.data.updatedAt}:${state.data.enabled}`} ref={messageRef} maxLength={500} disabled={pending} defaultValue={state.data.message??''}/></label>{state.data.enabled?<button disabled={pending||uncertain} onClick={()=>prepare(false)}>Review disable</button>:<button className="danger" disabled={pending||uncertain} onClick={()=>prepare(true)}>Review enable</button>}</div></section>}
   {confirmation&&<ConfirmationDialog confirmation={confirmation} pending={pending} error={mutationError} onClose={()=>!pending&&setConfirmation(undefined)}/>}</section>;
 }
