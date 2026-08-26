@@ -1,0 +1,58 @@
+name: Assistant widget
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'packages/assistant-widget/**'
+      - '.changeset/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/test-assistant-widget.yml'
+      - '.github/workflows/publish-assistant-widget.yml'
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Assistant widget
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Require a Changeset for package changes
+        if: >-
+          github.event_name == 'pull_request' &&
+          (github.event.pull_request.head.repo.full_name != github.repository ||
+          github.event.pull_request.head.ref != 'changeset-release/main')
+        run: npx changeset status --since=${{ github.event.pull_request.base.sha }}
+
+      - name: Lint widget
+        run: npm run lint --workspace @redmoor/assistant-widget
+
+      - name: Test widget
+        run: npm run test --workspace @redmoor/assistant-widget
+
+      - name: Build widget
+        run: npm run build --workspace @redmoor/assistant-widget
+
+      - name: Verify package
+        run: npm run pack:verify --workspace @redmoor/assistant-widget
