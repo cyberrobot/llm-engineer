@@ -1,6 +1,6 @@
 {
   "name": "@redmoor/assistant-widget",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "Inline React assistant widget for the Redmoor public assistant API.",
   "license": "UNLICENSED",
