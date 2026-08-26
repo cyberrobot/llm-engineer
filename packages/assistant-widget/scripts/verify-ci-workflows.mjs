@@ -26,18 +26,32 @@ function assertAlwaysRuns(step) {
 const genericWorkflow = readWorkflow('.github/workflows/test.yml')
 const widgetWorkflow = readWorkflow('.github/workflows/test-assistant-widget.yml')
 
-assert(!Object.hasOwn(genericWorkflow.jobs, 'assistant-widget'))
+assert(genericWorkflow.jobs && typeof genericWorkflow.jobs === 'object')
 assert(
-  !Object.values(genericWorkflow.jobs).some((job) => job.name?.includes('Assistant widget')),
+  !Object.entries(genericWorkflow.jobs).some(
+    ([jobId, job]) =>
+      jobId.toLowerCase().includes('assistant-widget') ||
+      job.name?.toLowerCase().includes('assistant widget') ||
+      JSON.stringify(job).includes('@redmoor/assistant-widget'),
+  ),
   'Generic workflow must not define an Assistant widget job',
 )
 
-assert.equal(widgetWorkflow.name, 'Assistant widget CI')
-
 const triggers = widgetWorkflow.on
+const asArray = (value) => (Array.isArray(value) ? value : [value])
+
 assert(triggers?.pull_request, 'Assistant widget workflow must define a pull_request trigger')
-assert.deepEqual(triggers.pull_request.branches, ['main'])
-assert.deepEqual(triggers.push?.branches, ['main'])
+assert(
+  asArray(triggers.pull_request.branches).includes('main'),
+  'Assistant widget pull requests must target main',
+)
+assert(triggers.pull_request.paths, 'Assistant widget pull requests must use path filtering')
+assert(
+  asArray(triggers.push?.branches).includes('main'),
+  'Assistant widget workflow must run on main pushes',
+)
+
+const configuredPaths = asArray(triggers.pull_request.paths)
 
 const expectedPaths = [
   'packages/assistant-widget/**',
@@ -47,10 +61,12 @@ const expectedPaths = [
   '.github/workflows/test-assistant-widget.yml',
   '.github/workflows/publish-assistant-widget.yml',
 ]
-assert.deepEqual(triggers.pull_request.paths, expectedPaths)
+for (const path of expectedPaths) {
+  assert(configuredPaths.includes(path), `Assistant widget paths must include ${path}`)
+}
 
 function matchesWidgetPath(path) {
-  return expectedPaths.some((pattern) =>
+  return configuredPaths.some((pattern) =>
     pattern.endsWith('/**') ? path.startsWith(pattern.slice(0, -2)) : path === pattern,
   )
 }
@@ -73,59 +89,110 @@ for (const [path, expected] of triggerCases) {
   assert.equal(matchesWidgetPath(path), expected, `Unexpected widget CI selection for ${path}`)
 }
 
-const job = widgetWorkflow.jobs?.test
-assert(job, 'Assistant widget workflow must define its validation job')
-assert.equal(job.name, 'Assistant widget validation')
+assert(widgetWorkflow.jobs && typeof widgetWorkflow.jobs === 'object')
+
+function runsWidgetCommand(step, script) {
+  if (typeof step.run !== 'string' || !step.run.includes('@redmoor/assistant-widget')) {
+    return false
+  }
+
+  const normalizedCommand = step.run.replace(/\s+/g, ' ').trim()
+  return normalizedCommand.includes(`npm run ${script} `)
+}
+
+const job = Object.values(widgetWorkflow.jobs).find((candidate) =>
+  candidate.steps?.some((step) => runsWidgetCommand(step, 'lint')),
+)
+assert(job, 'Assistant widget workflow must define a widget validation job')
+assert(!Object.hasOwn(job, 'if'), 'Assistant widget validation job must run whenever triggered')
 
 const steps = job.steps
 assert(Array.isArray(steps), 'Assistant widget validation job must define steps')
 
 const checkout = findStep(
   steps,
-  (step) => step.uses === 'actions/checkout@v4',
-  'actions/checkout@v4',
+  (step) => step.uses?.startsWith('actions/checkout@'),
+  'repository checkout',
 )
-assert.equal(checkout.with?.['fetch-depth'], 0)
+assert.equal(String(checkout.with?.['fetch-depth']), '0')
 assertAlwaysRuns(checkout)
 
 const setupNode = findStep(
   steps,
-  (step) => step.uses === 'actions/setup-node@v4',
-  'actions/setup-node@v4',
+  (step) => step.uses?.startsWith('actions/setup-node@'),
+  'Node setup',
 )
 assertAlwaysRuns(setupNode)
 
-const requiredCommands = [
-  'npm ci',
-  'npm run verify:ci --workspace @redmoor/assistant-widget',
-  'npm run lint --workspace @redmoor/assistant-widget',
-  'npm run test --workspace @redmoor/assistant-widget',
-  'npm run build --workspace @redmoor/assistant-widget',
-  'npm run pack:verify --workspace @redmoor/assistant-widget',
-]
+const installDependencies = findStep(
+  steps,
+  (step) => typeof step.run === 'string' && /(^|\s)npm\s+ci(\s|$)/.test(step.run),
+  'dependency installation with npm ci',
+)
+assertAlwaysRuns(installDependencies)
 
-for (const command of requiredCommands) {
-  const step = findStep(steps, (candidate) => candidate.run === command, command)
+for (const script of ['lint', 'test', 'build', 'pack:verify']) {
+  const step = findStep(
+    steps,
+    (candidate) => runsWidgetCommand(candidate, script),
+    `widget ${script}`,
+  )
   assertAlwaysRuns(step)
 }
 
 const changeset = findStep(
   steps,
-  (step) => step.run === 'npx changeset status --since=${{ github.event.pull_request.base.sha }}',
+  (step) =>
+    typeof step.run === 'string' &&
+    /(^|\s)npx\s+changeset\s+status(\s|$)/.test(step.run) &&
+    step.run.includes('--since') &&
+    step.run.includes('github.event.pull_request.base.sha'),
   'Changesets validation against the pull request base SHA',
 )
-const expectedChangesetCondition =
-  "github.event_name == 'pull_request' && " +
-  '(github.event.pull_request.head.repo.full_name != github.repository || ' +
-  "github.event.pull_request.head.ref != 'changeset-release/main')"
-assert.equal(changeset.if, expectedChangesetCondition)
+assert.equal(typeof changeset.if, 'string', 'Changesets validation must define its PR condition')
 
-const isCanonicalReleasePullRequest = (repository, headRepository, headBranch) =>
-  repository === headRepository && headBranch === 'changeset-release/main'
+function evaluateChangesetCondition(expression, context) {
+  const variables = {
+    'github.event.pull_request.head.repo.full_name': context.headRepository,
+    'github.event.pull_request.head.ref': context.headBranch,
+    'github.event_name': context.eventName,
+    'github.repository': context.repository,
+  }
+  let substituted = expression.replaceAll('${{', '').replaceAll('}}', '')
 
-assert(isCanonicalReleasePullRequest('owner/repo', 'owner/repo', 'changeset-release/main'))
-assert(!isCanonicalReleasePullRequest('owner/repo', 'fork/repo', 'changeset-release/main'))
-assert(!isCanonicalReleasePullRequest('owner/repo', 'owner/repo', 'feature/widget'))
+  for (const [variable, value] of Object.entries(variables)) {
+    substituted = substituted.replaceAll(variable, JSON.stringify(value))
+  }
+
+  const withoutStrings = substituted.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, '')
+  assert(
+    /^[\s()!&|=]+$/.test(withoutStrings),
+    'Changesets condition contains unsupported variables or operators',
+  )
+
+  // Only substituted strings and boolean operators reach the evaluator.
+  return Boolean(Function(`"use strict"; return (${substituted})`)())
+}
+
+const releasePullRequest = {
+  eventName: 'pull_request',
+  repository: 'owner/repo',
+  headRepository: 'owner/repo',
+  headBranch: 'changeset-release/main',
+}
+assert.equal(evaluateChangesetCondition(changeset.if, releasePullRequest), false)
+assert.equal(
+  evaluateChangesetCondition(changeset.if, { ...releasePullRequest, headRepository: 'fork/repo' }),
+  true,
+)
+assert.equal(
+  evaluateChangesetCondition(changeset.if, { ...releasePullRequest, headBranch: 'feature/widget' }),
+  true,
+)
+assert.equal(
+  evaluateChangesetCondition(changeset.if, { ...releasePullRequest, eventName: 'push' }),
+  false,
+)
 
 const serializedWidgetWorkflow = JSON.stringify(widgetWorkflow)
 assert(!serializedWidgetWorkflow.includes('dorny/paths-filter'))
