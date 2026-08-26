@@ -113,6 +113,12 @@ the unpublished widget through `changeset publish` and creates the standard
 it does not bypass the Release PR state or quality gates. Select the `main` branch when dispatching
 the workflow manually; the release job does not run for any other branch or tag.
 
+Pull-request CI requires a Changeset for ordinary widget changes. The canonical same-repository
+`changeset-release/main` PR is exempt from that one check because `changeset version` has already
+consumed its pending Changesets into the version and changelog. Widget lint, tests, build, and
+package verification still run on the Release PR. A fork cannot obtain this exemption merely by
+using the same branch name.
+
 Before the first release, configure npm trusted publishing for `@redmoor/assistant-widget` with the
 GitHub repository owner and name, workflow filename `publish-assistant-widget.yml`, environment
 `npm`, and permission to run `npm publish`. Create the matching GitHub environment. In GitHub, open

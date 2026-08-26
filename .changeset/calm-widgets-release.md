@@ -2,4 +2,4 @@
 "@redmoor/assistant-widget": patch
 ---
 
-Document the repository permission required for reliable Release PR creation and safe workflow recovery.
+Make Release PR validation compatible with consumed Changesets and document reliable workflow recovery.
