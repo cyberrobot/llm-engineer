@@ -7,6 +7,7 @@ import { AssistantFormPage, AssistantsPage } from './features/assistants/Assista
 import { AssistantBehaviourPage, AssistantPreviewPage } from './features/assistants/AssistantBehaviour';
 import { DashboardPage } from './features/dashboard/Dashboard';
 import { KnowledgeEntryPage, KnowledgeSourceCreatePage, KnowledgeSourceDetailPage, KnowledgeSourcesPage } from './features/knowledge-sources/KnowledgeSources';
+import { AuditDetailPage, AuditPage, OperationalJobPage, OperationalJobsPage, OperationsCachePage, OperationsHealthPage, OperationsMaintenancePage, OperationsPage } from './features/operations/Operations';
 
 function Protected() {
   const auth = useAuth();
@@ -42,6 +43,14 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<Protected />}>
         <Route path="/admin" element={<DashboardPage />} />
+        <Route path="/admin/operations" element={<OperationsPage />} />
+        <Route path="/admin/operations/health" element={<OperationsHealthPage />} />
+        <Route path="/admin/operations/cache" element={<OperationsCachePage />} />
+        <Route path="/admin/operations/maintenance" element={<OperationsMaintenancePage />} />
+        <Route path="/admin/operations/jobs" element={<OperationalJobsPage />} />
+        <Route path="/admin/operations/jobs/:jobId" element={<OperationalJobPage />} />
+        <Route path="/admin/operations/audit" element={<AuditPage />} />
+        <Route path="/admin/operations/audit/:entryId" element={<AuditDetailPage />} />
         <Route
           path="/admin/assistants"
           element={<AssistantsPage />}

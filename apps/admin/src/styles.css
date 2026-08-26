@@ -584,6 +584,40 @@ dialog::backdrop {
 .attention-panel p {
   margin-bottom: 0;
 }
+.operations-page { display: grid; gap: 1.25rem; max-width: 76rem; }
+.operations-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr)); gap: 1rem; }
+.operations-card { background: #fff; border: 1px solid #d7dfda; border-radius: 0.7rem; padding: 1.25rem; min-width: 0; }
+.operations-card h2 { margin-top: 0; }
+.operations-card dl,
+.detail dl { display: grid; grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr); gap: 0.55rem 1rem; }
+.operations-card dt,
+.detail dt { font-weight: 700; }
+.operations-card dd,
+.detail dd { margin: 0; overflow-wrap: anywhere; }
+.health-healthy { border-left: 0.45rem solid #2f8052; }
+.health-degraded,
+.health-unknown { border-left: 0.45rem solid #c98b2d; }
+.health-unhealthy { border-left: 0.45rem solid #9a2f24; }
+.status-failed,
+.status-failure,
+.status-unhealthy { color: #8a281f; }
+.status-degraded,
+.status-unknown,
+.status-started,
+.status-queued { color: #765517; }
+.status-healthy,
+.status-success,
+.status-completed { color: #176442; }
+.operation-form { display: grid; gap: 1rem; max-width: 40rem; }
+.operation-form label,
+.operation-filters label { display: grid; gap: 0.4rem; font-weight: 700; }
+.operation-form input,
+.operation-form select,
+.operation-form textarea,
+.operation-filters input,
+.operation-filters select { min-width: 0; padding: 0.65rem; border: 1px solid #80918b; border-radius: 0.4rem; }
+.danger-zone { border-left: 0.45rem solid #9a2f24; }
+.metadata { white-space: pre-wrap; overflow-wrap: anywhere; background: #f4f6f3; padding: 1rem; border-radius: 0.4rem; }
 @media (max-width: 700px) {
   .login-page {
     grid-template-columns: 1fr;
@@ -619,6 +653,8 @@ dialog::backdrop {
     align-items: flex-start;
     flex-direction: column;
   }
+  .operations-card dl,
+  .detail dl { grid-template-columns: 1fr; }
   .pagination {
     align-items: flex-start;
     flex-direction: column;

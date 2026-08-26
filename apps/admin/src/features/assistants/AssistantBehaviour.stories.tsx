@@ -3,6 +3,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { expect, userEvent, within } from 'storybook/test';
 import {
   AdminApiError,
+  createAdminApi,
   type AdminApi,
   type AssistantBehaviour,
   type AssistantDetail,
@@ -39,6 +40,7 @@ const behaviour: AssistantBehaviour = {
 };
 
 const base: AdminApi = {
+  ...createAdminApi(''),
   currentUser: async () => ({ id: 'admin', email: 'admin@example.test', role: 'administrator' }),
   login: async () => ({ id: 'admin', email: 'admin@example.test', role: 'administrator' }),
   logout: async () => undefined,
