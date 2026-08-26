@@ -1,4 +1,4 @@
-name: Assistant widget
+name: Assistant widget CI
 
 on:
   pull_request:
@@ -17,7 +17,7 @@ on:
 
 jobs:
   test:
-    name: Assistant widget
+    name: Assistant widget validation
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -37,6 +37,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify widget CI workflow
+        run: npm run verify:ci --workspace @redmoor/assistant-widget
 
       - name: Require a Changeset for package changes
         if: >-
