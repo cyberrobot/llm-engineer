@@ -9,8 +9,35 @@ on:
       - main
 
 jobs:
+  detect-assistant-widget-changes:
+    name: Detect assistant widget changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      affected: ${{ steps.filter.outputs.affected }}
+
+    steps:
+      - name: Check for widget-relevant changes
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            affected:
+              - 'packages/assistant-widget/**'
+              - '.changeset/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/test.yml'
+              - '.github/workflows/publish-assistant-widget.yml'
+
   assistant-widget:
     name: Assistant widget
+    needs: detect-assistant-widget-changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.detect-assistant-widget-changes.outputs.affected == 'true'
     runs-on: ubuntu-latest
 
     steps:
