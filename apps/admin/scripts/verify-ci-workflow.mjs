@@ -3,12 +3,25 @@ import { readFileSync } from 'node:fs'
 
 import { load } from 'js-yaml'
 
+import {
+  ADMIN_RELEVANT_PATHS,
+  evaluateRequiredGate,
+  matchesAdminPath,
+} from './run-required-ci-gate.mjs'
+
 const repositoryRoot = new URL('../../../', import.meta.url)
 const workflowPath = '.github/workflows/test-admin.yml'
-const source = readFileSync(new URL(workflowPath, repositoryRoot), 'utf8')
-const workflow = load(source)
+const requiredWorkflowPath = '.github/workflows/test-admin-required.yml'
 
-assert(workflow && typeof workflow === 'object', `${workflowPath} must contain a YAML object`)
+function readWorkflow(relativePath) {
+  const source = readFileSync(new URL(relativePath, repositoryRoot), 'utf8')
+  const parsed = load(source)
+  assert(parsed && typeof parsed === 'object', `${relativePath} must contain a YAML object`)
+  return parsed
+}
+
+const workflow = readWorkflow(workflowPath)
+
 assert.equal(workflow.name, 'Admin UI CI')
 
 const asArray = (value) => (Array.isArray(value) ? value : [value])
@@ -26,6 +39,7 @@ const expectedPaths = [
   'package.json',
   'package-lock.json',
   '.github/workflows/test-admin.yml',
+  '.github/workflows/test-admin-required.yml',
 ]
 const pullRequestPaths = asArray(triggers.pull_request.paths)
 const pushPaths = asArray(triggers.push.paths)
@@ -33,11 +47,7 @@ const pushPaths = asArray(triggers.push.paths)
 assert.deepEqual(pullRequestPaths, expectedPaths, 'Admin pull-request paths must match verified inputs')
 assert.deepEqual(pushPaths, expectedPaths, 'Admin push paths must match verified inputs')
 
-function matchesAdminPath(path) {
-  return pullRequestPaths.some((pattern) =>
-    pattern.endsWith('/**') ? path.startsWith(pattern.slice(0, -2)) : path === pattern,
-  )
-}
+assert.deepEqual(ADMIN_RELEVANT_PATHS, expectedPaths, 'Required gate paths must match Admin workflow paths')
 
 const triggerCases = [
   ['apps/admin/src/App.tsx', true],
@@ -48,6 +58,7 @@ const triggerCases = [
   ['package-lock.json', true],
   ['packages/assistant-widget/src/AssistantWidget.tsx', true],
   ['.github/workflows/test-admin.yml', true],
+  ['.github/workflows/test-admin-required.yml', true],
   ['apps/backend/operations/api/router.py', false],
   ['docs/example.md', false],
   ['.codex/tasks/example.md', false],
@@ -119,5 +130,59 @@ for (const script of ['test', 'lint', 'typecheck', 'build', 'build-storybook']) 
 const serializedWorkflow = JSON.stringify(workflow)
 assert(!serializedWorkflow.includes('dorny/paths-filter'))
 assert(!serializedWorkflow.includes('steps.filter'))
+
+const requiredWorkflow = readWorkflow(requiredWorkflowPath)
+assert.equal(requiredWorkflow.name, 'Admin UI CI required gate')
+assert(requiredWorkflow.on?.pull_request, 'Required Admin gate must run for pull requests')
+assert(
+  asArray(requiredWorkflow.on.pull_request.branches).includes('main'),
+  'Required Admin gate pull requests must target main',
+)
+assert(
+  !Object.hasOwn(requiredWorkflow.on.pull_request, 'paths'),
+  'Required Admin gate must be present on Admin-relevant and unrelated pull requests',
+)
+assert(!requiredWorkflow.on.push, 'Required Admin gate is a pull-request merge condition only')
+
+const requiredJob = requiredWorkflow.jobs?.required
+assert(requiredJob, 'Required Admin workflow must define the required job')
+assert.equal(requiredJob.name, 'Admin UI CI / Required')
+assert(!Object.hasOwn(requiredJob, 'if'), 'Required Admin gate must run on every pull request')
+assert.notEqual(requiredJob['continue-on-error'], true, 'Required Admin gate failures must block merging')
+assert.equal(requiredJob.permissions?.actions, 'read')
+assert.equal(requiredJob.permissions?.['pull-requests'], 'read')
+
+const gateStep = requiredJob.steps?.find(
+  (step) => step.run === 'node apps/admin/scripts/run-required-ci-gate.mjs',
+)
+assert(gateStep, 'Required Admin gate must execute its verified gate implementation')
+assertRequiredStep(gateStep)
+
+for (const [path, expected] of triggerCases) {
+  const result = evaluateRequiredGate([path])
+  assert.equal(
+    result.outcome,
+    expected ? 'waiting' : 'not_applicable',
+    `Unexpected required Admin gate selection for ${path}`,
+  )
+}
+
+const relevantPaths = ['apps/admin/src/App.tsx']
+assert.equal(
+  evaluateRequiredGate(relevantPaths, { status: 'completed', conclusion: 'success' }).outcome,
+  'success',
+)
+for (const conclusion of ['failure', 'cancelled', 'skipped', 'timed_out', 'neutral', 'stale']) {
+  assert.equal(
+    evaluateRequiredGate(relevantPaths, { status: 'completed', conclusion }).outcome,
+    'failure',
+    `Required Admin gate must fail when validation concludes ${conclusion}`,
+  )
+}
+assert.equal(
+  evaluateRequiredGate(relevantPaths, { status: 'in_progress', conclusion: null }).outcome,
+  'waiting',
+)
+assert.equal(evaluateRequiredGate(relevantPaths).outcome, 'waiting')
 
 console.log('Admin CI workflow configuration is valid.')

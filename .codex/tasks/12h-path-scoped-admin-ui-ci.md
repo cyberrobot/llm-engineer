@@ -83,12 +83,17 @@ build-storybook
 
 The presence of the Admin CI status must mean the full Admin validation pipeline actually ran.
 
-Do not add:
+Do not add to the real Admin validation workflow:
 
 - runtime path-detection jobs
 - no-op Admin jobs
 - detector-only status checks
 - always-successful placeholder jobs
+
+If GitHub cannot conditionally require the path-scoped validation check, an always-present required
+gate may evaluate the changed paths. That gate must be named accurately, report unrelated changes as
+not applicable, and succeed for an Admin-relevant change only after the real Admin validation run for
+the same pull request and commit succeeds.
 
 Relevant symbols
 
@@ -134,7 +139,7 @@ Do not:
 - remove type checking
 - remove production build verification
 - remove Storybook build verification
-- add runtime relevance filtering
+- add runtime relevance filtering to the real Admin validation workflow
 - add a separate Admin affected job
 - add a no-op success check for unrelated PRs
 - run Admin CI for all repository changes without verifying that this is necessary
@@ -187,7 +192,10 @@ npm run build-storybook
 
 from the Admin workspace.
 
-When a pull request cannot affect Admin, the Admin workflow must not run and an Admin-specific status check must not appear.
+When a pull request cannot affect Admin, the real Admin validation workflow must not run and its
+validation status must not appear. An always-present required gate may appear when repository ruleset
+semantics require it, but it must report that Admin validation is not applicable rather than claiming
+that validation ran.
 
 The desired semantics are:
 
@@ -196,8 +204,9 @@ Admin-relevant PR
 → complete Admin validation runs
 → validation must pass
 Unrelated PR
-→ Admin CI absent
-→ no misleading successful Admin check
+→ real Admin validation absent
+→ required Admin gate reports not applicable
+→ no misleading successful Admin validation check
 
 This should follow the same domain-specific CI model already established for the Assistant Widget.
 
@@ -443,7 +452,19 @@ Admin CI exists and must pass where repository protection supports this.
 Unrelated PR:
 Admin CI does not exist and merge is not blocked waiting for it.
 
-Do not add a fake success job merely to satisfy globally required-check semantics.
+Do not add a fake Admin validation success job merely to satisfy globally required-check semantics.
+When conditional requirements are unavailable, use a narrowly scoped **Admin UI CI / Required** gate
+that is always present. For an Admin-relevant pull request, it must depend on the real validation run
+for the same pull request and commit and fail when that run fails, is cancelled, is unexpectedly
+skipped, or never completes. For an unrelated pull request, it may succeed only with an explicit
+not-applicable result.
+
+The resulting required semantics are:
+
+- Relevant Admin change: **Admin validation** is present, the full pipeline runs, validation must
+  pass, and merging is blocked if it fails.
+- Irrelevant change: **Admin validation** is absent, **Admin UI CI / Required** reports not
+  applicable, and merging is not blocked waiting for the absent validation workflow.
 
 If the repository cannot conditionally require path-scoped workflows, document the exact repository configuration implication rather than reintroducing misleading checks.
 
@@ -543,8 +564,13 @@ Acceptance criteria
 - The Admin workflow is separate from the Assistant Widget workflow.
 - The Admin workflow is separate from backend validation.
 - Pull-request Admin CI is scoped using workflow-level paths:.
-- No runtime Admin relevance detector is introduced.
+- No runtime relevance detector is introduced inside the real Admin validation workflow.
 - No no-op Admin success job is introduced.
+- The always-present **Admin UI CI / Required** gate reports unrelated changes as not applicable.
+- For Admin-relevant changes, the required gate cannot succeed unless the real validation run for
+  the same pull request and commit succeeds.
+- Failed, cancelled, unexpectedly skipped, missing, or timed-out Admin validation fails the required
+  gate.
 - An Admin source change triggers Admin CI.
 - An Admin test change triggers Admin CI.
 - An Admin Storybook change triggers Admin CI.

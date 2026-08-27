@@ -88,10 +88,17 @@ therefore trigger both widget and Admin validation, with each check covering its
 Unrelated backend, documentation, and task-only pull requests do not receive a misleading Admin
 status check.
 
-The path-scoped Admin check must not be configured as a universally required repository check:
-unrelated pull requests intentionally do not create it. The repository-wide `Backend tests` and
-`Storybook tests` checks remain separate; the latter exercises the RAG UI Storybook interactions,
-whereas Admin CI verifies that the Admin Storybook builds successfully.
+The real path-scoped **Admin validation** check must not be configured as a universally required
+repository check because unrelated pull requests intentionally do not create it. Instead, repository
+rulesets must require **Admin UI CI / Required**. That gate is present on every pull request: it
+reports Admin validation as not applicable when the changed-file evaluation finds no Admin-impacting
+path, and otherwise succeeds only after the real Admin validation workflow for the same pull request
+and commit succeeds. Failed, cancelled, unexpectedly skipped, missing, or timed-out validation cannot
+satisfy the gate.
+
+The repository-wide `Backend tests` and `Storybook tests` checks remain separate; the latter exercises
+the RAG UI Storybook interactions, whereas Admin CI verifies that the Admin Storybook builds
+successfully.
 
 ## Troubleshooting
 

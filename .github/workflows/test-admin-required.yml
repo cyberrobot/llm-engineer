@@ -1,0 +1,34 @@
+name: Admin UI CI required gate
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  required:
+    name: Admin UI CI / Required
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Require Admin validation when applicable
+        run: node apps/admin/scripts/run-required-ci-gate.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ADMIN_GATE_REPOSITORY: ${{ github.repository }}
+          ADMIN_GATE_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          ADMIN_GATE_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ADMIN_GATE_API_URL: ${{ github.api_url }}
