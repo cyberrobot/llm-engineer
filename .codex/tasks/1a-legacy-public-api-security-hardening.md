@@ -20,13 +20,13 @@ Task specification:
 
 Dependencies:
 
-- Existing administrator authentication and authorization under apps/backend/admin_auth/
-- Existing administrative API boundary under /api/admin/\*\*
-- Existing Operations administration API, including /api/admin/operations/audit
 - Existing supported anonymous Assistant boundary:
   - POST /public/assistants/{assistant_slug}/chat
 - Existing public-chat abuse protection, request limits, origin handling and maintenance-mode integration
-- Existing apps/rag-ui functionality must remain working
+- Existing apps/rag-ui backend contracts:
+  - POST /rag-chat
+  - GET /audit-logs
+- Existing X-API-Key protection for POST /ingest/upload
 
 Read first
 
@@ -44,40 +44,24 @@ If changing packages/assistant-widget:
 
 Primary change area
 
-Backend API exposure and security boundaries:
+Backend API exposure and route cleanup:
 
 - apps/backend/assistant/api/routes.py
 - apps/backend/assistant/api/ingest.py
-- apps/backend/assistant/api/audit.py
-- apps/backend/assistant/api/rag.py
 - apps/backend/assistant/api/chat.py
 - apps/backend/operations/infrastructure/maintenance.py
 
-RAG UI migration where required:
+Contract-preservation files that must remain unchanged from main:
 
-- apps/rag-ui/src/services/getAuditLogs.ts
-- apps/rag-ui/src/services/getRagChat.ts
-- callers of those services
-- relevant RAG UI tests
+- apps/backend/assistant/api/rag.py
+- apps/backend/assistant/api/audit.py
+- apps/rag-ui/**
 
 Potential widget cleanup:
 
 - packages/assistant-widget/src/api/
 - packages/assistant-widget/src/publicChatClient.ts
 - relevant tests and generated API types
-
-Canonical implementation examples
-
-Administrator authentication/authorization:
-
-- apps/backend/admin_auth/dependencies.py
-  - require_authenticated_administrator
-  - require_administrator_role
-- existing authenticated /api/admin/\*\* routes
-
-Administrative Operations API:
-
-- apps/backend/operations/api/administration_router.py
 
 Supported anonymous chat:
 
@@ -86,19 +70,19 @@ Supported anonymous chat:
 - apps/backend/assistant/application/public_chat_protection.py
 - packages/assistant-widget/src/publicChatClient.ts
 
-Relevant symbols
+Relevant endpoints
 
-Legacy/public endpoints:
+Routes owned by PR 1A:
 
-- POST /ingest
-- GET /chunks
-- GET /audit-logs
-- POST /rag-chat
 - POST /assistant/chat
-
-Related endpoint requiring review:
-
+- GET /chunks
+- POST /ingest
 - POST /ingest/upload
+
+Temporary legacy exceptions not owned by PR 1A:
+
+- POST /rag-chat
+- GET /audit-logs
 
 Supported anonymous endpoint:
 
@@ -106,107 +90,102 @@ Supported anonymous endpoint:
 
 Known consumers:
 
-- apps/rag-ui/src/services/getAuditLogs.ts
-- apps/rag-ui/src/services/getRagChat.ts
-- packages/assistant-widget/src/api/assistant.ts
-
-Relevant backend symbols:
-
-- assistant.api.ingest.ingest
-- assistant.api.ingest.upload_pdf
-- assistant.api.ingest.get_chunks
-- assistant.api.audit.get_logs
-- assistant.api.rag.rag_chat_endpoint
-- assistant.api.chat.chat
-- assistant.api.routes.router
-- admin_auth.dependencies.require_authenticated_administrator
-- admin_auth.dependencies.require_administrator_role
-- MaintenanceModeMiddleware.\_LEGACY_PUBLIC_ASSISTANT_PATHS
+- apps/rag-ui/src/services/getAuditLogs.ts -> GET /audit-logs
+- apps/rag-ui/src/services/getRagChat.ts -> POST /rag-chat
+- packages/assistant-widget/src/api/assistant.ts -> POST /assistant/chat
 
 Expected change surface
 
 Expected:
 
-- remove unsupported legacy public routes
-- migrate supported RAG UI calls away from insecure legacy endpoints
-- introduce authenticated administrative RAG-chat transport only if needed to preserve rag-ui
-- reuse the existing Operations audit API for RAG UI audit browsing
-- administrator authentication/authorization dependencies
-- route registration cleanup
-- maintenance middleware cleanup
-- backend regression/security tests
-- RAG UI service and behavioural tests
-- widget cleanup where obsolete /assistant/chat client code remains
-- documentation/OpenAPI cleanup
+- remove POST /assistant/chat
+- remove GET /chunks
+- remove raw-text POST /ingest
+- preserve POST /ingest/upload and its existing credential boundary
+- preserve POST /rag-chat exactly as it exists on main
+- preserve GET /audit-logs exactly as it exists on main
+- preserve apps/rag-ui without any source, URL, authentication, or test changes
+- clean route registration only for endpoints removed by this PR
+- clean maintenance middleware only for endpoints removed by this PR
+- add focused backend regression/security tests
+- remove obsolete widget /assistant/chat client code where it is not part of the supported package surface
+- update OpenAPI and documentation for the routes actually removed
 
-No database migration should be required.
+No database migration, new administrator endpoint, new authentication mechanism, or RAG UI change is required.
 
 Excluded areas
 
 Do not:
 
-- break or remove apps/rag-ui
-- remove RAG UI functionality as a shortcut for closing the backend endpoint
-- require RAG UI to use the anonymous public Assistant API when its functionality is administrative/internal
-- redesign RAG UI screens
-- redesign retrieval, ranking, embeddings or prompts
+- change any file under apps/rag-ui
+- add authentication or session handling to RAG UI
+- migrate any RAG UI endpoint
+- remove or modify POST /rag-chat
+- remove or modify GET /audit-logs
+- create a replacement /admin/** RAG-chat endpoint
+- create a replacement /admin/** RAG audit endpoint
+- add an auth wrapper, compatibility alias, new rate limit, or new API contract for /rag-chat or /audit-logs
+- partially secure or migrate the retained RAG UI routes
+- redesign retrieval, ranking, embeddings, prompts, or RAG response data
 - redesign ingestion orchestration
 - redesign public Assistant chat
-- replace the administrator authentication system
-- create another API-key/JWT/session system for administrative browser access
-- treat rate limiting, CORS, Origin validation or maintenance mode as authorization
-- retain insecure endpoints simply for backward compatibility
+- replace or extend the administrator authentication system
+- introduce another API-key, JWT, cookie, or session system
 - introduce database migrations
 - alter Assistant or Knowledge Source persistence models
+- retire apps/rag-ui in this PR
 
 Unknowns Codex must verify
 
-Before changing production code, trace current consumers of each affected endpoint.
+Before changing production code, verify:
 
-Verify:
-
-1. Every caller of:
-   - /ingest
-   - /chunks
-   - /audit-logs
-   - /rag-chat
-   - /assistant/chat
-2. Which RAG UI screens/functions consume:
-   - getAuditLogs
-   - getRagChat
-3. The authentication model currently available to apps/rag-ui.
-4. Whether RAG UI already has an authenticated API client/helper that can call /api/admin/\*\*.
-5. Whether /api/admin/operations/audit provides all data required by the current RAG UI audit screen.
-6. Whether /rag-chat has an authenticated equivalent already implemented under another route.
-7. Whether packages/assistant-widget/src/api/assistant.ts is still reachable from the package public surface.
-8. Whether /ingest/upload remains a supported integration and therefore must retain its existing credential boundary.
-9. Whether /ingest and /chunks have any supported callers that cannot already use modern Knowledge Source or administrative APIs.
+1. packages/assistant-widget/src/api/assistant.ts is not reachable from the supported package surface and exists only for /assistant/chat before removing it.
+2. /ingest and /chunks have no active supported consumers.
+3. /ingest/upload remains a supported integration and retains its existing X-API-Key boundary.
+4. The /rag-chat and /audit-logs implementations, registrations, OpenAPI operations, middleware behaviour, and RAG UI consumers match origin/main before and after the change.
+5. apps/rag-ui has no diff against origin/main.
 
 ⸻
 
 Objective
 
-Close the remaining legacy/public API security holes without regressing apps/rag-ui.
+Remove only the unused legacy public endpoints that PR 1A can safely retire without changing a backend contract currently used by apps/rag-ui. The RAG UI routes and behaviour must remain exactly as they were before PR #86.
 
-The backend must have explicit and intentional HTTP security boundaries.
-
-The supported anonymous Assistant boundary remains:
+The supported anonymous Assistant-widget boundary remains:
 
 POST /public/assistants/{assistant_slug}/chat
 
-The following legacy endpoints must no longer remain anonymously accessible:
+PR 1A removes:
 
-POST /ingest
-GET /chunks
-GET /audit-logs
-POST /rag-chat
-POST /assistant/chat
+- POST /assistant/chat
+- GET /chunks
+- POST /ingest
 
-Where a legacy endpoint is still required by apps/rag-ui, migrate that capability to an authenticated administrative API and update RAG UI to consume it in the same PR.
+PR 1A preserves:
 
-Do not solve this by adding more rate limiting.
+- POST /rag-chat exactly as it exists on main
+- GET /audit-logs exactly as it exists on main
+- POST /ingest/upload with its existing explicit X-API-Key protection
 
-Authentication and authorization must be explicit and enforced server-side.
+PR 1A must not add administrator authentication to RAG UI, migrate RAG UI to /admin/**, or create any replacement RAG administrator contract.
+
+⸻
+
+Temporary RAG UI legacy exception
+
+POST /rag-chat and GET /audit-logs are explicit temporary exceptions to the security-hardening objective because they are active backend dependencies of apps/rag-ui.
+
+This exception is intentionally narrow:
+
+- Both routes remain legacy technical debt.
+- Both routes remain candidates for removal.
+- Their removal or partial hardening is out of scope for PR 1A.
+- A separate future PR will remove apps/rag-ui and then remove these backend endpoints together. If a migration is chosen instead of retirement, that migration must be deliberate and complete within that separate PR.
+- PR 1A must keep their routes, request and response contracts, rate limits, maintenance behaviour, and observable errors unchanged from main.
+- PR 1A must not add another rate limit, authentication wrapper, compatibility alias, administrator replacement, response adapter, or new API contract for either route.
+- Retaining these routes in PR 1A is not an endorsement of them as a supported long-term public API.
+
+The two routes must be removed only in the same deliberate change that retires or migrates their RAG UI consumers.
 
 ⸻
 
@@ -214,7 +193,7 @@ Current architecture
 
 Supported anonymous Assistant API
 
-POST /public/assistants/{assistant_slug}/chat is the deliberate anonymous Assistant boundary.
+POST /public/assistants/{assistant_slug}/chat is the deliberate anonymous Assistant boundary for the published widget.
 
 It already owns:
 
@@ -228,249 +207,129 @@ It already owns:
 - maintenance-mode behaviour
 - safe public errors
 
-It must remain anonymous.
-
-Administrative API
-
-The backend already provides authenticated administrative APIs through /api/admin/\*\*.
-
-Administrator authentication uses the existing opaque administrator session model and reusable authentication/role dependencies.
-
-Operations already exposes authenticated audit browsing through:
-
-/api/admin/operations/audit
+It must remain anonymous and unchanged.
 
 RAG UI
 
-apps/rag-ui currently depends on legacy backend routes.
-
-In particular:
+apps/rag-ui currently calls:
 
 apps/rag-ui/src/services/getAuditLogs.ts
 -> GET /audit-logs
+
 apps/rag-ui/src/services/getRagChat.ts
 -> POST /rag-chat
 
-These routes therefore cannot simply disappear without corresponding RAG UI migration.
-
-RAG UI must remain functional after this PR.
+PR 1A must not change those files, URLs, request options, response handling, or authentication behaviour.
 
 Legacy API surface
 
-The Assistant router still mounts older endpoints:
+The Assistant router on main mounts:
 
-POST /ingest
-GET /chunks
-GET /audit-logs
-POST /rag-chat
-POST /assistant/chat
+- POST /ingest — rate limited, unauthenticated
+- GET /chunks — unauthenticated
+- GET /audit-logs — rate limited, unauthenticated, temporarily retained for RAG UI
+- POST /rag-chat — rate limited, unauthenticated, temporarily retained for RAG UI
+- POST /assistant/chat — unauthenticated
+- POST /ingest/upload — separate X-API-Key authentication
 
-Current security is inconsistent:
-
-- /ingest — rate limited, unauthenticated
-- /chunks — unauthenticated
-- /audit-logs — rate limited, unauthenticated
-- /rag-chat — rate limited, unauthenticated
-- /assistant/chat — unauthenticated
-- /ingest/upload — separate X-API-Key authentication
-
-Maintenance middleware also explicitly recognises /assistant/chat and /rag-chat as legacy public Assistant paths.
+Maintenance middleware recognises /assistant/chat and /rag-chat as legacy public Assistant paths on main. After PR 1A, /assistant/chat may be removed from that classification because its route is removed. /rag-chat must retain its main-branch maintenance behaviour while it remains a live RAG UI route.
 
 ⸻
 
 Required implementation
 
-1. Define the final endpoint disposition
+1. Final endpoint disposition
 
-Every target route must finish this PR in one of these states:
+The final matrix is mandatory:
 
-REMOVED
-ADMIN_REPLACEMENT
+| Endpoint | PR 1A disposition |
+| --- | --- |
+| POST /assistant/chat | REMOVE |
+| GET /chunks | REMOVE |
+| POST /ingest | REMOVE |
+| POST /rag-chat | KEEP AS-IS TEMPORARILY |
+| GET /audit-logs | KEEP AS-IS TEMPORARILY |
+| POST /ingest/upload | KEEP EXISTING AUTHENTICATED BEHAVIOUR |
+| POST /public/assistants/{assistant_slug}/chat | KEEP SUPPORTED ANONYMOUS BEHAVIOUR |
 
-There must be no PUBLIC_LEGACY state.
-
-Document the final matrix in the completion report.
+There is no administrator replacement endpoint in PR 1A.
 
 2. Remove /assistant/chat
 
-Remove:
-
-POST /assistant/chat
-
-It must not remain an alternative anonymous chat endpoint.
-
-The supported public contract is:
-
-POST /public/assistants/{assistant_slug}/chat
+Remove POST /assistant/chat. It must not remain as an alternative anonymous chat endpoint and must not redirect or alias to another route.
 
 Remove obsolete:
 
 - backend route registration
 - controller code if unused
-- OpenAPI contract
+- OpenAPI operation
 - package client references
 - generated type references
-- tests asserting /assistant/chat availability
+- tests asserting availability
 - documentation
-- maintenance middleware special casing
+- maintenance middleware special casing for /assistant/chat
 
-Do not redirect or alias it to the public Assistant endpoint.
+The supported public widget contract remains POST /public/assistants/{assistant_slug}/chat.
 
-3. Migrate RAG UI /rag-chat usage before removing the legacy route
+3. Preserve /rag-chat unchanged
 
-apps/rag-ui must continue supporting its existing RAG-chat workflow.
+POST /rag-chat is out of scope for removal, migration, or hardening in PR 1A.
 
-Do not remove /rag-chat until its RAG UI consumer has a secure replacement.
+Do not:
 
-If no authenticated equivalent currently exists, add the smallest suitable administrator endpoint, for example under the existing admin Assistant namespace:
+- edit apps/backend/assistant/api/rag.py
+- change its route registration
+- change its request or response schema
+- change its rate limit or maintenance-mode treatment
+- add authentication or authorization
+- create an /admin/** replacement
+- change apps/rag-ui/src/services/getRagChat.ts or its callers
+- add RAG UI tests for a replacement transport
 
-POST /api/admin/assistant/rag-chat
+4. Preserve /audit-logs unchanged
 
-or another existing admin namespace that matches repository conventions after inspection.
+GET /audit-logs is out of scope for removal, migration, or hardening in PR 1A.
 
-The exact path must follow existing backend routing conventions rather than this example blindly.
+Do not:
 
-Requirements:
-
-- administrator authentication required
-- appropriate administrator authorization required
-- reuse the existing RAG application/service logic
-- do not duplicate retrieval or generation behaviour
-- preserve the RAG UI response contract where practical
-- do not trust caller-provided user_role as authorization
-- update getRagChat.ts to call the authenticated endpoint
-- ensure browser credentials/session behaviour follows existing admin-client conventions
-
-Once RAG UI has migrated:
-
-- remove public /rag-chat
-- remove legacy middleware classification
-- remove obsolete route tests/docs
-
-4. Migrate RAG UI audit browsing to Operations API
-
-Remove:
-
-GET /audit-logs
-
-RAG UI currently uses it and therefore must be migrated first.
-
-Prefer the existing canonical endpoint:
-
-GET /api/admin/operations/audit
-
-Update:
-
-apps/rag-ui/src/services/getAuditLogs.ts
-
-to consume the authenticated Operations API.
-
-Adapt response mapping inside the service boundary if the Operations response differs from the legacy RAG UI model.
-
-Do not make UI components directly understand multiple backend representations.
-
-Preserve existing user-visible audit browsing behaviour as far as the canonical API supports it.
-
-If required fields are genuinely missing from the Operations endpoint, extend the existing administrative API only where necessary rather than restoring /audit-logs.
-
-After migration:
-
-- remove /audit-logs
-- remove legacy route tests
-- remove legacy documentation
+- edit apps/backend/assistant/api/audit.py
+- change its route registration
+- change its request or response behaviour
+- change its existing rate limit
+- add authentication or authorization
+- create an /admin/** replacement or Operations audit extension
+- change apps/rag-ui/src/services/getAuditLogs.ts or its callers
+- add RAG UI tests for a replacement transport
 
 5. Remove /chunks
 
-Remove unauthenticated:
+Remove unauthenticated GET /chunks. Raw retrieval chunks are not a public API.
 
-GET /chunks
+Preserve underlying application functionality if backend internals use it. Do not create a replacement endpoint in PR 1A.
 
-Raw retrieval chunks are not a public API.
+6. Remove raw-text /ingest
 
-Preserve underlying application functionality if backend internals use it.
+Remove unauthenticated POST /ingest. Prefer the existing modern Knowledge Source and ingestion APIs for supported workflows.
 
-Do not create a replacement endpoint unless an existing supported UI/workflow demonstrably requires raw chunk browsing.
-
-Any future browser-accessible replacement must be authenticated under /api/admin/\*\*.
-
-6. Close /ingest
-
-Remove unauthenticated:
-
-POST /ingest
-
-unless inspection proves an active supported integration still requires equivalent raw-text ingestion.
-
-Prefer modern Knowledge Source/ingestion APIs.
-
-If equivalent functionality remains required for administrators:
-
-- expose it through an authenticated existing admin namespace
-- reuse existing ingestion application services
-- remove public /ingest
-
-Do not add another static API key solely to preserve this path.
+Do not add another static API key or administrator replacement solely to preserve this path.
 
 7. Preserve /ingest/upload security
 
-POST /ingest/upload currently has explicit X-API-Key protection.
+POST /ingest/upload is distinct from raw-text POST /ingest and remains supported with its existing X-API-Key protection.
 
-It is not equivalent to the unsecured /ingest route.
+Preserve:
 
-Codex must verify whether this endpoint is still supported.
+- explicit credential validation
+- rejection of missing and invalid credentials before file persistence or ingestion submission where practical
+- valid-key behaviour
+- idempotency behaviour
+- existing request and response contract
 
-If retained:
+Do not make this route public while removing POST /ingest from the same module.
 
-- preserve explicit credential validation
-- ensure missing/invalid credentials are rejected before file persistence or ingestion submission where practical
-- preserve idempotency behaviour
-- document why this integration remains
+8. Preserve public Assistant chat
 
-If obsolete and unused:
-
-- it may be removed
-
-Do not accidentally make it public while refactoring ingest.py.
-
-8. Use the existing administrator auth system
-
-Any new browser-accessible replacement required by RAG UI must use existing administrator authentication.
-
-Reuse:
-
-- administrator session cookies
-- require_authenticated_administrator
-- require_administrator_role
-- existing admin error contracts/client handling
-
-Do not introduce:
-
-- X-Admin-Key
-- another JWT implementation
-- another cookie/session format
-- browser-stored secrets
-- frontend-only authorization
-
-9. Preserve RAG UI behaviour
-
-This PR must leave apps/rag-ui functional.
-
-At minimum preserve:
-
-- sending a RAG chat request
-- displaying the resulting reply
-- displaying associated source/evaluation data currently relied upon by the UI
-- loading audit records
-- existing loading/error behaviour
-- authentication failure handling consistent with authenticated administrative APIs
-
-Do not remove a RAG UI feature because its old backend endpoint was insecure.
-
-10. Preserve public Assistant chat
-
-Do not add administrator authentication to:
-
-POST /public/assistants/{assistant_slug}/chat
+Do not add administrator authentication to POST /public/assistants/{assistant_slug}/chat.
 
 Preserve:
 
@@ -484,244 +343,189 @@ Preserve:
 - maintenance behaviour
 - safe error mapping
 
-11. Clean route registration
+9. Clean route registration narrowly
 
-Update:
+Update apps/backend/assistant/api/routes.py only as needed to remove routes owned by PR 1A.
 
-apps/backend/assistant/api/routes.py
+Keep the rag and audit routers mounted. Do not delete or replace their controller modules.
 
-Remove obsolete router imports and registrations.
+Delete dead API modules only when every route in the module is removed by this PR.
 
-Delete dead API modules if they no longer contain supported routes.
+10. Clean maintenance middleware narrowly
 
-Do not leave unreachable compatibility controllers.
+Remove /assistant/chat from legacy public-path classification after its route is retired.
 
-12. Clean maintenance middleware
-
-Remove:
-
-\_LEGACY_PUBLIC_ASSISTANT_PATHS = frozenset({"/assistant/chat", "/rag-chat"})
-
-after those legacy public routes have been retired.
+Keep /rag-chat classified and handled exactly as it is on main while the temporary RAG UI exception remains live.
 
 Maintenance mode must continue covering:
 
-/public/assistants/{assistant_slug}/chat
+- /public/assistants/{assistant_slug}/chat
+- /rag-chat
 
-Authenticated admin RAG endpoints must not be treated as anonymous public traffic.
+11. Clean widget legacy client code
 
-13. Clean widget legacy client code
+Verify whether packages/assistant-widget/src/api/assistant.ts exists only for /assistant/chat and is not exposed from the supported package surface.
 
-Verify whether:
-
-packages/assistant-widget/src/api/assistant.ts
-
-is obsolete.
-
-If it exists only for /assistant/chat:
+If obsolete:
 
 - remove it
-- remove obsolete tests
-- remove schema/type dependencies that are no longer needed
+- remove its obsolete tests
+- remove schema/type dependencies used only by it
 - ensure no public package export exposes it
 
-The supported widget must continue using:
+The supported widget must continue using packages/assistant-widget/src/publicChatClient.ts and POST /public/assistants/{assistant_slug}/chat.
 
-packages/assistant-widget/src/publicChatClient.ts
+12. Update OpenAPI and documentation
 
-14. Update OpenAPI and documentation
+The removed /assistant/chat, /chunks, and raw-text /ingest operations must disappear from OpenAPI.
 
-Removed routes must disappear from OpenAPI.
+/rag-chat and /audit-logs must remain in OpenAPI unchanged from main.
 
-Document the final security model:
+Documentation must distinguish:
 
-/public/** explicitly anonymous where designed
-/api/admin/** authenticated/authorized
-legacy routes removed
+- POST /public/assistants/{assistant_slug}/chat as the supported anonymous Assistant-widget boundary
+- POST /ingest/upload as an explicitly credentialed integration
+- /assistant/chat, /chunks, and raw-text /ingest as removed
+- /rag-chat and /audit-logs as temporary legacy exceptions pending a separate RAG UI retirement or migration PR
 
-Do not describe removed routes as supported compatibility endpoints.
+Do not describe /rag-chat or /audit-logs as newly secured, migrated, or long-term supported contracts.
 
-15. Rate limiting is not authorization
+13. Rate limiting is not authorization
 
-Rate limiting may remain as defence-in-depth.
+Do not treat the existing rate limits on /rag-chat or /audit-logs as a security remediation delivered by PR 1A. Their unchanged retention is a documented scope exception, not a claim that they are adequately authorized.
 
-It must never be the only protection for:
-
-- ingestion
-- audit retrieval
-- raw chunks
-- internal RAG chat
-- legacy Assistant chat
+Do not add another rate limit or other partial mitigation to either retained route in this PR.
 
 ⸻
 
 Acceptance criteria
 
-- Task is implemented on pr1a-legacy-public-api-security-hardening.
+- Task is implemented on 1a-legacy-public-api-security-hardening.
 - Governing spec is .codex/tasks/1a-legacy-public-api-security-hardening.md.
-- apps/rag-ui remains functional.
-- RAG UI no longer calls unauthenticated /rag-chat.
-- RAG UI RAG chat uses an explicitly authenticated administrative backend endpoint.
-- RAG UI no longer calls /audit-logs.
-- RAG UI audit browsing uses /api/admin/operations/audit or an extension of that canonical administrative contract.
-- No RAG UI feature is removed merely because its original endpoint was insecure.
-- POST /assistant/chat is removed.
-- POST /rag-chat is removed after RAG UI migration.
-- GET /audit-logs is removed after RAG UI migration.
-- GET /chunks is removed from the public API.
-- POST /ingest is removed from the public API.
-- Removed routes are absent from OpenAPI.
-- Any new RAG UI backend replacement uses existing administrator session authentication.
-- Any new RAG UI backend replacement enforces server-side authorization.
-- Unauthorized requests do not invoke retrieval, LLM/provider calls, audit reads or ingestion work.
-- Caller-provided user_role cannot be used to elevate privileges.
-- /ingest/upload does not become less secure.
-- If /ingest/upload remains, missing and invalid credentials remain rejected.
-- POST /public/assistants/{assistant_slug}/chat remains anonymous.
+- POST /assistant/chat is removed and absent from OpenAPI.
+- GET /chunks is removed and absent from OpenAPI.
+- Raw-text POST /ingest is removed and absent from OpenAPI.
+- POST /ingest/upload retains its existing explicit credential protection and contract.
+- Missing and invalid /ingest/upload credentials are rejected before persistence or ingestion work.
+- POST /public/assistants/{assistant_slug}/chat remains the supported anonymous Assistant-widget boundary.
 - Existing public-chat abuse and maintenance protections remain passing.
-- Public Assistant widget chat continues using /public/assistants/{assistant_slug}/chat.
+- The public Assistant widget continues using /public/assistants/{assistant_slug}/chat.
 - The widget does not ship a supported /assistant/chat client.
-- Maintenance middleware no longer treats /assistant/chat or /rag-chat as public paths.
+- POST /rag-chat remains unchanged from origin/main, including registration, behaviour, rate limiting, OpenAPI, and maintenance treatment.
+- GET /audit-logs remains unchanged from origin/main, including registration, behaviour, rate limiting, and OpenAPI.
+- apps/rag-ui is unchanged from origin/main and continues to use /rag-chat and /audit-logs.
+- No RAG UI authentication or session behaviour is introduced.
+- No /admin/** replacement endpoint is introduced for RAG UI chat or RAG audit history.
 - No new authentication library or parallel credential system is introduced.
 - No database migration is introduced.
-- Existing Assistant, Knowledge Source, Operations and administrator-auth functionality remains passing.
-- Documentation reflects the final route boundaries.
+- Existing Assistant, Knowledge Source, ingestion, public-chat, and widget functionality remains passing.
+- Documentation records /rag-chat and /audit-logs as temporary legacy exceptions pending a separate RAG UI retirement or migration PR.
+
+⸻
 
 Tests to add or update
 
-Backend security regression
+Backend route security regression
 
-Add:
+Add or update apps/backend/tests/test_legacy_api_security.py to prove:
 
-apps/backend/tests/test_legacy_api_security.py
+- POST /assistant/chat returns 404 and is absent from OpenAPI.
+- GET /chunks returns 404 and is absent from OpenAPI.
+- POST /ingest returns 404 and is absent from OpenAPI.
+- POST /rag-chat retains its pre-PR HTTP behaviour and remains present in OpenAPI.
+- GET /audit-logs retains its pre-PR HTTP behaviour and remains present in OpenAPI.
+- POST /ingest/upload remains present in OpenAPI and retains its pre-PR authenticated behaviour.
 
-Verify removed routes are not mounted:
+The /rag-chat and /audit-logs assertions are contract-preservation regressions, not tests for a replacement endpoint.
 
-POST /assistant/chat
-POST /rag-chat
-GET /audit-logs
-GET /chunks
-POST /ingest
+RAG and audit regression
 
-Assert both HTTP behaviour and OpenAPI absence where appropriate.
+Run the existing focused tests for RAG application behaviour and audit retrieval. Add only the smallest backend route-level assertions needed to prove the main-branch contracts remain mounted and unchanged.
 
-Authenticated RAG endpoint
+Do not add:
 
-Add focused tests for the RAG UI replacement endpoint.
-
-Cover:
-
-- unauthenticated request
-- invalid session
-- authenticated non-authorized administrator if roles differ
-- authorized administrator
-- malformed request
-- retrieval/provider failure mapping
-- denied requests do not invoke RAG/provider work
-- response contains the fields needed by apps/rag-ui
-
-Use existing RAG application services rather than reproducing them in tests/controllers.
-
-Administrative audit regression
-
-Update/run:
-
-apps/backend/tests/test_operations_administration_api.py
-
-Cover the audit response fields consumed by RAG UI.
+- authenticated RAG administrator endpoint tests
+- administrator RAG audit endpoint tests
+- RAG UI authentication tests
+- RAG UI service tests for new URLs or credentials
 
 Public Assistant regression
 
 Run:
 
-apps/backend/tests/test_public_chat.py
-apps/backend/tests/test_public_chat_protection.py
+- apps/backend/tests/test_public_chat.py
+- apps/backend/tests/test_public_chat_protection.py
+- packages/assistant-widget/src/publicChatClient.test.ts
+- packages/assistant-widget/src/AssistantWidget.public.test.tsx
 
-Ensure the public Assistant API remains intentionally anonymous.
+Ensure the public Assistant API remains intentionally anonymous and the widget continues to use it.
 
 Ingestion regression
 
 Run/update:
 
-apps/backend/tests/test_ingest_upload.py
-apps/backend/tests/test_ingestion_api.py
-apps/backend/tests/test_ingestion_jobs_api.py
+- apps/backend/tests/test_ingest_upload.py
+- apps/backend/tests/test_ingestion_api.py
+- apps/backend/tests/test_ingestion_jobs_api.py
 
-If /ingest/upload remains, test:
+For /ingest/upload, prove:
 
-- missing API key
-- invalid API key
-- valid API key
-- rejected request creates no ingestion job
-
-RAG UI tests
-
-Update tests around:
-
-apps/rag-ui/src/services/getRagChat.ts
-apps/rag-ui/src/services/getAuditLogs.ts
-
-Verify:
-
-- correct authenticated admin paths
-- credentials/session are included according to existing client conventions
-- response adaptation preserves the service’s existing consumer contract
-- auth failures surface correctly
-- server failures surface correctly
-
-Run relevant rendered RAG UI tests to prove chat and audit functionality still work.
+- missing API key is rejected
+- invalid API key is rejected
+- valid API key retains pre-PR behaviour
+- a rejected request creates no upload file or ingestion job
+- idempotency behaviour is unchanged
 
 Widget regression
 
-If legacy widget API code changes, run/update:
+If obsolete widget /assistant/chat code is removed, run/update:
 
-packages/assistant-widget/src/publicChatClient.test.ts
-packages/assistant-widget/src/AssistantWidget.public.test.tsx
-packages/assistant-widget/src/api/assistant.test.ts
+- packages/assistant-widget/src/publicChatClient.test.ts
+- packages/assistant-widget/src/AssistantWidget.public.test.tsx
+- package build and consumer verification
 
-Delete obsolete tests only when the corresponding obsolete production client is removed.
+Delete obsolete tests only when their corresponding obsolete production client is removed. Do not weaken assertions.
 
-Do not weaken assertions.
+⸻
 
 Verification commands
 
-# Confirm endpoint/client references after migration.
+# Confirm the three removed endpoints have no live controller/client references and retained routes remain.
 
 rg -n '(/assistant/chat|/rag-chat|/audit-logs|/chunks|/ingest)' \
- apps packages README.md docs
+  apps packages README.md docs
 
-# Backend focused security tests.
+# Prove PR 1A does not alter RAG UI or its backend contracts.
+
+git diff origin/main...HEAD -- apps/rag-ui
+git diff origin/main...HEAD -- \
+  apps/backend/assistant/api/rag.py \
+  apps/backend/assistant/api/audit.py
+
+Both diffs must be empty. The governing specification may document this deferred work, but no production, UI, or test file in those paths may change.
+
+# Backend focused route and security tests.
 
 cd apps/backend
 pytest tests/test_legacy_api_security.py -q
-
-# New authenticated RAG endpoint test file; use the actual final filename.
-
-pytest tests/test\_*rag*admin\*.py -q
 pytest \
- tests/test_operations_administration_api.py \
- tests/test_admin_authentication_api.py \
- -q
+  tests/test_rag_chat.py \
+  tests/test_audit.py \
+  -q
 pytest \
- tests/test_public_chat.py \
- tests/test_public_chat_protection.py \
- -q
+  tests/test_public_chat.py \
+  tests/test_public_chat_protection.py \
+  -q
 pytest \
- tests/test_ingest_upload.py \
- tests/test_ingestion_api.py \
- tests/test_ingestion_jobs_api.py \
- -q
+  tests/test_ingest_upload.py \
+  tests/test_ingestion_api.py \
+  tests/test_ingestion_jobs_api.py \
+  -q
 cd ../..
 
 # Broader backend suite.
 
 npm run test:api
-
-# RAG UI must remain healthy.
-
-npm run lint --workspace @ai-discovery-assistant/rag-ui
-npm run build --workspace @ai-discovery-assistant/rag-ui
-npm run test:storybook
 
 # Widget checks when affected.
 
@@ -729,23 +533,23 @@ npm run lint --workspace @redmoor/assistant-widget
 npm test --workspace @redmoor/assistant-widget
 npm run pack:verify --workspace @redmoor/assistant-widget
 
+# No RAG UI build, lint, service-test, authentication, or migration work is introduced by PR 1A.
+# Its unchanged state is established by the empty origin/main diff above.
+
 # Broader affected workspace tests.
 
 npm test
 
-Before completion, verify the final route matrix explicitly:
+Before completion, report the final route matrix explicitly:
 
-Endpoint Final boundary
-POST /assistant/chat REMOVED
-POST /rag-chat REMOVED
-GET /audit-logs REMOVED
-GET /chunks REMOVED
-POST /ingest REMOVED
-POST /ingest/upload RETAINED + EXPLICIT AUTH or REMOVED
-POST /api/admin/.../rag-chat ADMIN AUTHENTICATED
-GET /api/admin/operations/audit ADMIN AUTHENTICATED
-POST /public/assistants/{assistant_slug}/chat PUBLIC
+| Endpoint | Final boundary |
+| --- | --- |
+| POST /assistant/chat | REMOVED |
+| GET /chunks | REMOVED |
+| POST /ingest | REMOVED |
+| POST /rag-chat | TEMPORARILY RETAINED UNCHANGED FOR RAG UI |
+| GET /audit-logs | TEMPORARILY RETAINED UNCHANGED FOR RAG UI |
+| POST /ingest/upload | RETAINED WITH EXISTING X-API-KEY AUTHENTICATION |
+| POST /public/assistants/{assistant_slug}/chat | SUPPORTED ANONYMOUS ASSISTANT-WIDGET BOUNDARY |
 
-The exact authenticated RAG-chat route name must follow the repository’s existing administrative route conventions after inspection.
-
-Do not mark this task complete if apps/rag-ui loses either its RAG chat or audit browsing functionality.
+Do not mark this task complete if apps/rag-ui, apps/backend/assistant/api/rag.py, or apps/backend/assistant/api/audit.py differs from origin/main, or if any RAG UI replacement administrator endpoint has been introduced.
