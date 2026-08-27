@@ -14,7 +14,7 @@
     "build-storybook": "storybook build"
   },
   "dependencies": {
-    "@redmoor/assistant-widget": "^0.1.1",
+    "@redmoor/assistant-widget": "^0.2.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-router-dom": "^6.22.0"
