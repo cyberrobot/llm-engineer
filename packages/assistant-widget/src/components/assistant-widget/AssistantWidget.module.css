@@ -45,6 +45,14 @@
   box-sizing: border-box;
 }
 
+.configurationStatus {
+  min-height: 18rem;
+  padding: 1.5rem;
+  background: #fbfaf7;
+  color: #5d665f;
+  box-sizing: border-box;
+}
+
 .messages {
   display: flex;
   flex-direction: column;

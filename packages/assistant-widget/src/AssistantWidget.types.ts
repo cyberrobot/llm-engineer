@@ -9,6 +9,7 @@ export interface AssistantWidgetProps {
   assistantId: string
   /** Public API origin or base path, without the assistant endpoint. */
   apiBaseUrl: string
+  /** Explicit presentation overrides take precedence over published server configuration. */
   assistantName?: string
   welcomeMessage?: string
   placeholder?: string

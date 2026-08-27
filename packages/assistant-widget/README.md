@@ -26,12 +26,6 @@ export function AssistantSection() {
     <AssistantWidget
       assistantId="redmoor"
       apiBaseUrl="https://api.example.com"
-      assistantName="Redmoor Assistant"
-      welcomeMessage="How can I help?"
-      suggestedQuestions={[
-        'What services do you offer?',
-        'Can you help us build an AI assistant?',
-      ]}
     />
   )
 }
@@ -48,10 +42,10 @@ Modules, or other widget-specific styling configuration.
 | --- | --- | --- | --- |
 | `assistantId` | `string` | Yes | Public assistant slug placed in the API route. |
 | `apiBaseUrl` | `string` | Yes | Public API origin or base path. A trailing slash is accepted. |
-| `assistantName` | `string` | No | Visible and accessible name. Defaults to `Assistant`. |
-| `welcomeMessage` | `string` | No | Initial assistant message. |
-| `placeholder` | `string` | No | Composer placeholder. |
-| `suggestedQuestions` | `readonly string[]` | No | Suggestions shown until the first question is submitted. |
+| `assistantName` | `string` | No | Explicit visible and accessible name override. |
+| `welcomeMessage` | `string` | No | Explicit initial-message override; `""` intentionally hides the published welcome text. |
+| `placeholder` | `string` | No | Explicit composer-placeholder override. |
+| `suggestedQuestions` | `readonly string[]` | No | Explicit suggestion override; `[]` intentionally hides published suggestions. |
 
 The root export also provides the component props, conversation client and streaming option types,
 the safe chat error, and the shared SSE consumer. Internal transport implementations, reducers,
@@ -59,16 +53,30 @@ hooks, and UI components are not public API.
 
 ## Behavior
 
-Conversations live only in the current widget instance and are never persisted. The widget calls
-`POST /public/assistants/{assistantId}/chat` without authentication, sends bounded completed
-conversation history, incrementally renders validated SSE deltas, and permits one request at a
-time. Supported transient failures show a safe message and a manual retry action; backend response
-bodies and raw transport errors are not exposed or logged. Active requests are aborted when the
+On mount, the widget calls `GET /public/assistants/{assistantId}` without credentials and validates
+the response before rendering the conversation. The Assistant's currently published configuration
+provides its name, welcome message, input placeholder, and ordered suggested questions. A saved
+draft is not visible until an administrator publishes it; a remount or page reload retrieves the
+latest published revision. `assistantId` is the public, route-safe Assistant slug, not its internal
+backend UUID.
+
+Optional presentation props are deliberate embedding-specific overrides. For each prop, an
+explicit value takes precedence over the published server value, using `undefined` to mean “no
+override.” Overrides never bypass the bootstrap availability check. Missing, inactive, or private
+Assistants show the same safe unavailable state. Network and malformed-response failures show safe
+configuration errors and do not fall back to potentially stale host presentation.
+
+Conversations live only in the current widget instance and are never persisted. After bootstrap,
+the widget calls `POST /public/assistants/{assistantId}/chat` without authentication, sends bounded
+completed conversation history, incrementally renders validated SSE deltas, and permits one request
+at a time. The chat endpoint independently rechecks availability for every question. Supported
+transient failures show a safe message and a manual retry action; backend response bodies and raw
+transport errors are not exposed or logged. Active bootstrap and chat requests are aborted when the
 widget unmounts or its API configuration changes.
 
 React and React DOM are peer dependencies. The supported range is React 19, matching the
 repository's tested React version. The ESM package can be imported during server rendering;
-browser-only APIs are accessed only when a user sends a question.
+browser-only APIs are accessed after mount or when a user sends a question.
 
 ## Current limitations
 
@@ -162,10 +170,10 @@ versions already present on npm; never move an existing release tag or edit a re
 
 ### Connected backend demo
 
-The primary Vite demo is a real consumer of the package-level `AssistantWidget` API. It uses the
-same public client as a host application, keeps conversation history in memory, and never stores or
-logs questions and answers. Only automated tests intercept HTTP; normal local use requires a running
-backend.
+The primary Vite demo is a real consumer of the minimum package-level `AssistantWidget` API. It
+loads published presentation from the backend, uses the same public chat client as a host
+application, keeps conversation history in memory, and never stores or logs questions and answers.
+Only automated tests intercept HTTP; normal local use requires a running backend.
 
 Create `apps/assistant-demo/.env` from `apps/assistant-demo/.env.example`:
 
@@ -213,9 +221,10 @@ Troubleshooting:
   and restart Vite.
 - A browser CORS error means the exact frontend origin is absent from
   `PUBLIC_CHAT_ALLOWED_ORIGINS` or the backend was not restarted after it changed.
-- “Currently unavailable” means the slug was not found, is inactive/private, or the public route is
-  unavailable. Confirm `VITE_ASSISTANT_ID=redmoor` and the backend gate.
-- A network error usually means the backend is not running at `VITE_ASSISTANT_API_BASE_URL`; start it
-  and use the widget's retry button.
+- “Currently unavailable” during bootstrap means the slug was not found, is inactive/private, or
+  has no valid published configuration. Confirm `VITE_ASSISTANT_ID=redmoor` and the backend gate.
+- A configuration network error usually means the backend is not running at
+  `VITE_ASSISTANT_API_BASE_URL`; start it and reload the page. Chat network errors retain the
+  widget's retry button.
 - A safe generic server error hides provider and backend details by design; inspect backend logs for
   configuration or provider failures without logging conversation content.

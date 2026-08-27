@@ -6,12 +6,12 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from assistant.application.prompt_builder import Prompt, PromptBuilder
+from assistant.application.public_assistant import require_publicly_available
 from assistant.application.public_chat_protection import TokenBudget
 from assistant.domain import KnowledgeChunk
-from assistant.domain.assistant import Assistant, AssistantStatus, AssistantVisibility
+from assistant.domain.assistant import Assistant
 from assistant.domain.assistant_behaviour import DEFAULT_ASSISTANT_INSTRUCTIONS
 from assistant.domain.assistant_behaviour_repository import AssistantBehaviourRepository
-from assistant.domain.assistant_repository import AssistantNotFound
 from assistant.schemas.public_chat import PublicChatRequest
 from core.config import PublicAssistantChatSettings, get_public_assistant_chat_settings
 from core.correlation import request_id_context
@@ -219,14 +219,9 @@ class PublicAssistantChatService:
     def prepare(self, assistant_slug: str, request: PublicChatRequest) -> PreparedPublicChat:
         started_at = self._clock()
         public_chat_metrics.requests.inc()
-        assistant = self._assistant_repository.get_by_slug(assistant_slug)
-        if (
-            assistant.status is not AssistantStatus.active
-            or assistant.visibility is not AssistantVisibility.public
-        ):
-            # Resolve availability before behaviour so unavailable lifecycle states
-            # remain indistinguishable from a missing Assistant to public callers.
-            raise AssistantNotFound("Assistant not found.")
+        assistant = require_publicly_available(
+            self._assistant_repository.get_by_slug(assistant_slug)
+        )
         return self.prepare_resolved(
             assistant,
             request,
@@ -251,12 +246,8 @@ class PublicAssistantChatService:
     ) -> PreparedPublicChat:
         """Prepare one grounded request for public or authenticated preview execution."""
         started_at = self._clock() if started_at is None else started_at
-        if enforce_public_availability and (
-            assistant.status is not AssistantStatus.active
-            or assistant.visibility is not AssistantVisibility.public
-        ):
-            # Public callers cannot distinguish unavailable assistants from absent ones.
-            raise AssistantNotFound("Assistant not found.")
+        if enforce_public_availability:
+            require_publicly_available(assistant)
 
         retrieval_started_at = self._clock()
         chunks = self._retrieval_factory(assistant.id).retrieve(request.message)

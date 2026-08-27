@@ -37,6 +37,7 @@ from assistant.application.ports.text_chunker import TextChunker
 from assistant.application.ports.text_cleaner import TextCleaner
 from assistant.application.ports.website_loader import WebsiteLoader
 from assistant.application.prompt_builder import PromptBuilder
+from assistant.application.public_assistant import PublicAssistantConfigurationService
 from assistant.application.public_chat import (
     AssistantPreviewChatService,
     PublicAssistantChatService,
@@ -190,6 +191,15 @@ def get_assistant_behaviour_service(
     ],
 ) -> AssistantBehaviourService:
     return AssistantBehaviourService(repository)
+
+
+def get_public_assistant_configuration_service(
+    assistant_repository: Annotated[AssistantRepository, Depends(get_assistant_repository)],
+    behaviour_repository: Annotated[
+        AssistantBehaviourRepository, Depends(get_assistant_behaviour_repository)
+    ],
+) -> PublicAssistantConfigurationService:
+    return PublicAssistantConfigurationService(assistant_repository, behaviour_repository)
 
 
 def get_public_chat_service(

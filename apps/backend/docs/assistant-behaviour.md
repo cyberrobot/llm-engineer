@@ -55,6 +55,22 @@ numbers, bounded outcomes, and existing operational metadata; request bodies, pr
 knowledge chunks, conversation history, provider payloads, and full generated responses are not
 logged. Metrics use only bounded operation/outcome labels.
 
+## Public Assistant configuration
+
+`GET /public/assistants/{assistant_slug}` is the anonymous bootstrap contract for the public
+widget. It is available through the same exact-origin browser boundary and public feature gate as
+chat, without administrator authentication, cookies, or trusted-administrator origin checks. The
+Assistant must be both `active` and `public`; missing, inactive, private, and missing-publication
+states all return the same safe `assistant_not_found` response.
+
+The response contains only the public slug (`id`), public Assistant name, published
+`welcome_message`, published `input_placeholder`, ordered published `suggested_questions`, and
+`published_revision`. It resolves the immutable published revision on each request. A newer saved
+draft therefore remains invisible until publication, and the response deliberately excludes
+instructions, concurrency tokens, administrator metadata, draft state, and internal Assistant UUIDs.
+The endpoint is read-only and returns `Cache-Control: no-store`, so a later mount or page reload can
+observe a newly published revision without a long-lived browser cache.
+
 ## Persistence guarantees
 
 `assistant_behaviour_revisions` uses `(assistant_id, revision)` as its identity and rejects updates
