@@ -1,5 +1,4 @@
 import os
-from collections.abc import Callable
 from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Annotated
@@ -12,7 +11,6 @@ from assistant.api.dependencies import (
     get_ingestion_operational_status_repository,
     get_knowledge_source_repository,
 )
-from assistant.application.audit import get_audit_logs as get_rag_audit_logs
 from assistant.domain.assistant_repository import AssistantRepository
 from assistant.infrastructure.repositories.document_ingestion_job import (
     DocumentIngestionJobRepository,
@@ -69,12 +67,6 @@ def get_audit_query_service() -> AuditQueryService:
     persistent = DATABASE_URL and environment in {"production", "staging"}
     store = PostgresOperationsAuditStore() if persistent else InMemoryAuditStore()
     return AuditQueryService(store)
-
-
-def get_rag_audit_reader() -> Callable[[int], list[dict]]:
-    """Expose the existing RAG debug history through an authenticated Operations adapter."""
-
-    return get_rag_audit_logs
 
 
 def get_maintenance_service() -> MaintenanceService:

@@ -3,17 +3,16 @@ import { API_URL } from '../utils/settings';
 export const getAuditLogs = async () => {
   const controller = new AbortController();
 
-  const timeoutId = globalThis.setTimeout(() => {
+  const timeoutId = window.setTimeout(() => {
     controller.abort();
   }, 30000);
 
   try {
-    const res = await fetch(`${API_URL}/admin/operations/audit/rag`, {
+    const res = await fetch(`${API_URL}/audit-logs`, {
       method: 'GET',
       headers: {
-        Accept: 'application/json',
+        'Content-Type': 'application/json',
       },
-      credentials: 'include',
       signal: controller.signal,
     });
 

@@ -34,8 +34,8 @@ def test_health_routes_preserve_existing_health_and_expose_assistant_health(monk
         "/assistant/knowledge/ingestions/{jobId}",
         "/assistant/knowledge/status",
         "/ingest/upload",
-        "/admin/assistants/rag-chat",
-        "/admin/operations/audit/rag",
+        "/rag-chat",
+        "/audit-logs",
     }.issubset(registered_paths)
 
     health_response_schema = openapi["paths"]["/assistant/health"]["get"]["responses"]["200"][

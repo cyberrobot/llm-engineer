@@ -13,6 +13,8 @@ ASGIApp = Callable[
 class MaintenanceModeMiddleware:
     """Centrally gate public runtime traffic while leaving admin and probes reachable."""
 
+    _LEGACY_PUBLIC_ASSISTANT_PATHS = frozenset({"/rag-chat"})
+
     def __init__(self, app: ASGIApp, service_factory: Callable[[], MaintenanceService]) -> None:
         self.app = app
         self._service_factory = service_factory
@@ -57,4 +59,6 @@ class MaintenanceModeMiddleware:
 
     @staticmethod
     def _is_public_assistant_path(path: str) -> bool:
-        return path.startswith("/public/assistants/") and path.endswith("/chat")
+        return path in MaintenanceModeMiddleware._LEGACY_PUBLIC_ASSISTANT_PATHS or (
+            path.startswith("/public/assistants/") and path.endswith("/chat")
+        )

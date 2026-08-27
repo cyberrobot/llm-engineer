@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -16,7 +15,6 @@ from operations.api.administration_dependencies import (
     get_job_operations_service,
     get_maintenance_service,
     get_operations_summary_service,
-    get_rag_audit_reader,
     get_runtime_state_store,
 )
 from operations.api.health_dependencies import get_health_service
@@ -79,22 +77,6 @@ def _client(monkeypatch):
     app.dependency_overrides[get_job_operations_service] = lambda: JobOperationsService(jobs)
     app.dependency_overrides[get_health_service] = lambda: HealthService(
         [], timeout_seconds=1, now=lambda: NOW
-    )
-    app.dependency_overrides[get_rag_audit_reader] = lambda: (
-        lambda _limit: [
-            {
-                "id": 7,
-                "timestamp": NOW.isoformat(),
-                "user_role": "manager",
-                "question": "What is required?",
-                "reply": {"answer": "Use the checklist.", "source_ids": ["chunk-1"]},
-                "retrieved_chunks": [{"id": "chunk-1"}],
-                "reranked_chunks": [{"id": "chunk-1"}],
-                "metrics": {"total_time": 12.5},
-                "queries": [{"query": "What is required?"}],
-                "evaluation": {"metrics": {"groundedness_score": 1.0}},
-            }
-        ]
     )
     app.dependency_overrides[get_operations_summary_service] = lambda: OperationsSummaryService(
         health=lambda: None,
@@ -259,7 +241,6 @@ def test_browser_session_can_read_every_operations_dashboard_endpoint(monkeypatc
             "/admin/operations/cache",
             "/admin/operations/maintenance",
             "/admin/operations/audit",
-            "/admin/operations/audit/rag",
             "/admin/operations/jobs",
         ):
             response = client.get(path)
@@ -276,22 +257,6 @@ def test_browser_session_can_read_every_operations_dashboard_endpoint(monkeypatc
         assert created.status_code == 200
         audit_items = client.get("/admin/operations/audit").json()["items"]
         assert client.get(f"/admin/operations/audit/{audit_items[0]['id']}").status_code == 200
-        rag_audit = client.get("/admin/operations/audit/rag").json()
-        assert rag_audit[0]["question"] == "What is required?"
-        assert rag_audit[0]["evaluation"]["metrics"]["groundedness_score"] == 1.0
-    finally:
-        _cleanup()
-
-
-def test_rag_audit_requires_authorization_before_reading_history(monkeypatch):
-    client, _audit = _client(monkeypatch)
-    reader = Mock(return_value=[])
-    app.dependency_overrides[get_rag_audit_reader] = lambda: reader
-    try:
-        response = client.get("/admin/operations/audit/rag")
-
-        assert response.status_code == 401
-        reader.assert_not_called()
     finally:
         _cleanup()
 
@@ -530,7 +495,22 @@ def test_maintenance_centrally_blocks_public_assistant_traffic_but_not_admin_or_
         assert blocked.headers["access-control-allow-origin"] == "http://localhost:5173"
         assert blocked.headers["x-request-id"] == request_id
         assert client.post("/assistant/chat", json={}).status_code == 404
-        assert client.post("/rag-chat", json={}).status_code == 404
+        legacy_request_id = str(uuid4())
+        legacy_blocked = client.post(
+            "/rag-chat",
+            headers={
+                "Origin": "http://localhost:5173",
+                "X-Request-ID": legacy_request_id,
+            },
+            json={},
+        )
+        assert legacy_blocked.status_code == 503
+        assert legacy_blocked.json()["detail"] == {
+            "code": "maintenance_mode",
+            "message": "The service is undergoing maintenance.",
+        }
+        assert legacy_blocked.headers["access-control-allow-origin"] == ("http://localhost:5173")
+        assert legacy_blocked.headers["x-request-id"] == legacy_request_id
         assert (
             client.get("/admin/operations", headers={"X-API-Key": "admin-secret"}).status_code
             == 200

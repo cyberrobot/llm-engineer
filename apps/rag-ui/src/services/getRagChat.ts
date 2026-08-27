@@ -9,12 +9,12 @@ export const getRagChat = async ({
 }) => {
   const controller = new AbortController();
 
-  const timeoutId = globalThis.setTimeout(() => {
+  const timeoutId = window.setTimeout(() => {
     controller.abort();
   }, 30000);
 
   try {
-    const res = await fetch(`${API_URL}/admin/assistants/rag-chat`, {
+    const res = await fetch(`${API_URL}/rag-chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -24,7 +24,6 @@ export const getRagChat = async ({
         message: query,
         user_role: userRole,
       }),
-      credentials: 'include',
       signal: controller.signal,
     });
 

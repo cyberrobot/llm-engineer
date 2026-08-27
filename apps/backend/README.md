@@ -190,10 +190,13 @@ retries are outside this workflow.
 ## HTTP security boundaries
 
 The intentional anonymous Assistant boundary is
-`POST /public/assistants/{assistant_slug}/chat`. Internal RAG UI requests use the existing
-administrator session at `POST /admin/assistants/rag-chat`, and RAG debug history is available at
-`GET /admin/operations/audit/rag`. The legacy `/assistant/chat`, `/rag-chat`, `/audit-logs`,
-`/chunks`, and raw-text `/ingest` routes are not mounted.
+`POST /public/assistants/{assistant_slug}/chat`. The legacy `/assistant/chat`, `/chunks`, and
+raw-text `/ingest` routes are not mounted.
+
+`POST /rag-chat` and `GET /audit-logs` remain unchanged as temporary legacy exceptions because they
+are active dependencies of `apps/rag-ui`. They remain candidates for removal and must be retired
+together with RAG UI in a separate PR; this change does not partially secure, migrate, or replace
+them with administrator endpoints.
 
 `POST /ingest/upload` remains a supported machine-to-machine integration protected by the existing
 ingestion `X-API-Key`; credential validation occurs before upload persistence or ingestion work.
