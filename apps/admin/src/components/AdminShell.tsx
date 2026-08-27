@@ -4,11 +4,22 @@ import { useAuth } from '../auth/AuthContext';
 
 const links = [
   ['/admin', 'Dashboard'],
+  ['/admin/operations', 'Operations'],
   ['/admin/assistants', 'Assistants'],
   ['/admin/knowledge-sources', 'Knowledge Sources'],
 ] as const;
 
 function titleFor(pathname: string) {
+  if (pathname.startsWith('/admin/operations')) {
+    if (pathname.startsWith('/admin/operations/jobs/')) return 'Operational job details';
+    if (pathname.startsWith('/admin/operations/audit/')) return 'Audit entry details';
+    if (pathname.endsWith('/health')) return 'Health diagnostics';
+    if (pathname.endsWith('/cache')) return 'Cache operations';
+    if (pathname.endsWith('/maintenance')) return 'Maintenance mode';
+    if (pathname.endsWith('/jobs')) return 'Operational jobs';
+    if (pathname.endsWith('/audit')) return 'Administrative audit';
+    return 'Operations';
+  }
   if (pathname.startsWith('/admin/assistants')) {
     if (pathname.includes('/knowledge/') && pathname.endsWith('/new')) return 'Add knowledge source';
     if (pathname.includes('/knowledge/')) return 'Knowledge source details';

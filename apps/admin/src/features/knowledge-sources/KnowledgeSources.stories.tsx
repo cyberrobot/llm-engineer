@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import type { ReactNode } from 'react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { expect, userEvent, within } from 'storybook/test';
-import { AdminApiError, type AdminApi, type Assistant, type KnowledgeSource } from '../../api/adminApi';
+import { AdminApiError, createAdminApi, type AdminApi, type Assistant, type KnowledgeSource } from '../../api/adminApi';
 import { AuthProvider } from '../../auth/AuthContext';
 import {
   KnowledgeEntryPage,
@@ -46,6 +46,7 @@ const source: KnowledgeSource = {
 };
 const summary = { ...source, directText: null };
 const base: AdminApi = {
+  ...createAdminApi(''),
   currentUser: async () => ({ id: 'admin', email: 'admin@example.test', role: 'administrator' }),
   login: async () => ({ id: 'admin', email: 'admin@example.test', role: 'administrator' }),
   logout: async () => undefined,

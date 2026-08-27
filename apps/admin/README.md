@@ -1,6 +1,6 @@
 # Redmoor Admin
 
-Private React application for Redmoor administration. It provides cookie-backed administrator authentication, an operational Dashboard, Assistant management, and Assistant-scoped knowledge and retrieval configuration. Evaluations, detailed metrics, and production-affecting operations remain out of scope.
+Private React application for Redmoor administration. It provides cookie-backed administrator authentication, an operational Dashboard, detailed Operations, Assistant management, and Assistant-scoped knowledge and retrieval configuration. Evaluations and unsupported infrastructure administration remain out of scope.
 
 ## Operational Dashboard
 
@@ -17,6 +17,22 @@ state, not an incident history. A null Knowledge Source failure count is shown a
 The Dashboard supports manual refresh and safe retry without polling. An expired session follows the
 existing login flow; forbidden, network, server, and malformed successful responses never render as
 a healthy empty Dashboard.
+
+## Detailed Operations
+
+The `/admin/operations` landing page advertises only the detailed domains returned by the Operations
+root capability response. Its nested routes provide health diagnostics, cache statistics and
+confirmed cache administration, maintenance-mode inspection and confirmed updates, paginated job
+browsing, and filtered paginated audit browsing. Job and audit detail routes render only the
+backend's administrator-safe response fields.
+
+All Operations calls use the shared credentialed Admin API client and strictly validate successful
+responses. Production-affecting changes require scope-specific confirmation, are not automatically
+retried, and refresh authoritative state after success. If the connection is lost after submission,
+the UI reports the outcome as unknown and requires an authoritative refresh before another change.
+Backend authorization remains authoritative; a forbidden response is never presented as healthy or
+empty state. Cache keys are not persisted or logged, cache values are not exposed, and audit metadata
+is rendered as inert data.
 
 ## Assistant management
 
@@ -71,4 +87,4 @@ Run `npm run dev:admin`, `npm run lint:admin`, `npm run typecheck --workspace @a
 - A source cannot be deleted while ingestion is queued or running. Wait for a terminal state, refresh, and try again.
 - An invalid-response message means the backend returned a malformed or cross-Assistant success payload; the UI rejects it instead of rendering partial data.
 
-Production hosting must rewrite browser-history routes such as `/admin/assistants` to `index.html`.
+Production hosting must rewrite browser-history routes such as `/admin/assistants` and `/admin/operations/jobs/:jobId` to `index.html`.

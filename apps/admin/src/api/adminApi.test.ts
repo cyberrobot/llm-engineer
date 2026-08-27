@@ -774,3 +774,98 @@ describe('admin API', () => {
       });
   });
 });
+
+describe('Operations API', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const timestamp = '2026-08-25T10:00:00Z';
+  const action = { success: true, request_id: 'request-1', correlation_id: 'correlation-1' };
+  const job = { id, status:'failed', created_at:timestamp, started_at:timestamp, completed_at:timestamp, duration_ms:12, retry_count:1, last_error:'Safe failure', execution_node:'worker-1', job_type:'ingestion' };
+  const audit = { id, timestamp, user:'admin@example.test', action:'cache.clear', resource:'cache', result:'SUCCESS' };
+
+  it('requests and strictly maps root, health, cache, and maintenance reads', async () => {
+    const fetchMock=vi.fn()
+      .mockResolvedValueOnce(Response.json({generated_at:timestamp,service:'operations',status:'available',capabilities:['health','cache']}))
+      .mockResolvedValueOnce(Response.json({generated_at:timestamp,status:'degraded',checks:[{name:'postgres',status:'unhealthy',required:true,latency_ms:25,code:'dependency_unavailable',checked_at:timestamp}]}))
+      .mockResolvedValueOnce(Response.json({items:[{name:'assistant',entries:null,estimated_memory_bytes:null,hit_count:5,miss_count:1,hit_ratio:0.833}]}))
+      .mockResolvedValueOnce(Response.json({enabled:true,message:'Planned work',updated_at:timestamp,updated_by:'admin',request_id:null,correlation_id:null}));
+    vi.stubGlobal('fetch',fetchMock); const api=createAdminApi(base); const signal=new AbortController().signal;
+    await expect(api.getOperations(signal)).resolves.toEqual({generatedAt:timestamp,service:'operations',status:'available',capabilities:['health','cache']});
+    await expect(api.getOperationsHealth(signal)).resolves.toMatchObject({status:'degraded',checks:[{name:'postgres',status:'unhealthy',latencyMs:25}]});
+    await expect(api.listCacheRegions(signal)).resolves.toEqual([{name:'assistant',entries:null,estimatedMemoryBytes:null,hitCount:5,missCount:1,hitRatio:0.833}]);
+    await expect(api.getMaintenance(signal)).resolves.toMatchObject({enabled:true,message:'Planned work',requestId:null});
+    expect(fetchMock.mock.calls.map((call)=>call[0])).toEqual([`${base}/admin/operations`,`${base}/admin/operations/health`,`${base}/admin/operations/cache`,`${base}/admin/operations/maintenance`]);
+    expect(fetchMock.mock.calls.every((call)=>call[1]?.credentials==='include'&&call[1]?.signal===signal)).toBe(true);
+  });
+
+  it('accepts the backend health serialization when a null diagnostic code is omitted', async () => {
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({
+      generated_at:timestamp,status:'healthy',checks:[{
+        name:'postgres',status:'healthy',required:true,latency_ms:5,checked_at:timestamp,
+      }],
+    })));
+
+    await expect(createAdminApi(base).getOperationsHealth()).resolves.toEqual({
+      generatedAt:timestamp,status:'healthy',checks:[{
+        name:'postgres',status:'healthy',required:true,latencyMs:5,code:null,checkedAt:timestamp,
+      }],
+    });
+  });
+
+  it.each([
+    ['explicit null code',{name:'postgres',status:'healthy',required:true,latency_ms:5,code:null,checked_at:timestamp},null],
+    ['supported diagnostic code',{name:'postgres',status:'degraded',required:true,latency_ms:5,code:'dependency_timeout',checked_at:timestamp},'dependency_timeout'],
+  ])('accepts a health check with %s',async(_scenario,check,expectedCode)=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({generated_at:timestamp,status:check.status,checks:[check]})));
+    await expect(createAdminApi(base).getOperationsHealth()).resolves.toMatchObject({checks:[{code:expectedCode}]});
+  });
+
+  it.each([
+    ['unknown code',{name:'postgres',status:'unhealthy',required:true,latency_ms:5,code:'unknown_failure',checked_at:timestamp}],
+    ['unexpected property',{name:'postgres',status:'healthy',required:true,latency_ms:5,checked_at:timestamp,detail:'private'}],
+    ['missing required field',{name:'postgres',status:'healthy',latency_ms:5,checked_at:timestamp}],
+  ])('rejects a health check with %s',async(_scenario,check)=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({generated_at:timestamp,status:'healthy',checks:[check]})));
+    await expect(createAdminApi(base).getOperationsHealth()).rejects.toMatchObject({kind:'invalid_response'});
+  });
+
+  it('uses exact cache mutation contracts, URL encoding, and validates success', async () => {
+    const fetchMock=vi.fn().mockImplementation(async()=>Response.json(action));vi.stubGlobal('fetch',fetchMock);const api=createAdminApi(base);
+    await api.clearCache(); await api.clearCacheRegion('assistant region'); await api.invalidateCacheKey({region:'assistant',key:'private key'});
+    expect(fetchMock.mock.calls.map((call)=>[call[0],call[1]?.method])).toEqual([[`${base}/admin/operations/cache/clear`,'POST'],[`${base}/admin/operations/cache/regions/assistant%20region/clear`,'POST'],[`${base}/admin/operations/cache/key`,'POST']]);
+    expect(fetchMock.mock.calls[2]?.[1]?.body).toBe(JSON.stringify({region:'assistant',key:'private key'}));
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({...action,success:false})));
+    await expect(createAdminApi(base).clearCache()).rejects.toMatchObject({kind:'invalid_response'});
+  });
+
+  it('serializes maintenance, job pagination/status, and audit filters exactly', async () => {
+    const maintenance={enabled:false,message:null,updated_at:timestamp,updated_by:'admin',request_id:'r',correlation_id:'c'};
+    const fetchMock=vi.fn().mockResolvedValueOnce(Response.json(maintenance)).mockResolvedValueOnce(Response.json({items:[job],total:1,limit:25,offset:0})).mockResolvedValueOnce(Response.json({items:[audit],total:21,limit:10,offset:20}));
+    vi.stubGlobal('fetch',fetchMock);const api=createAdminApi(base);
+    await api.updateMaintenance({enabled:false,message:null});
+    await api.listOperationalJobs({limit:25,offset:0,status:'failed'});
+    await api.listAuditEntries({limit:10,offset:20,user:'admin',action:'cache.clear',resource:'cache',result:'SUCCESS',dateFrom:'2026-08-01T00:00:00Z',dateTo:'2026-08-25T00:00:00Z'});
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({enabled:false,message:null}));
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`${base}/admin/operations/jobs?limit=25&offset=0&status=failed`);
+    const auditUrl=String(fetchMock.mock.calls[2]?.[0]);expect(auditUrl).toContain('limit=10&offset=20');expect(auditUrl).toContain('result=SUCCESS');expect(auditUrl).toContain('date_from=2026-08-01T00%3A00%3A00Z');expect(auditUrl).toContain('date_to=2026-08-25T00%3A00%3A00Z');
+  });
+
+  it('maps job and audit details and rejects malformed successful structures', async () => {
+    const detail={...audit,actor:'admin@example.test',request_id:'request',correlation_id:'correlation',duration_ms:3,metadata:{enabled:true}};
+    const fetchMock=vi.fn().mockResolvedValueOnce(Response.json(job)).mockResolvedValueOnce(Response.json(detail));vi.stubGlobal('fetch',fetchMock);const api=createAdminApi(base);
+    await expect(api.getOperationalJob(id)).resolves.toMatchObject({id,status:'failed',durationMs:12,lastError:'Safe failure'});
+    await expect(api.getAuditEntry(id)).resolves.toMatchObject({id,result:'SUCCESS',metadata:{enabled:true}});
+    for(const malformed of [
+      {generated_at:timestamp,service:'operations',status:'available',capabilities:['health','invented']},
+      {generated_at:timestamp,status:'healthy',checks:[{name:'db',status:'invented',required:true,latency_ms:0,code:null,checked_at:timestamp}]},
+      {items:[{name:'assistant',entries:-1,estimated_memory_bytes:null,hit_count:null,miss_count:null,hit_ratio:null}]},
+      {...job,status:'retrying'},
+      {...detail,result:'OK'},
+    ]){vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json(malformed)));const request='capabilities' in malformed?api.getOperations():Array.isArray((malformed as {items?:unknown[]}).items)?api.listCacheRegions():('checks' in malformed?api.getOperationsHealth():('job_type' in malformed?api.getOperationalJob(id):api.getAuditEntry(id)));await expect(request).rejects.toMatchObject({kind:'invalid_response'});}
+  });
+
+  it('preserves safe failure mapping, network errors, and AbortSignal cancellation', async () => {
+    for(const [status,kind] of [[400,'invalid_request'],[401,'unauthenticated'],[403,'forbidden'],[404,'not_found'],[409,'conflict'],[422,'invalid_request'],[503,'server']] as const){vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({detail:{code:'safe_code'}},{status})));await expect(createAdminApi(base).getOperations()).rejects.toMatchObject({kind});}
+    vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new TypeError('offline')));await expect(createAdminApi(base).getOperations()).rejects.toMatchObject({kind:'network'});
+    const aborted=new DOMException('aborted','AbortError');vi.stubGlobal('fetch',vi.fn().mockRejectedValue(aborted));await expect(createAdminApi(base).getOperations(new AbortController().signal)).rejects.toBe(aborted);
+  });
+});

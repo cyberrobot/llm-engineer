@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { MemoryRouter } from 'react-router-dom';
-import { AdminApiError, type AdminApi, type OperationsSummary } from '../../api/adminApi';
+import { AdminApiError, createAdminApi, type AdminApi, type OperationsSummary } from '../../api/adminApi';
 import { AuthProvider } from '../../auth/AuthContext';
 import { DashboardPage } from './Dashboard';
 
@@ -19,6 +19,7 @@ const summary: OperationsSummary = {
 function apiWith(getOperationsSummary: AdminApi['getOperationsSummary']): AdminApi {
   const unsupported = async () => { throw new AdminApiError('invalid_request'); };
   return {
+    ...createAdminApi(''),
     currentUser: async () => ({ id: 'admin', email: 'admin@example.test', role: 'administrator' }),
     login: async () => ({ id: 'admin', email: 'admin@example.test', role: 'administrator' }),
     logout: async () => undefined,

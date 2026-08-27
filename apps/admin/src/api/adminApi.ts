@@ -132,6 +132,66 @@ export function createAdminApi(baseUrl: string): AdminApi {
       if (!response.ok) return failure(response, 'operations');
       return operationsSummaryFrom(await successfulJson(response));
     },
+    async getOperations(signal?: AbortSignal) {
+      const response = await request(baseUrl, '/admin/operations', { method: 'GET', signal });
+      if (!response.ok) return failure(response, 'operations');
+      return operationsRootFrom(await successfulJson(response));
+    },
+    async getOperationsHealth(signal?: AbortSignal) {
+      const response = await request(baseUrl, '/admin/operations/health', { method: 'GET', signal });
+      if (!response.ok) return failure(response, 'operations');
+      return operationsHealthFrom(await successfulJson(response));
+    },
+    async listCacheRegions(signal?: AbortSignal) {
+      const response = await request(baseUrl, '/admin/operations/cache', { method: 'GET', signal });
+      if (!response.ok) return failure(response, 'operations');
+      return cacheRegionsFrom(await successfulJson(response));
+    },
+    async clearCache(signal?: AbortSignal) {
+      return actionRequest(baseUrl, '/admin/operations/cache/clear', { method: 'POST', signal });
+    },
+    async clearCacheRegion(region: string, signal?: AbortSignal) {
+      return actionRequest(baseUrl, `/admin/operations/cache/regions/${encodeURIComponent(region)}/clear`, { method: 'POST', signal });
+    },
+    async invalidateCacheKey(input: CacheKeyInvalidation, signal?: AbortSignal) {
+      return actionRequest(baseUrl, '/admin/operations/cache/key', jsonRequest('POST', input, signal));
+    },
+    async getMaintenance(signal?: AbortSignal) {
+      const response = await request(baseUrl, '/admin/operations/maintenance', { method: 'GET', signal });
+      if (!response.ok) return failure(response, 'operations');
+      return maintenanceFrom(await successfulJson(response));
+    },
+    async updateMaintenance(input: MaintenanceUpdate, signal?: AbortSignal) {
+      const response = await request(baseUrl, '/admin/operations/maintenance', jsonRequest('PUT', input, signal));
+      if (!response.ok) return failure(response, 'operations');
+      return maintenanceFrom(await successfulJson(response));
+    },
+    async listOperationalJobs(options = {}, signal?: AbortSignal) {
+      const params = pageParams(options);
+      if (options.status) params.set('status', options.status);
+      const response = await request(baseUrl, `/admin/operations/jobs?${params}`, { method: 'GET', signal });
+      if (!response.ok) return failure(response, 'operations');
+      return operationalJobsFrom(await successfulJson(response));
+    },
+    async getOperationalJob(id: string, signal?: AbortSignal) {
+      const response = await request(baseUrl, `/admin/operations/jobs/${encodeURIComponent(id)}`, { method: 'GET', signal });
+      if (!response.ok) return failure(response, 'operations');
+      return operationalJobFrom(await successfulJson(response));
+    },
+    async listAuditEntries(options = {}, signal?: AbortSignal) {
+      const params = pageParams(options);
+      for (const [key, value] of Object.entries({ user: options.user, action: options.action, resource: options.resource, result: options.result, date_from: options.dateFrom, date_to: options.dateTo })) {
+        if (value) params.set(key, value);
+      }
+      const response = await request(baseUrl, `/admin/operations/audit?${params}`, { method: 'GET', signal });
+      if (!response.ok) return failure(response, 'operations');
+      return auditPageFrom(await successfulJson(response));
+    },
+    async getAuditEntry(id: string, signal?: AbortSignal) {
+      const response = await request(baseUrl, `/admin/operations/audit/${encodeURIComponent(id)}`, { method: 'GET', signal });
+      if (!response.ok) return failure(response, 'operations');
+      return auditDetailFrom(await successfulJson(response));
+    },
     async listAssistants(options = {}, signal?: AbortSignal) {
       const params = new URLSearchParams();
       params.set('limit', String(options.limit ?? 50));
@@ -310,6 +370,25 @@ export type OperationsSummary = {
     workersObserved: number;
   };
 };
+export type OperationsCapability = 'health' | 'cache' | 'audit' | 'maintenance' | 'jobs' | 'summary';
+export type OperationsRoot = { generatedAt: string; service: 'operations'; status: 'available'; capabilities: OperationsCapability[] };
+export type DependencyHealthCode = 'dependency_timeout' | 'dependency_unavailable' | 'dependency_authentication_failed' | 'dependency_misconfigured' | 'dependency_check_failed';
+export type DependencyHealth = { name: string; status: OperationsHealth; required: boolean; latencyMs: number; code: DependencyHealthCode | null; checkedAt: string };
+export type OperationsHealthDetail = { generatedAt: string; status: OperationsHealth; checks: DependencyHealth[] };
+export type CacheRegion = { name: string; entries: number | null; estimatedMemoryBytes: number | null; hitCount: number | null; missCount: number | null; hitRatio: number | null };
+export type ActionSuccess = { success: true; requestId: string; correlationId: string };
+export type CacheKeyInvalidation = { region: string; key: string };
+export type MaintenanceState = { enabled: boolean; message: string | null; updatedAt: string; updatedBy: string | null; requestId: string | null; correlationId: string | null };
+export type MaintenanceUpdate = { enabled: boolean; message?: string | null };
+export type OperationalJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type OperationalJob = { id: string; status: OperationalJobStatus; createdAt: string; startedAt: string | null; completedAt: string | null; durationMs: number | null; retryCount: number; lastError: string | null; executionNode: string | null; jobType: string };
+export type OperationalJobs = { items: OperationalJob[]; total: number; limit: number; offset: number };
+export type AuditResult = 'STARTED' | 'SUCCESS' | 'FAILURE';
+export type AuditEntry = { id: string; timestamp: string; user: string; action: string; resource: string; result: AuditResult };
+export type AuditDetail = AuditEntry & { actor: string; requestId: string; correlationId: string; durationMs: number; metadata: Record<string, unknown> };
+export type AuditPage = { items: AuditEntry[]; total: number; limit: number; offset: number };
+export type PageOptions = { limit?: number; offset?: number };
+export type AuditOptions = PageOptions & { user?: string; action?: string; resource?: string; result?: AuditResult; dateFrom?: string; dateTo?: string };
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const slug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -381,6 +460,62 @@ function operationsSummaryFrom(value: unknown): OperationsSummary {
     },
   };
 }
+const healthStates = ['healthy','degraded','unhealthy','unknown'] as const;
+const healthCodes = ['dependency_timeout','dependency_unavailable','dependency_authentication_failed','dependency_misconfigured','dependency_check_failed'] as const;
+const jobStatuses = ['queued','running','completed','failed','cancelled'] as const;
+const auditResults = ['STARTED','SUCCESS','FAILURE'] as const;
+function oneOf<T extends string>(value: unknown, values: readonly T[]): value is T { return typeof value === 'string' && values.includes(value as T); }
+function nonNegativeNumber(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) && value >= 0; }
+function optionalNullableString(value: unknown): value is string | null { return value === undefined || nullableString(value); }
+function pageParams(options: PageOptions): URLSearchParams { return new URLSearchParams({ limit: String(options.limit ?? 50), offset: String(options.offset ?? 0) }); }
+function validPage(value: Record<string, unknown>): boolean {
+  return nonNegativeInteger(value.total) && nonNegativeInteger(value.limit) && Number(value.limit) >= 1 && Number(value.limit) <= 200 && nonNegativeInteger(value.offset) &&
+    Array.isArray(value.items) && value.items.length <= Number(value.limit) && value.items.length <= Number(value.total) &&
+    (value.items.length === 0 || (Number(value.offset) < Number(value.total) && Number(value.offset) + value.items.length <= Number(value.total)));
+}
+function operationsRootFrom(value: unknown): OperationsRoot {
+  const allowed:OperationsCapability[]=['health','cache','audit','maintenance','jobs','summary'];
+  if (!isRecord(value) || !hasExactKeys(value,['generated_at','service','status','capabilities']) || !validTimestamp(value.generated_at) || value.service !== 'operations' || value.status !== 'available' || !Array.isArray(value.capabilities) || !value.capabilities.every((item) => oneOf(item,allowed)) || new Set(value.capabilities).size!==value.capabilities.length) throw new AdminApiError('invalid_response');
+  return { generatedAt:value.generated_at, service:'operations', status:'available', capabilities:[...value.capabilities] as OperationsCapability[] };
+}
+function operationsHealthFrom(value: unknown): OperationsHealthDetail {
+  if (!isRecord(value) || !hasExactKeys(value,['generated_at','status','checks']) || !validTimestamp(value.generated_at) || !oneOf(value.status,healthStates) || !Array.isArray(value.checks)) throw new AdminApiError('invalid_response');
+  const checks=value.checks.map((item):DependencyHealth=>{
+    const requiredKeys=['name','status','required','latency_ms','checked_at'];
+    if (!isRecord(item) || !(hasExactKeys(item,requiredKeys)||hasExactKeys(item,[...requiredKeys,'code'])) || typeof item.name !== 'string' || !/^[a-z0-9_-]{1,64}$/.test(item.name) || !oneOf(item.status,healthStates) || typeof item.required !== 'boolean' || !nonNegativeInteger(item.latency_ms) || !validTimestamp(item.checked_at)) throw new AdminApiError('invalid_response');
+    let code:DependencyHealthCode|null=null;
+    if ('code' in item) {
+      if (!(item.code===null||oneOf(item.code,healthCodes))) throw new AdminApiError('invalid_response');
+      code=item.code;
+    }
+    return {name:item.name,status:item.status,required:item.required,latencyMs:item.latency_ms,code,checkedAt:item.checked_at};
+  });
+  return {generatedAt:value.generated_at,status:value.status,checks};
+}
+function cacheRegionsFrom(value: unknown): CacheRegion[] {
+  if (!isRecord(value) || !hasExactKeys(value,['items']) || !Array.isArray(value.items)) throw new AdminApiError('invalid_response');
+  return value.items.map((item):CacheRegion=>{
+    if (!isRecord(item) || !hasExactKeys(item,['name','entries','estimated_memory_bytes','hit_count','miss_count','hit_ratio']) || typeof item.name !== 'string' || !item.name || ![item.entries,item.estimated_memory_bytes,item.hit_count,item.miss_count].every((field)=>field===null||nonNegativeInteger(field)) || !(item.hit_ratio===null||(nonNegativeNumber(item.hit_ratio)&&item.hit_ratio<=1))) throw new AdminApiError('invalid_response');
+    return {name:item.name,entries:item.entries as number|null,estimatedMemoryBytes:item.estimated_memory_bytes as number|null,hitCount:item.hit_count as number|null,missCount:item.miss_count as number|null,hitRatio:item.hit_ratio as number|null};
+  });
+}
+function actionSuccessFrom(value: unknown): ActionSuccess {
+  if (!isRecord(value)||!hasExactKeys(value,['success','request_id','correlation_id'])||value.success!==true||typeof value.request_id!=='string'||!value.request_id||typeof value.correlation_id!=='string'||!value.correlation_id) throw new AdminApiError('invalid_response');
+  return {success:true,requestId:value.request_id,correlationId:value.correlation_id};
+}
+async function actionRequest(baseUrl:string,path:string,init:RequestInit):Promise<ActionSuccess>{const response=await request(baseUrl,path,init);if(!response.ok)return failure(response,'operations');return actionSuccessFrom(await successfulJson(response));}
+function maintenanceFrom(value:unknown):MaintenanceState{
+  if(!isRecord(value)||!hasExactKeys(value,['enabled','message','updated_at','updated_by','request_id','correlation_id'])||typeof value.enabled!=='boolean'||!nullableString(value.message)||!validTimestamp(value.updated_at)||!nullableString(value.updated_by)||!optionalNullableString(value.request_id)||!optionalNullableString(value.correlation_id))throw new AdminApiError('invalid_response');
+  return {enabled:value.enabled,message:value.message,updatedAt:value.updated_at,updatedBy:value.updated_by,requestId:value.request_id??null,correlationId:value.correlation_id??null};
+}
+function operationalJobFrom(value:unknown):OperationalJob{
+  if(!isRecord(value)||!hasExactKeys(value,['id','status','created_at','started_at','completed_at','duration_ms','retry_count','last_error','execution_node','job_type'])||!uuid.test(String(value.id))||!oneOf(value.status,jobStatuses)||!validTimestamp(value.created_at)||!nullableTimestamp(value.started_at)||!nullableTimestamp(value.completed_at)||!(value.duration_ms===null||nonNegativeInteger(value.duration_ms))||!nonNegativeInteger(value.retry_count)||!nullableString(value.last_error)||!nullableString(value.execution_node)||typeof value.job_type!=='string'||!value.job_type)throw new AdminApiError('invalid_response');
+  return {id:String(value.id),status:value.status,createdAt:value.created_at,startedAt:value.started_at,completedAt:value.completed_at,durationMs:value.duration_ms as number|null,retryCount:value.retry_count,lastError:value.last_error,executionNode:value.execution_node,jobType:value.job_type};
+}
+function operationalJobsFrom(value:unknown):OperationalJobs{if(!isRecord(value)||!hasExactKeys(value,['items','total','limit','offset'])||!validPage(value))throw new AdminApiError('invalid_response');return {items:(value.items as unknown[]).map(operationalJobFrom),total:value.total as number,limit:value.limit as number,offset:value.offset as number};}
+function auditEntryFrom(value:unknown):AuditEntry{if(!isRecord(value)||!hasExactKeys(value,['id','timestamp','user','action','resource','result'])||!uuid.test(String(value.id))||!validTimestamp(value.timestamp)||typeof value.user!=='string'||typeof value.action!=='string'||typeof value.resource!=='string'||!oneOf(value.result,auditResults))throw new AdminApiError('invalid_response');return{id:String(value.id),timestamp:value.timestamp,user:value.user,action:value.action,resource:value.resource,result:value.result};}
+function auditPageFrom(value:unknown):AuditPage{if(!isRecord(value)||!hasExactKeys(value,['items','total','limit','offset'])||!validPage(value))throw new AdminApiError('invalid_response');return{items:(value.items as unknown[]).map(auditEntryFrom),total:value.total as number,limit:value.limit as number,offset:value.offset as number};}
+function auditDetailFrom(value:unknown):AuditDetail{if(!isRecord(value)||!hasExactKeys(value,['id','timestamp','user','action','resource','result','actor','request_id','correlation_id','duration_ms','metadata'])||typeof value.actor!=='string'||typeof value.request_id!=='string'||!value.request_id||typeof value.correlation_id!=='string'||!value.correlation_id||!nonNegativeInteger(value.duration_ms)||!isRecord(value.metadata))throw new AdminApiError('invalid_response');const item=auditEntryFrom({id:value.id,timestamp:value.timestamp,user:value.user,action:value.action,resource:value.resource,result:value.result});return{...item,actor:value.actor,requestId:value.request_id,correlationId:value.correlation_id,durationMs:value.duration_ms,metadata:value.metadata};}
 function knowledgeJobFrom(value: unknown): KnowledgeSourceJob | null {
   if (value === null) return null;
   if (!isRecord(value) || !hasExactKeys(value, ['id','status','current_step','created_at','started_at','completed_at','failure_code','failure_message']) ||
@@ -462,6 +597,18 @@ export interface AdminApi {
   currentUser(signal?: AbortSignal): Promise<Administrator>;
   logout(signal?: AbortSignal): Promise<void>;
   getOperationsSummary(signal?: AbortSignal): Promise<OperationsSummary>;
+  getOperations(signal?: AbortSignal): Promise<OperationsRoot>;
+  getOperationsHealth(signal?: AbortSignal): Promise<OperationsHealthDetail>;
+  listCacheRegions(signal?: AbortSignal): Promise<CacheRegion[]>;
+  clearCache(signal?: AbortSignal): Promise<ActionSuccess>;
+  clearCacheRegion(region: string, signal?: AbortSignal): Promise<ActionSuccess>;
+  invalidateCacheKey(input: CacheKeyInvalidation, signal?: AbortSignal): Promise<ActionSuccess>;
+  getMaintenance(signal?: AbortSignal): Promise<MaintenanceState>;
+  updateMaintenance(input: MaintenanceUpdate, signal?: AbortSignal): Promise<MaintenanceState>;
+  listOperationalJobs(options?: PageOptions & { status?: OperationalJobStatus }, signal?: AbortSignal): Promise<OperationalJobs>;
+  getOperationalJob(id: string, signal?: AbortSignal): Promise<OperationalJob>;
+  listAuditEntries(options?: AuditOptions, signal?: AbortSignal): Promise<AuditPage>;
+  getAuditEntry(id: string, signal?: AbortSignal): Promise<AuditDetail>;
   listAssistants(options?: { limit?: number; offset?: number; status?: AssistantStatus; visibility?: AssistantVisibility }, signal?: AbortSignal): Promise<AssistantList>;
   getAssistant(id: string, signal?: AbortSignal): Promise<AssistantDetail>;
   createAssistant(input: CreateAssistant, signal?: AbortSignal): Promise<Assistant>;
