@@ -1,12 +1,6 @@
 import { AssistantWidget } from '@redmoor/assistant-widget'
 import { readAssistantWidgetDemoConfig } from './assistantWidgetDemoConfig'
 
-const redmoorSuggestions = [
-  'What services does Redmoor Consulting offer?',
-  'Can you help us build an AI assistant?',
-  'Do you work with digital agencies?',
-] as const
-
 const environmentExample = `VITE_ASSISTANT_API_BASE_URL=http://localhost:8000
 VITE_ASSISTANT_ID=redmoor`
 
@@ -82,14 +76,7 @@ export function AssistantWidgetDemo() {
           </aside>
         </div>
 
-        <AssistantWidget
-          apiBaseUrl={apiBaseUrl}
-          assistantId={assistantId}
-          assistantName="Redmoor Assistant"
-          placeholder="Ask Redmoor a question…"
-          suggestedQuestions={redmoorSuggestions}
-          welcomeMessage="Hello. Ask me a question about Redmoor Consulting."
-        />
+        <AssistantWidget apiBaseUrl={apiBaseUrl} assistantId={assistantId} />
       </section>
     </main>
   )

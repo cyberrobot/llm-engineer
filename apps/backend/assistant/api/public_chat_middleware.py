@@ -14,7 +14,7 @@ ASGIApp = Callable[
 
 
 class PublicChatBoundaryMiddleware:
-    """Enforce raw HTTP and strict route-specific CORS before body parsing."""
+    """Enforce the anonymous Assistant gate and strict route-specific CORS."""
 
     _ALLOWED_HEADERS = {"content-type", "x-anonymous-session-id", "x-request-id"}
 
@@ -22,9 +22,14 @@ class PublicChatBoundaryMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send) -> None:
-        if scope["type"] != "http" or not self._is_public_chat_path(scope.get("path", "")):
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        route_kind = self._public_route_kind(scope.get("path", ""))
+        if route_kind is None:
+            await self.app(scope, receive, send)
+            return
+        expected_method = "POST" if route_kind == "chat" else "GET"
         settings = get_public_assistant_chat_settings()
         headers = {
             key.decode("latin-1").lower(): value.decode("latin-1")
@@ -33,7 +38,12 @@ class PublicChatBoundaryMiddleware:
         origin = headers.get("origin")
         if not settings.enabled:
             await self._json_error(
-                send, 503, "public_chat_unavailable", "Public chat is unavailable."
+                send,
+                503,
+                "public_chat_unavailable",
+                "Public chat is unavailable.",
+                origin=origin if origin in settings.allowed_origins else None,
+                method=expected_method,
             )
             return
         if origin is not None and origin not in settings.allowed_origins:
@@ -50,7 +60,7 @@ class PublicChatBoundaryMiddleware:
             }
             if (
                 origin is None
-                or requested_method != "POST"
+                or requested_method != expected_method
                 or not requested_headers.issubset(self._ALLOWED_HEADERS)
             ):
                 await self._json_error(
@@ -61,13 +71,16 @@ class PublicChatBoundaryMiddleware:
                 {
                     "type": "http.response.start",
                     "status": 204,
-                    "headers": self._cors_headers(origin),
+                    "headers": self._cors_headers(origin, expected_method),
                 }
             )
             await send({"type": "http.response.body", "body": b""})
             return
-        if scope["method"] != "POST":
+        if scope["method"] != expected_method:
             await self.app(scope, receive, send)
+            return
+        if route_kind == "configuration":
+            await self.app(scope, receive, self._cors_sender(send, origin, expected_method))
             return
         media_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if media_type != "application/json":
@@ -128,6 +141,35 @@ class PublicChatBoundaryMiddleware:
             delivered = True
             return {"type": "http.request", "body": bytes(body), "more_body": False}
 
+        await self.app(scope, replay_receive, self._cors_sender(send, origin, expected_method))
+
+    @staticmethod
+    def _public_route_kind(path: str) -> str | None:
+        prefix = "/public/assistants/"
+        if not path.startswith(prefix):
+            return None
+        remainder = path.removeprefix(prefix)
+        if remainder and "/" not in remainder:
+            return "configuration"
+        if remainder.endswith("/chat") and "/" not in remainder.removesuffix("/chat"):
+            return "chat"
+        return None
+
+    @classmethod
+    def _cors_headers(cls, origin: str, method: str) -> list[tuple[bytes, bytes]]:
+        return [
+            (b"access-control-allow-origin", origin.encode("latin-1")),
+            (b"access-control-allow-methods", f"{method}, OPTIONS".encode("ascii")),
+            (
+                b"access-control-allow-headers",
+                b"Content-Type, X-Anonymous-Session-ID, X-Request-ID",
+            ),
+            (b"access-control-expose-headers", b"X-Request-ID, Retry-After"),
+            (b"vary", b"Origin"),
+        ]
+
+    @classmethod
+    def _cors_sender(cls, send, origin: str | None, method: str):
         async def cors_send(message):
             if message["type"] == "http.response.start" and origin is not None:
                 message = dict(message)
@@ -136,27 +178,10 @@ class PublicChatBoundaryMiddleware:
                     for key, value in message.get("headers", ())
                     if not key.lower().startswith(b"access-control-")
                 ]
-                message["headers"] = inner_headers + self._cors_headers(origin)
+                message["headers"] = inner_headers + cls._cors_headers(origin, method)
             await send(message)
 
-        await self.app(scope, replay_receive, cors_send)
-
-    @staticmethod
-    def _is_public_chat_path(path: str) -> bool:
-        return path.startswith("/public/assistants/") and path.endswith("/chat")
-
-    @classmethod
-    def _cors_headers(cls, origin: str) -> list[tuple[bytes, bytes]]:
-        return [
-            (b"access-control-allow-origin", origin.encode("latin-1")),
-            (b"access-control-allow-methods", b"POST, OPTIONS"),
-            (
-                b"access-control-allow-headers",
-                b"Content-Type, X-Anonymous-Session-ID, X-Request-ID",
-            ),
-            (b"access-control-expose-headers", b"X-Request-ID, Retry-After"),
-            (b"vary", b"Origin"),
-        ]
+        return cors_send
 
     async def _json_error(
         self,
@@ -166,13 +191,15 @@ class PublicChatBoundaryMiddleware:
         message: str,
         *,
         origin: str | None = None,
+        method: str = "POST",
     ) -> None:
         body = json.dumps({"detail": {"code": code, "message": message}}).encode("utf-8")
         headers = [
             (b"content-type", b"application/json"),
             (b"content-length", str(len(body)).encode()),
+            (b"cache-control", b"no-store"),
         ]
         if origin is not None:
-            headers.extend(self._cors_headers(origin))
+            headers.extend(self._cors_headers(origin, method))
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": body})

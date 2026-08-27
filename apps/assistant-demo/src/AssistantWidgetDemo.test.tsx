@@ -16,6 +16,17 @@ function eventStream(answer: string) {
   )
 }
 
+function publicConfiguration() {
+  return new Response(JSON.stringify({
+    id: 'redmoor',
+    name: 'Published Redmoor Assistant',
+    welcome_message: 'Published welcome message.',
+    input_placeholder: 'Ask the published assistant',
+    suggested_questions: ['Published suggested question'],
+    published_revision: 3,
+  }))
+}
+
 function deferredResponse() {
   let resolve!: (response: Response) => void
   const promise = new Promise<Response>((promiseResolve) => {
@@ -35,18 +46,22 @@ describe('AssistantWidgetDemo', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders the public widget with the configured backend and demo display content', () => {
+  it('renders the public widget with backend-managed published presentation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof globalThis.fetch>().mockResolvedValue(publicConfiguration()),
+    )
     render(<AssistantWidgetDemo />)
 
     expect(
       screen.getByRole('heading', { level: 1, name: 'Connected assistant demo' }),
     ).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Redmoor Assistant widget' })).toBeInTheDocument()
     expect(
-      screen.getByText('Hello. Ask me a question about Redmoor Consulting.'),
+      await screen.findByRole('region', { name: 'Published Redmoor Assistant widget' }),
     ).toBeInTheDocument()
+    expect(screen.getByText('Published welcome message.')).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: 'What services does Redmoor Consulting offer?' }),
+      screen.getByRole('button', { name: 'Published suggested question' }),
     ).toBeInTheDocument()
     expect(screen.getByText('https://api.example.test/base')).toBeInTheDocument()
     expect(screen.getByText('redmoor')).toBeInTheDocument()
@@ -57,12 +72,15 @@ describe('AssistantWidgetDemo', () => {
     const firstResponse = deferredResponse()
     const fetchImplementation = vi
       .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(publicConfiguration())
       .mockReturnValueOnce(firstResponse.promise)
       .mockResolvedValueOnce(eventStream('Second real answer.'))
     vi.stubGlobal('fetch', fetchImplementation)
     render(<AssistantWidgetDemo />)
 
-    const input = screen.getByRole('textbox', { name: 'Ask Redmoor Assistant a question' })
+    const input = await screen.findByRole('textbox', {
+      name: 'Ask Published Redmoor Assistant a question',
+    })
     await user.type(input, 'First question{Enter}')
 
     expect(screen.getByText('Thinking…')).toBeInTheDocument()
@@ -72,15 +90,15 @@ describe('AssistantWidgetDemo', () => {
     await user.type(input, 'Follow up{Enter}')
     expect(await screen.findByText('Second real answer.')).toBeInTheDocument()
 
-    expect(fetchImplementation).toHaveBeenCalledTimes(2)
-    expect(fetchImplementation.mock.calls[0]?.[0]).toBe(
+    expect(fetchImplementation).toHaveBeenCalledTimes(3)
+    expect(fetchImplementation.mock.calls[1]?.[0]).toBe(
       'https://api.example.test/base/public/assistants/redmoor/chat',
     )
-    expect(JSON.parse(String(fetchImplementation.mock.calls[0]?.[1]?.body))).toEqual({
+    expect(JSON.parse(String(fetchImplementation.mock.calls[1]?.[1]?.body))).toEqual({
       message: 'First question',
       history: [],
     })
-    expect(JSON.parse(String(fetchImplementation.mock.calls[1]?.[1]?.body))).toEqual({
+    expect(JSON.parse(String(fetchImplementation.mock.calls[2]?.[1]?.body))).toEqual({
       message: 'Follow up',
       history: [
         { role: 'user', content: 'First question' },
@@ -93,25 +111,24 @@ describe('AssistantWidgetDemo', () => {
     const user = userEvent.setup()
     const fetchImplementation = vi
       .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(publicConfiguration())
       .mockResolvedValueOnce(new Response('', { status: 500 }))
       .mockResolvedValueOnce(eventStream('Recovered real answer.'))
     vi.stubGlobal('fetch', fetchImplementation)
     render(<AssistantWidgetDemo />)
 
-    await user.click(
-      screen.getByRole('button', { name: 'What services does Redmoor Consulting offer?' }),
-    )
+    await user.click(await screen.findByRole('button', { name: 'Published suggested question' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Something went wrong while getting a response.',
     )
     await user.click(screen.getByRole('button', { name: 'Retry question' }))
 
     expect(await screen.findByText('Recovered real answer.')).toBeInTheDocument()
-    expect(screen.getAllByText('What services does Redmoor Consulting offer?')).toHaveLength(1)
-    expect(fetchImplementation).toHaveBeenCalledTimes(2)
-    expect(fetchImplementation.mock.calls[1]?.[0]).toBe(fetchImplementation.mock.calls[0]?.[0])
-    expect(fetchImplementation.mock.calls[1]?.[1]?.body).toBe(
-      fetchImplementation.mock.calls[0]?.[1]?.body,
+    expect(screen.getAllByText('Published suggested question')).toHaveLength(1)
+    expect(fetchImplementation).toHaveBeenCalledTimes(3)
+    expect(fetchImplementation.mock.calls[2]?.[0]).toBe(fetchImplementation.mock.calls[1]?.[0])
+    expect(fetchImplementation.mock.calls[2]?.[1]?.body).toBe(
+      fetchImplementation.mock.calls[1]?.[1]?.body,
     )
   })
 

@@ -55,6 +55,7 @@ function errorMessage(code: AssistantChatErrorCode): string {
 }
 
 function initialMessages(instanceId: string, welcomeMessage: string): StatefulConversationMessage[] {
+  if (welcomeMessage.length === 0) return []
   return [
     {
       id: `${instanceId}-welcome`,
