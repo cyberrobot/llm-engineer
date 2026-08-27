@@ -187,6 +187,17 @@ rules.
 The endpoint intentionally remains synchronous. Background workers, scheduling, and whole-job
 retries are outside this workflow.
 
+## HTTP security boundaries
+
+The intentional anonymous Assistant boundary is
+`POST /public/assistants/{assistant_slug}/chat`. Internal RAG UI requests use the existing
+administrator session at `POST /admin/assistants/rag-chat`, and RAG debug history is available at
+`GET /admin/operations/audit/rag`. The legacy `/assistant/chat`, `/rag-chat`, `/audit-logs`,
+`/chunks`, and raw-text `/ingest` routes are not mounted.
+
+`POST /ingest/upload` remains a supported machine-to-machine integration protected by the existing
+ingestion `X-API-Key`; credential validation occurs before upload persistence or ingestion work.
+
 ## Document ingestion jobs
 
 ### Uploaded-file integrity and exact-content deduplication

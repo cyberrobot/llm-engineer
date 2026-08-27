@@ -14,6 +14,7 @@ from operations.api.administration_dependencies import (
     get_job_operations_service,
     get_maintenance_service,
     get_operations_summary_service,
+    get_rag_audit_reader,
 )
 from operations.api.dependencies import require_operations_execute
 from operations.api.errors import administrative_error
@@ -33,6 +34,7 @@ from operations.api.models import (
     OperationalJobResponse,
     OperationalJobsResponse,
     OperationsSummaryResponse,
+    RagAuditEntryResponse,
     SummaryAssistantsResponse,
     SummaryAuditResponse,
     SummaryCacheResponse,
@@ -265,6 +267,18 @@ def list_audit(
         limit=page.limit,
         offset=page.offset,
     )
+
+
+@router.get(
+    "/audit/rag",
+    response_model=list[RagAuditEntryResponse],
+    summary="Browse RAG debug audit records",
+)
+def list_rag_audit(
+    reader: Annotated[Callable[[int], list[dict]], Depends(get_rag_audit_reader)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[RagAuditEntryResponse]:
+    return [RagAuditEntryResponse.model_validate(item) for item in reader(limit)]
 
 
 @router.get(

@@ -13,6 +13,7 @@
     "build-storybook": "storybook build",
     "install-storybook-browsers": "playwright install chromium",
     "test-storybook": "vitest --project storybook --run"
+    ,"test": "vitest --project unit --run"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",

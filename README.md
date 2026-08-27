@@ -105,9 +105,12 @@ docker build -t ai-discovery-assistant-backend apps/backend
 - `GET /health/live`
 - `GET /health/ready`
 - `GET /assistant/health`
-- `GET /admin/operations/health` (requires the administrative `X-API-Key`)
-- `POST /rag-chat`
-- `POST /ingest`
-- `GET /audit-logs`
+- `GET /admin/operations/health` (requires an administrator session or administrative `X-API-Key`)
+- `POST /admin/assistants/rag-chat` (requires an administrator session and trusted browser origin)
+- `GET /admin/operations/audit/rag` (requires an administrator session or administrative `X-API-Key`)
+- `POST /public/assistants/{assistant_slug}/chat` (the intentional anonymous Assistant boundary)
+- `POST /ingest/upload` (requires the ingestion `X-API-Key`)
 
-In production, consider setting `DISABLE_INGEST=true`, `DISABLE_CACHE=false`, and `DEBUG_DELAY=false`.
+The legacy `/assistant/chat`, `/rag-chat`, `/audit-logs`, `/chunks`, and raw-text `/ingest`
+routes are not supported or mounted. In production, consider setting `DISABLE_INGEST=true`,
+`DISABLE_CACHE=false`, and `DEBUG_DELAY=false`.

@@ -31,8 +31,8 @@ returns `admin_permission_denied`.
   never includes the configured operator message. Readiness reports `not_ready` while maintenance
   is enabled; liveness remains `alive`.
   Maintenance is enforced centrally for the published
-  `/public/assistants/{assistant_slug}/chat` route and the existing unauthenticated
-  `/assistant/chat` and `/rag-chat` routes. `/assistant/health`, `/admin/auth/**`,
+  `/public/assistants/{assistant_slug}/chat` route. The retired `/assistant/chat` and `/rag-chat`
+  routes are not classified as public traffic. `/assistant/health`, `/admin/auth/**`,
   `/admin/operations/**`, and the health probes remain reachable so operators can authenticate,
   diagnose the service, and disable maintenance.
 - `GET /admin/operations/jobs` and `GET /admin/operations/jobs/{id}` provide a read-only projection
@@ -42,6 +42,13 @@ returns `admin_permission_denied`.
   exact `user`, `action`, `resource`, and `result` filters, inclusive `date_from`/`date_to` values,
   `limit` (1–200), and `offset`. `GET /admin/operations/audit/{id}` includes request/correlation IDs,
   duration, outcome, and redacted safe metadata.
+- `GET /admin/operations/audit/rag` is the authenticated read-only extension used by the internal
+  RAG UI to browse retrieval and generation debug records. It preserves the RAG history contract
+  while removing the former anonymous `/audit-logs` route.
+- `POST /admin/assistants/rag-chat` is the authenticated RAG UI execution boundary. It requires an
+  administrator session and trusted browser origin before retrieval or provider work. Its
+  constrained `user_role` field selects the document-role view an administrator is testing; it is
+  not an authentication or authorization credential.
 - `GET /admin/operations/summary` aggregates health, maintenance, cache-region count, running/failed
   job counts, and today's administrative audit count from the owning services. It also returns a
   server-generated UTC `generated_at` timestamp and dashboard aggregates for Assistants, Knowledge

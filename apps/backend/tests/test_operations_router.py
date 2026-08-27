@@ -223,6 +223,7 @@ def test_operations_openapi_is_tagged_documented_and_secure_by_default():
         "/admin/operations/cache/key",
         "/admin/operations/maintenance",
         "/admin/operations/audit",
+        "/admin/operations/audit/rag",
         "/admin/operations/audit/{entry_id}",
         "/admin/operations/jobs",
         "/admin/operations/jobs/{job_id}",

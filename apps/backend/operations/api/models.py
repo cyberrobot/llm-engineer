@@ -132,6 +132,21 @@ class AuditPageResponse(BaseModel):
     offset: int
 
 
+class RagAuditEntryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    timestamp: str
+    user_role: str
+    question: str
+    reply: dict[str, object]
+    retrieved_chunks: list[dict[str, object]]
+    reranked_chunks: list[dict[str, object]]
+    metrics: dict[str, object]
+    queries: list[dict[str, object]]
+    evaluation: dict[str, object]
+
+
 class AuditDetailResponse(AuditEntryResponse):
     actor: str
     request_id: str
