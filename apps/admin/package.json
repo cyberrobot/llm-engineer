@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -b",
     "test": "vitest run",
+    "verify:ci": "node scripts/verify-ci-workflow.mjs",
     "storybook": "storybook dev -p 6007",
     "build-storybook": "storybook build"
   },
@@ -33,6 +34,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.5.0",
+    "js-yaml": "^4.1.1",
     "jsdom": "^26.1.0",
     "storybook": "^10.4.6",
     "typescript": "~6.0.2",

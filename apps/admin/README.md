@@ -74,6 +74,32 @@ The app checks `GET /admin/auth/me` before showing protected content. A confirme
 
 Run `npm run dev:admin`, `npm run lint:admin`, `npm run typecheck --workspace @ai-discovery-assistant/admin`, `npm run test:admin`, `npm run build:admin`, or `npm run build-storybook --workspace=apps/admin` from the repository root.
 
+## Continuous integration
+
+The dedicated **Admin UI CI / Admin validation** check is path-scoped and appears only for pull
+requests that can affect the Admin deliverable. When present, it installs the root workspace and
+runs the complete Admin quality gate: tests, lint, type checking, the production build, and the
+Storybook build. The same validation runs for relevant pushes to `main`.
+
+Admin source and configuration, the root npm manifests, the Admin workflow, and the Assistant
+widget package are Admin CI inputs. The widget is included because Admin TypeScript, Vite, and
+Vitest resolve `@redmoor/assistant-widget` directly to its workspace source. A widget change can
+therefore trigger both widget and Admin validation, with each check covering its own deliverable.
+Unrelated backend, documentation, and task-only pull requests do not receive a misleading Admin
+status check.
+
+The real path-scoped **Admin validation** check must not be configured as a universally required
+repository check because unrelated pull requests intentionally do not create it. Instead, repository
+rulesets must require **Admin UI CI / Required**. That gate is present on every pull request: it
+reports Admin validation as not applicable when the changed-file evaluation finds no Admin-impacting
+path, and otherwise succeeds only after the real Admin validation workflow for the same pull request
+and commit succeeds. Failed, cancelled, unexpectedly skipped, missing, or timed-out validation cannot
+satisfy the gate.
+
+The repository-wide `Backend tests` and `Storybook tests` checks remain separate; the latter exercises
+the RAG UI Storybook interactions, whereas Admin CI verifies that the Admin Storybook builds
+successfully.
+
 ## Troubleshooting
 
 - A configuration screen means `VITE_ADMIN_API_BASE_URL` is missing or is not an absolute credential-free HTTP(S) URL.
