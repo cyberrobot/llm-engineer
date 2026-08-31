@@ -12,12 +12,10 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
-    Query,
     Request,
     Response,
     UploadFile,
 )
-from pydantic import BaseModel
 
 from assistant.api.file_dependencies import get_file_fingerprint_service, get_file_ingestion_service
 from assistant.application.file_fingerprint import FileFingerprintService
@@ -28,8 +26,6 @@ from assistant.application.file_ingestion import (
     IdempotentFileRequestConflict,
     InvalidFileIdempotencyKey,
 )
-from assistant.application.ingest_document import ingest_document
-from assistant.application.uploads import get_chunks as list_chunks
 from core.config import DISABLE_INGEST, get_ingest_api_key, get_max_upload_bytes, get_upload_dir
 from shared.dependencies.rate_limit import limiter
 
@@ -38,12 +34,6 @@ logger = logging.getLogger(__name__)
 
 PDF_CONTENT_TYPE = "application/pdf"
 UPLOAD_CHUNK_SIZE = 1024 * 1024
-
-
-class IngestRequest(BaseModel):
-    text: str
-    doc_type: str = "general"
-    access_roles: list[str] = ["user"]
 
 
 def require_ingest_api_key(x_api_key: str | None):
@@ -64,17 +54,6 @@ def parse_access_roles(access_roles: list[str] | None) -> list[str]:
         roles.extend(part.strip() for part in role.split(",") if part.strip())
 
     return roles or ["user"]
-
-
-@router.post("/ingest")
-@limiter.limit("5/minute")
-def ingest(request: Request, body: IngestRequest):
-    if DISABLE_INGEST:
-        raise HTTPException(
-            status_code=403, detail="Ingest endpoint is disabled in this environment."
-        )
-
-    return ingest_document(text=body.text, doc_type=body.doc_type, access_roles=body.access_roles)
 
 
 @router.post("/ingest/upload", status_code=202)
@@ -213,13 +192,3 @@ async def upload_pdf(
         "ingestion_in_progress": result.ingestion_in_progress,
         "force_reindex": result.force_reindex,
     }
-
-
-@router.get("/chunks")
-def get_chunks():
-    return list_chunks()
-
-
-class SearchRequest(BaseModel):
-    query: str = Query(..., description="Search query")
-    access_role: str = Query("user", description="Access role for filtering results")

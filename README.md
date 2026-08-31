@@ -106,8 +106,13 @@ docker build -t ai-discovery-assistant-backend apps/backend
 - `GET /health/ready`
 - `GET /assistant/health`
 - `GET /admin/operations/health` (requires the administrative `X-API-Key`)
-- `POST /rag-chat`
-- `POST /ingest`
-- `GET /audit-logs`
+- `POST /public/assistants/{assistant_slug}/chat` (supported anonymous Assistant-widget boundary)
+- `POST /ingest/upload` (requires the ingestion `X-API-Key`)
+- `POST /rag-chat` (temporary legacy RAG UI dependency)
+- `GET /audit-logs` (temporary legacy RAG UI dependency)
 
-In production, consider setting `DISABLE_INGEST=true`, `DISABLE_CACHE=false`, and `DEBUG_DELAY=false`.
+The legacy `/assistant/chat`, `/chunks`, and raw-text `/ingest` routes are not mounted. `/rag-chat`
+and `/audit-logs` remain unchanged temporarily because `apps/rag-ui` actively depends on them; they
+remain technical debt and will be removed together with a deliberate RAG UI retirement or migration
+in a separate change. In production, consider setting `DISABLE_INGEST=true`, `DISABLE_CACHE=false`,
+and `DEBUG_DELAY=false`.

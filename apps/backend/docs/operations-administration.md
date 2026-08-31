@@ -31,8 +31,9 @@ returns `admin_permission_denied`.
   never includes the configured operator message. Readiness reports `not_ready` while maintenance
   is enabled; liveness remains `alive`.
   Maintenance is enforced centrally for the published
-  `/public/assistants/{assistant_slug}/chat` route and the existing unauthenticated
-  `/assistant/chat` and `/rag-chat` routes. `/assistant/health`, `/admin/auth/**`,
+  `/public/assistants/{assistant_slug}/chat` route and the temporarily retained unauthenticated
+  `/rag-chat` RAG UI route. The retired `/assistant/chat` route is no longer classified as public
+  traffic. `/assistant/health`, `/admin/auth/**`,
   `/admin/operations/**`, and the health probes remain reachable so operators can authenticate,
   diagnose the service, and disable maintenance.
 - `GET /admin/operations/jobs` and `GET /admin/operations/jobs/{id}` provide a read-only projection

@@ -13,7 +13,7 @@ ASGIApp = Callable[
 class MaintenanceModeMiddleware:
     """Centrally gate public runtime traffic while leaving admin and probes reachable."""
 
-    _LEGACY_PUBLIC_ASSISTANT_PATHS = frozenset({"/assistant/chat", "/rag-chat"})
+    _LEGACY_PUBLIC_ASSISTANT_PATHS = frozenset({"/rag-chat"})
 
     def __init__(self, app: ASGIApp, service_factory: Callable[[], MaintenanceService]) -> None:
         self.app = app

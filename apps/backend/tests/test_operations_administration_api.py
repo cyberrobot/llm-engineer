@@ -494,25 +494,23 @@ def test_maintenance_centrally_blocks_public_assistant_traffic_but_not_admin_or_
         }
         assert blocked.headers["access-control-allow-origin"] == "http://localhost:5173"
         assert blocked.headers["x-request-id"] == request_id
-        for path in ("/assistant/chat", "/rag-chat"):
-            legacy_request_id = str(uuid4())
-            legacy_blocked = client.post(
-                path,
-                headers={
-                    "Origin": "http://localhost:5173",
-                    "X-Request-ID": legacy_request_id,
-                },
-                json={},
-            )
-            assert legacy_blocked.status_code == 503
-            assert legacy_blocked.json()["detail"] == {
-                "code": "maintenance_mode",
-                "message": "The service is undergoing maintenance.",
-            }
-            assert legacy_blocked.headers["access-control-allow-origin"] == (
-                "http://localhost:5173"
-            )
-            assert legacy_blocked.headers["x-request-id"] == legacy_request_id
+        assert client.post("/assistant/chat", json={}).status_code == 404
+        legacy_request_id = str(uuid4())
+        legacy_blocked = client.post(
+            "/rag-chat",
+            headers={
+                "Origin": "http://localhost:5173",
+                "X-Request-ID": legacy_request_id,
+            },
+            json={},
+        )
+        assert legacy_blocked.status_code == 503
+        assert legacy_blocked.json()["detail"] == {
+            "code": "maintenance_mode",
+            "message": "The service is undergoing maintenance.",
+        }
+        assert legacy_blocked.headers["access-control-allow-origin"] == ("http://localhost:5173")
+        assert legacy_blocked.headers["x-request-id"] == legacy_request_id
         assert (
             client.get("/admin/operations", headers={"X-API-Key": "admin-secret"}).status_code
             == 200
