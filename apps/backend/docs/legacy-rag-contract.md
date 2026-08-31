@@ -89,9 +89,21 @@ disabled, requests proceed normally.
 
 The RAG UI sends an anonymous `GET` request without a query parameter. The optional integer
 `limit` parameter defaults to the configured `AUDIT_LOG_LIMIT`, currently `10`, and the effective
-value is forwarded directly to persistence. Explicit positive, zero, negative, and arbitrarily
-large integers are currently accepted without clamping. If repeated, the last `limit` value wins.
-A non-integer value returns FastAPI's `422` validation response.
+value is forwarded directly to persistence. FastAPI parses and forwards explicit positive, zero,
+negative, repeated, and arbitrarily large integers without clamping; if repeated, the last `limit`
+value wins. PostgreSQL then determines whether the forwarded value is a valid `LIMIT`:
+
+- the omitted default and explicit positive values return up to that many rows with `200`;
+- zero returns `[]` with `200`;
+- repeated values use the last value and return `200` when it is a valid PostgreSQL limit;
+- a negative value is rejected by PostgreSQL and currently surfaces as a plain-text `500 Internal
+  Server Error`;
+- an integer larger than PostgreSQL's `bigint` range is parsed and forwarded by FastAPI, then
+  rejected by PostgreSQL and likewise surfaces as a plain-text `500 Internal Server Error`;
+- a non-integer is rejected by FastAPI before persistence with its JSON `422` validation response.
+
+These outcomes characterize the current unbounded parameter and uncaught persistence errors; they
+do not endorse or add validation, clamping, or error mapping.
 
 A successful request returns a top-level JSON array. An empty result is `[]` with status `200`.
 Rows are selected by `id` descending, so the newest row is first, and the SQL query applies the
@@ -124,7 +136,7 @@ effective limit. A representative item is:
       "distance": 0.1,
       "hybrid_score": 0.9,
       "text_snippet": "Review the checklist.",
-      "keyword_match": true
+      "keyword_match": 0.375
     }
   ],
   "reranked_chunks": [
@@ -135,7 +147,7 @@ effective limit. A representative item is:
       "distance": 0.2,
       "hybrid_score": 0.8,
       "text_snippet": "Document consent.",
-      "keyword_match": false
+      "keyword_match": 0.0
     }
   ],
   "evaluation": {
@@ -154,6 +166,9 @@ effective limit. A representative item is:
 The RAG UI expects the listed top-level debug fields but does not read `evaluation`; `evaluation` is
 nevertheless preserved legacy output and must not be removed or reshaped as part of this freeze. It
 renders every metric shown above and every retrieved/reranked chunk field shown above.
+`keyword_match` is a JSON number produced from PostgreSQL's text-search rank, not a boolean. Both
+retrieved and reranked items must preserve that numeric type because the RAG UI invokes
+`keyword_match.toFixed(3)`.
 
 The route accepts anonymous requests and is limited to 60 requests per minute per SlowAPI client
 key. Unlike `/rag-chat`, `/audit-logs` is not classified as public Assistant traffic by the

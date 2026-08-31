@@ -257,7 +257,7 @@ def _audit_item(*, item_id: int, timestamp: str, question: str) -> dict:
                 "distance": 0.1,
                 "hybrid_score": 0.9,
                 "text_snippet": "Review the checklist.",
-                "keyword_match": True,
+                "keyword_match": 0.375,
             },
             {
                 "rank": 2,
@@ -266,7 +266,7 @@ def _audit_item(*, item_id: int, timestamp: str, question: str) -> dict:
                 "distance": 0.2,
                 "hybrid_score": 0.8,
                 "text_snippet": "Document consent.",
-                "keyword_match": False,
+                "keyword_match": 0.0,
             },
         ],
         "reranked_chunks": [
@@ -277,7 +277,7 @@ def _audit_item(*, item_id: int, timestamp: str, question: str) -> dict:
                 "distance": 0.2,
                 "hybrid_score": 0.8,
                 "text_snippet": "Document consent.",
-                "keyword_match": False,
+                "keyword_match": 0.0,
             },
             {
                 "rank": 2,
@@ -286,7 +286,7 @@ def _audit_item(*, item_id: int, timestamp: str, question: str) -> dict:
                 "distance": 0.1,
                 "hybrid_score": 0.9,
                 "text_snippet": "Review the checklist.",
-                "keyword_match": True,
+                "keyword_match": 0.375,
             },
         ],
         "evaluation": {
@@ -331,6 +331,14 @@ def test_audit_logs_preserve_complete_newest_first_array_and_default_limit(
     assert received_limits == [AUDIT_LOG_LIMIT]
     assert response.json() == expected
     assert [item["id"] for item in response.json()] == [12, 11]
+    keyword_matches = [
+        chunk["keyword_match"]
+        for item in response.json()
+        for group in ("retrieved_chunks", "reranked_chunks")
+        for chunk in item[group]
+    ]
+    assert keyword_matches == [0.375, 0.0, 0.0, 0.375] * 2
+    assert all(type(value) is float for value in keyword_matches)
 
 
 def test_audit_logs_preserve_empty_array(client, monkeypatch) -> None:
@@ -353,22 +361,22 @@ def test_audit_logs_preserve_empty_array(client, monkeypatch) -> None:
     ],
     ids=["explicit", "zero", "negative", "repeated-last-wins", "excessively-large"],
 )
-def test_audit_logs_forward_current_accepted_limits(
+def test_audit_logs_parse_and_forward_current_integer_limits(
     client, monkeypatch, query, expected_limit
 ) -> None:
-    received_limits = []
+    class ForwardedLimit(Exception):
+        def __init__(self, limit: int) -> None:
+            self.limit = limit
 
     def rows(limit):
-        received_limits.append(limit)
-        return []
+        raise ForwardedLimit(limit)
 
     monkeypatch.setattr("assistant.api.audit.get_audit_logs", rows)
 
-    response = client.get(f"/audit-logs{query}")
+    with pytest.raises(ForwardedLimit) as raised:
+        client.get(f"/audit-logs{query}")
 
-    assert response.status_code == 200
-    assert received_limits == [expected_limit]
-    assert response.json() == []
+    assert raised.value.limit == expected_limit
 
 
 def test_audit_logs_reject_malformed_limit(client) -> None:

@@ -425,6 +425,8 @@ Acceptance criteria
 Tests to add or update
 
 - Add apps/backend/tests/test_legacy_rag_contract.py for focused HTTP characterization.
+- Add apps/backend/tests/test_legacy_rag_postgres_integration.py for audit-limit behavior through
+  FastAPI and the disposable PostgreSQL test database.
 - Update apps/backend/tests/test_legacy_api_security.py only to remove assertions made redundant by the dedicated suite or to retain its route-removal security focus.
 - Update apps/backend/tests/test_operations_administration_api.py only if maintenance assertions are moved without reducing its operations-level coverage.
 - Update apps/backend/tests/test_audit.py only when realistic persistence coverage is needed for newest-first and limit semantics.
@@ -459,19 +461,26 @@ git diff --check origin/main...HEAD
 git diff --exit-code origin/main...HEAD -- apps/rag-ui
 
 # Focused contract and directly affected backend suites.
-venv/bin/python -m pytest -q -o "addopts=" --strict-markers \
-  apps/backend/tests/test_legacy_rag_contract.py \
-  apps/backend/tests/test_legacy_api_security.py \
-  apps/backend/tests/test_operations_administration_api.py \
-  apps/backend/tests/test_rag_chat.py \
-  apps/backend/tests/test_audit.py
+cd apps/backend
+../../venv/bin/python -m pytest -q -o "addopts=" --strict-markers \
+  tests/test_legacy_rag_contract.py \
+  tests/test_legacy_rag_postgres_integration.py \
+  tests/test_legacy_api_security.py \
+  tests/test_operations_administration_api.py \
+  tests/test_rag_chat.py \
+  tests/test_audit.py
+cd ../..
 
 # Broader backend verification.
-venv/bin/python -m pytest -q
+npm run test:api
 venv/bin/ruff check apps/backend
 venv/bin/ruff format --check apps/backend
 
 # The consumer must remain buildable without source changes.
-npm run lint --workspace @ai-discovery-assistant/rag-ui
 npm run build --workspace @ai-discovery-assistant/rag-ui
 ```
+
+The RAG UI lint command is not a passing gate for this characterization-only PR: on the selected
+base it reports five pre-existing failures in unchanged RAG UI files. Preserve the no-diff check
+and successful production build above, and record the lint result as a known baseline limitation
+rather than claiming it passes.
