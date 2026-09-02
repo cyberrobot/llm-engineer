@@ -102,6 +102,8 @@ def test_get_audit_logs_returns_evaluation():
     query, params = cursor.execute_calls[0]
 
     assert "evaluation" in query
+    assert "ORDER BY id DESC" in query
+    assert "LIMIT %s" in query
     assert params == (10,)
     assert result == [
         {

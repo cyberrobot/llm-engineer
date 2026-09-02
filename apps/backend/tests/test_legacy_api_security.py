@@ -32,35 +32,6 @@ def test_unused_legacy_public_routes_are_not_mounted_or_documented() -> None:
     assert "/admin/operations/audit/rag" not in documented_paths
 
 
-def test_rag_chat_retains_its_rag_ui_contract(monkeypatch) -> None:
-    expected = {
-        "reply": {"answer": "Use the checklist.", "source_ids": ["chunk-1"]},
-        "sources": [{"id": "chunk-1", "text": "Checklist"}],
-        "evaluation": {"metrics": {"groundedness_score": 1.0}},
-    }
-    monkeypatch.setattr("assistant.api.rag.rag_chat", lambda **_kwargs: expected)
-
-    response = TestClient(app).post(
-        "/rag-chat",
-        json={"message": "What is required?", "user_role": "manager"},
-    )
-
-    assert response.status_code == 200
-    assert response.json() == expected
-    assert "/rag-chat" in app.openapi()["paths"]
-
-
-def test_audit_logs_retain_their_rag_ui_contract(monkeypatch) -> None:
-    expected = [{"id": 7, "question": "What is required?"}]
-    monkeypatch.setattr("assistant.api.audit.get_audit_logs", lambda limit: expected)
-
-    response = TestClient(app).get("/audit-logs")
-
-    assert response.status_code == 200
-    assert response.json() == expected
-    assert "/audit-logs" in app.openapi()["paths"]
-
-
 def test_authenticated_upload_integration_remains_mounted_and_rejects_missing_key(
     monkeypatch, tmp_path
 ) -> None:

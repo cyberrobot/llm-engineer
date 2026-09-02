@@ -196,7 +196,8 @@ raw-text `/ingest` routes are not mounted.
 `POST /rag-chat` and `GET /audit-logs` remain unchanged as temporary legacy exceptions because they
 are active dependencies of `apps/rag-ui`. They remain candidates for removal and must be retired
 together with RAG UI in a separate PR; this change does not partially secure, migrate, or replace
-them with administrator endpoints.
+them with administrator endpoints. Their consumer-specific behavior is recorded in
+[`docs/legacy-rag-contract.md`](docs/legacy-rag-contract.md); new consumers must not adopt it.
 
 `POST /ingest/upload` remains a supported machine-to-machine integration protected by the existing
 ingestion `X-API-Key`; credential validation occurs before upload persistence or ingestion work.
