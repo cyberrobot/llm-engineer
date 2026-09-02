@@ -6,12 +6,9 @@ from fastapi import Depends
 from admin_auth.api_errors import admin_auth_error
 from admin_auth.api_models import AdminAuthErrorCode
 from admin_auth.dependencies import require_administrator_role
-from admin_auth.domain import Administrator, AdministratorRole
+from admin_auth.domain import Administrator
 
 RAG_UI_REQUEST_MAX_BYTES = 32_768
-RAG_UI_ROLES_BY_ADMINISTRATOR_ROLE: dict[AdministratorRole, tuple[str, ...]] = {
-    AdministratorRole.administrator: ("doctor", "nurse", "analyst", "manager", "agent"),
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +20,7 @@ class RagRetrievalAuthorization:
 def require_rag_retrieval_authorization(
     administrator: Annotated[Administrator, Depends(require_administrator_role)],
 ) -> RagRetrievalAuthorization:
-    permitted_roles = RAG_UI_ROLES_BY_ADMINISTRATOR_ROLE.get(administrator.role, ())
+    permitted_roles = administrator.document_access_roles
     if not permitted_roles:
         raise admin_auth_error(AdminAuthErrorCode.forbidden)
     return RagRetrievalAuthorization(

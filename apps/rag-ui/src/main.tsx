@@ -3,16 +3,13 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.tsx';
 import { DebugProvider } from './components/DebugContext.tsx';
-import { UserProvider } from './components/UserContext.tsx';
 import AuthenticatedRagBoundary from './components/AuthenticatedRagBoundary.tsx';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AuthenticatedRagBoundary>
       <DebugProvider>
-        <UserProvider>
-          <App />
-        </UserProvider>
+        <App />
       </DebugProvider>
     </AuthenticatedRagBoundary>
   </StrictMode>,

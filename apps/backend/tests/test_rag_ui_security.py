@@ -6,15 +6,12 @@ from fastapi.testclient import TestClient
 from admin_auth.api_errors import admin_auth_error
 from admin_auth.api_models import AdminAuthErrorCode
 from admin_auth.dependencies import get_administrator_auth_service, require_administrator_role
+from admin_auth.domain import Administrator
 from admin_auth.passwords import AdministratorPasswordService
 from admin_auth.repository import InMemoryAdministratorAuthRepository
 from admin_auth.service import AdministratorAuthenticationService
 from assistant.api.rag import MAX_RAG_MESSAGE_CHARACTERS
-from assistant.api.rag_ui_security import (
-    RAG_UI_REQUEST_MAX_BYTES,
-    RagRetrievalAuthorization,
-    require_rag_retrieval_authorization,
-)
+from assistant.api.rag_ui_security import RAG_UI_REQUEST_MAX_BYTES
 from main import app
 from shared.dependencies.rate_limit import limiter
 
@@ -53,7 +50,7 @@ def client() -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-def _authenticate(client: TestClient) -> None:
+def _authenticate(client: TestClient) -> Administrator:
     repository = InMemoryAdministratorAuthRepository()
     service = AdministratorAuthenticationService(
         repository,
@@ -68,6 +65,7 @@ def _authenticate(client: TestClient) -> None:
     login = service.login("admin@example.com", PASSWORD)
     app.dependency_overrides[get_administrator_auth_service] = lambda: service
     client.cookies.set("redmoor_admin_session", login.session_token)
+    return login.administrator
 
 
 def test_rag_routes_reject_anonymous_callers_before_sensitive_work(client, monkeypatch):
@@ -89,32 +87,63 @@ def test_rag_routes_reject_anonymous_callers_before_sensitive_work(client, monke
     assert audit_response.headers["cache-control"] == "no-store"
 
 
-def test_server_authorization_prevents_forged_cross_role_retrieval(client, monkeypatch):
-    _authenticate(client)
-    app.dependency_overrides[require_rag_retrieval_authorization] = lambda: (
-        RagRetrievalAuthorization(principal_id="role-a-admin", permitted_roles=("doctor",))
-    )
-    calls = []
-    monkeypatch.setattr(
-        "assistant.api.rag.rag_chat",
-        lambda **kwargs: calls.append(kwargs) or EMPTY_RESPONSE,
-    )
+def test_production_authorization_derives_role_and_blocks_cross_role_retrieval(client, monkeypatch):
+    administrator = _authenticate(client)
+    retrieval_roles = []
+    administrator_chunk = {
+        "id": "administrator-chunk",
+        "doc_id": "administrator-document",
+        "text": "Administrator-only policy",
+        "distance": 0.1,
+        "keyword_match": 0.5,
+        "hybrid_score": 0.9,
+    }
+    reply = {
+        "answer": "Administrator-only answer",
+        "source_ids": [administrator_chunk["id"]],
+    }
+    evaluation = {"sentences": [], "metrics": {"total_sentences": 0}}
 
-    allowed = client.post("/rag-chat", json={"message": "allowed", "user_role": "doctor"})
+    monkeypatch.setattr("assistant.application.rag_chat.DEBUG_DELAY", False)
+    monkeypatch.setattr("assistant.application.rag_chat.DISABLE_AUDIT_LOGS", True)
+    monkeypatch.setattr("assistant.application.rag_chat.get_cached_response", lambda *_args: None)
+
+    def retrieve(_query, role, _start_time):
+        retrieval_roles.append(role)
+        return ([administrator_chunk] if role == administrator.role.value else [], [], 0.1)
+
+    monkeypatch.setattr("assistant.application.rag_chat.retrieve_context", retrieve)
+    monkeypatch.setattr(
+        "assistant.application.rag_chat.generate_answer",
+        lambda _query, results: (reply, results, results, 0.1),
+    )
+    monkeypatch.setattr(
+        "assistant.application.rag_chat.build_evaluation", lambda *_args: evaluation
+    )
+    monkeypatch.setattr("assistant.application.rag_chat.set_cache", lambda *_args: None)
+
+    allowed = client.post(
+        "/rag-chat",
+        json={"message": "allowed", "user_role": administrator.role.value},
+    )
     forged = client.post("/rag-chat", json={"message": "forged", "user_role": "manager"})
+    unknown = client.post("/rag-chat", json={"message": "unknown", "user_role": "unknown-role"})
     omitted = client.post("/rag-chat", json={"message": "omitted"})
 
     assert allowed.status_code == 200
-    assert forged.status_code == 403
-    assert omitted.status_code == 200
-    assert calls == [
-        {"query": "allowed", "user_role": "doctor"},
-        {"query": "omitted", "user_role": "doctor"},
+    assert allowed.json()["sources"] == [
+        {"id": "administrator-chunk", "text": "Administrator-only policy"}
     ]
+    assert forged.status_code == 403
+    assert unknown.status_code == 403
+    assert omitted.status_code == 200
+    assert omitted.json()["reply"]["answer"] == "Administrator-only answer"
+    assert retrieval_roles == [administrator.role.value, administrator.role.value]
 
 
 def test_cached_privileged_answer_cannot_cross_into_narrower_role(client, monkeypatch):
-    _authenticate(client)
+    administrator = _authenticate(client)
+    cache_lookups = []
     manager_answer = {
         "reply": {"answer": "Manager-only answer", "source_ids": ["manager-chunk"]},
         "sources": [{"id": "manager-chunk", "text": "Restricted manager text"}],
@@ -122,10 +151,12 @@ def test_cached_privileged_answer_cannot_cross_into_narrower_role(client, monkey
     }
     monkeypatch.setattr("assistant.application.rag_chat.DEBUG_DELAY", False)
     monkeypatch.setattr("assistant.application.rag_chat.DISABLE_CACHE", False)
-    monkeypatch.setattr(
-        "assistant.application.rag_chat.get_cache",
-        lambda _query, role: manager_answer if role == "manager" else None,
-    )
+
+    def get_cached_value(_query, role):
+        cache_lookups.append(role)
+        return manager_answer if role == "manager" else None
+
+    monkeypatch.setattr("assistant.application.rag_chat.get_cache", get_cached_value)
     monkeypatch.setattr(
         "assistant.application.rag_chat.get_latest_audit_log_for_query", lambda **_kwargs: None
     )
@@ -133,22 +164,14 @@ def test_cached_privileged_answer_cannot_cross_into_narrower_role(client, monkey
         "assistant.application.rag_chat.retrieve_context", lambda *_args: ([], [], 0.1)
     )
 
-    app.dependency_overrides[require_rag_retrieval_authorization] = lambda: (
-        RagRetrievalAuthorization(principal_id="manager", permitted_roles=("manager",))
-    )
-    privileged = client.post("/rag-chat", json={"message": "policy"})
-
-    app.dependency_overrides[require_rag_retrieval_authorization] = lambda: (
-        RagRetrievalAuthorization(principal_id="doctor", permitted_roles=("doctor",))
-    )
     forged = client.post("/rag-chat", json={"message": "policy", "user_role": "manager"})
     narrower = client.post("/rag-chat", json={"message": "policy"})
 
-    assert privileged.json() == manager_answer
     assert forged.status_code == 403
     assert narrower.status_code == 200
     assert narrower.json() == EMPTY_RESPONSE
     assert "Manager-only answer" not in narrower.text
+    assert cache_lookups == [administrator.role.value]
 
 
 def test_authenticated_caller_without_admin_authorization_cannot_read_audit(client):

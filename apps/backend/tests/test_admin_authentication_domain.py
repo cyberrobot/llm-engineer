@@ -57,6 +57,12 @@ def test_domain_rejects_invalid_role_status_and_lockout_state():
         replace(administrator(), failed_login_count=-1)
 
 
+def test_authenticated_administrator_role_is_the_document_access_source_of_truth():
+    principal = administrator()
+
+    assert principal.document_access_roles == (AdministratorRole.administrator.value,)
+
+
 def test_session_rejects_expiry_and_reports_revocation():
     session = AdministratorSession(
         id=uuid4(),

@@ -195,9 +195,11 @@ raw-text `/ingest` routes are not mounted.
 
 `POST /rag-chat` and `GET /audit-logs` remain temporary legacy dependencies of `apps/rag-ui`, but
 both now require the existing administrator cookie session and administrator role. Retrieval roles
-are derived from that trusted identity and a client role hint may only narrow the server-permitted
-set. Both routes bound caller-controlled input, return safe unexpected errors, and disable response
-caching. They remain candidates for removal and must be retired together with RAG UI. Their
+are derived directly from the authenticated administrator's established role; the current
+administrator principal receives only the `administrator` document role, never implicit universal
+document access. A legacy client role hint may only narrow that server-permitted set. Both routes
+bound caller-controlled input, return safe unexpected errors, and disable response caching. They
+remain candidates for removal and must be retired together with RAG UI. Their
 consumer-specific behavior is recorded in
 [`docs/legacy-rag-contract.md`](docs/legacy-rag-contract.md); new consumers must not adopt it.
 

@@ -24,19 +24,26 @@ The RAG UI sends an `application/json` object with these fields:
 | `message` | string | Required; at most 4,000 characters. Empty strings remain accepted. |
 | `user_role` | string or null | Optional role narrowing hint; never an authorization claim. |
 
-Unknown object fields are ignored but still count toward the raw request-body limit. A null or
-omitted `user_role` selects the first server-permitted role; an empty string has the same behavior.
+Unknown object fields are ignored but still count toward the raw request-body limit. The RAG UI no
+longer sends `user_role`. A null, omitted, or empty value selects the authenticated principal's
+server-derived document role.
 Non-string role values, a missing or non-string `message`, and malformed JSON return `422`.
 Messages longer than 4,000 characters return `422` without invoking RAG orchestration. The raw
 encoded request body is independently limited to 32,768 bytes and larger bodies return `413`
 before body parsing or orchestration.
 
-The server derives permitted retrieval roles from the authenticated administrator role. The
-current sole administrator role is explicitly mapped to the five established demo roles:
-`doctor`, `nurse`, `analyst`, `manager`, and `agent`. A supplied `user_role` can select one role
-from that set but cannot add a role; unknown or unpermitted roles return the standard administrator
-`403` response. Retrieval, audit lookup, and cache keys receive only this validated effective role,
-so a cached response from one role cannot cross into another role's authorization context.
+The authenticated `Administrator` identity is the authorization source of truth. Its established
+`AdministratorRole` is exposed by the administrator domain as its document-access role set; the
+current `administrator` principal therefore receives only the `administrator` document role. It is
+not implicitly granted `doctor`, `nurse`, `analyst`, `manager`, `agent`, or every role found in
+stored documents. This preserves the repository's existing single-role administrator model instead
+of adding RAG-specific RBAC.
+
+A supplied legacy `user_role` can only select from that server-derived set and cannot add a role;
+unknown or unpermitted roles return the standard administrator `403` response. Retrieval, audit
+lookup, and cache keys receive only this validated effective role, so a cached response from one
+role cannot cross into another role's authorization context. Documents intended for this internal
+administrator experience must include `administrator` in their existing `access_roles` metadata.
 
 The success response is an object containing `reply`, `sources`, and `evaluation`. Source ID and
 source array order are preserved:

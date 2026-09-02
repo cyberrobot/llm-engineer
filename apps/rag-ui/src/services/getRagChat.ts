@@ -2,10 +2,8 @@ import { API_URL } from '../utils/settings';
 
 export const getRagChat = async ({
   query,
-  userRole,
 }: {
   query: string;
-  userRole: string;
 }) => {
   const controller = new AbortController();
 
@@ -23,7 +21,6 @@ export const getRagChat = async ({
       },
       body: JSON.stringify({
         message: query,
-        user_role: userRole,
       }),
       signal: controller.signal,
     });

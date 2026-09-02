@@ -120,23 +120,23 @@ def test_rag_chat_forwards_explicit_role_and_preserves_complete_ordered_response
 
     response = client.post(
         "/rag-chat",
-        json={"message": "What is required?", "user_role": "manager"},
+        json={"message": "What is required?", "user_role": "administrator"},
     )
 
     assert response.status_code == 200
-    assert calls == [{"query": "What is required?", "user_role": "manager"}]
+    assert calls == [{"query": "What is required?", "user_role": "administrator"}]
     assert response.json() == expected
 
 
 @pytest.mark.parametrize(
     ("body", "expected_query", "expected_role"),
     [
-        ({"message": "What is required?"}, "What is required?", "doctor"),
-        ({"message": "", "user_role": ""}, "", "doctor"),
+        ({"message": "What is required?"}, "What is required?", "administrator"),
+        ({"message": "", "user_role": ""}, "", "administrator"),
         (
             {"message": "What is required?", "unexpected": "ignored"},
             "What is required?",
-            "doctor",
+            "administrator",
         ),
     ],
     ids=["omitted-role-is-server-derived", "empty-role-cannot-expand", "extra-fields-ignored"],
@@ -163,13 +163,13 @@ def test_rag_chat_preserves_current_accepted_request_values(
     ("request_kwargs", "expected_detail"),
     [
         (
-            {"json": {"user_role": "doctor"}},
+            {"json": {"user_role": "administrator"}},
             [
                 {
                     "type": "missing",
                     "loc": ["body", "message"],
                     "msg": "Field required",
-                    "input": {"user_role": "doctor"},
+                    "input": {"user_role": "administrator"},
                 }
             ],
         ),
