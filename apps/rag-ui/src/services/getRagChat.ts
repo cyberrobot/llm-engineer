@@ -16,6 +16,7 @@ export const getRagChat = async ({
   try {
     const res = await fetch(`${API_URL}/rag-chat`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',

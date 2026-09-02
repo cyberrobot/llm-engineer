@@ -4,13 +4,16 @@ import './index.css';
 import App from './App.tsx';
 import { DebugProvider } from './components/DebugContext.tsx';
 import { UserProvider } from './components/UserContext.tsx';
+import AuthenticatedRagBoundary from './components/AuthenticatedRagBoundary.tsx';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <DebugProvider>
-      <UserProvider>
-        <App />
-      </UserProvider>
-    </DebugProvider>
+    <AuthenticatedRagBoundary>
+      <DebugProvider>
+        <UserProvider>
+          <App />
+        </UserProvider>
+      </DebugProvider>
+    </AuthenticatedRagBoundary>
   </StrictMode>,
 );

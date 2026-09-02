@@ -18,6 +18,7 @@ from assistant.api.dependencies import (
     get_website_loader,
 )
 from assistant.api.public_chat_middleware import PublicChatBoundaryMiddleware
+from assistant.api.rag_ui_middleware import RagUiRequestBodyLimitMiddleware
 from core.config import get_admin_authentication_settings, validate_startup_configuration
 from core.correlation import RequestCorrelationMiddleware
 from core.exceptions import register_exception_handlers
@@ -80,4 +81,5 @@ app.state.limiter = limiter
 register_exception_handlers(app)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(PublicChatBoundaryMiddleware)
+app.add_middleware(RagUiRequestBodyLimitMiddleware)
 app.include_router(api_router)
