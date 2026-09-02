@@ -71,12 +71,6 @@ class Administrator:
         _require_aware(now, "now")
         return self.locked_until is not None and self.locked_until > now
 
-    @property
-    def document_access_roles(self) -> tuple[str, ...]:
-        """Return document roles granted by this authenticated identity."""
-
-        return (self.role.value,)
-
 
 @dataclass(frozen=True, slots=True)
 class AdministratorSession:

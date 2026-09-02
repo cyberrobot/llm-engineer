@@ -12,7 +12,9 @@ from admin_auth.dependencies import get_administrator_auth_service
 from admin_auth.passwords import AdministratorPasswordService
 from admin_auth.repository import InMemoryAdministratorAuthRepository
 from admin_auth.service import AdministratorAuthenticationService
-from core.config import AUDIT_LOG_LIMIT, DATABASE_URL
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
+from assistant.infrastructure.storage import save_document_with_chunks
+from core.config import AUDIT_LOG_LIMIT, DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS
 from infrastructure.database.connection import get_connection, init_db
 from main import app
 from shared.dependencies.rate_limit import limiter
@@ -108,6 +110,100 @@ def postgres_client() -> Iterator[TestClient]:
     finally:
         limiter.enabled = previous
         app.dependency_overrides.clear()
+
+
+def test_authenticated_administrator_retrieves_existing_role_content_from_postgres(
+    postgres_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_database()
+    init_db()
+    doctor_document_id = str(uuid4())
+    manager_document_id = str(uuid4())
+    doctor_chunk_id = str(uuid4())
+    manager_chunk_id = str(uuid4())
+    embedding = [1.0] + [0.0] * (EMBEDDING_VECTOR_DIMENSIONS - 1)
+
+    save_document_with_chunks(
+        doctor_document_id,
+        "policy",
+        ["doctor"],
+        [
+            {
+                "id": doctor_chunk_id,
+                "doc_id": doctor_document_id,
+                "text": "Doctors must complete the surgical checklist.",
+                "embedding": embedding,
+                "access_roles": ["doctor"],
+            }
+        ],
+        assistant_id=REDMOOR_ASSISTANT_ID,
+    )
+    save_document_with_chunks(
+        manager_document_id,
+        "policy",
+        ["manager"],
+        [
+            {
+                "id": manager_chunk_id,
+                "doc_id": manager_document_id,
+                "text": "Managers can approve operational exceptions.",
+                "embedding": embedding,
+                "access_roles": ["manager"],
+            }
+        ],
+        assistant_id=REDMOOR_ASSISTANT_ID,
+    )
+
+    monkeypatch.setattr("assistant.application.rag_chat.DEBUG_DELAY", False)
+    monkeypatch.setattr("assistant.application.rag_chat.DISABLE_AUDIT_LOGS", True)
+    monkeypatch.setattr("assistant.application.rag_chat.get_cached_response", lambda *_args: None)
+    monkeypatch.setattr(
+        "assistant.application.retrieval.generate_queries_cached", lambda query: [query]
+    )
+    monkeypatch.setattr("assistant.application.retrieval.get_embedding", lambda _query: embedding)
+
+    def generate_answer(_query, results):
+        reply = {"answer": results[0]["text"], "source_ids": [results[0]["id"]]}
+        return reply, results, results, 0.1
+
+    monkeypatch.setattr("assistant.application.rag_chat.generate_answer", generate_answer)
+    monkeypatch.setattr(
+        "assistant.application.rag_chat.build_evaluation",
+        lambda *_args: {"sentences": [], "metrics": {"total_sentences": 0}},
+    )
+    monkeypatch.setattr("assistant.application.rag_chat.set_cache", lambda *_args: None)
+
+    try:
+        response = postgres_client.post(
+            "/rag-chat",
+            json={"message": "What is required before surgery?", "user_role": "doctor"},
+        )
+
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert response.json()["sources"] == [
+            {
+                "id": doctor_chunk_id,
+                "text": "Doctors must complete the surgical checklist.",
+            }
+        ]
+        assert manager_chunk_id not in response.text
+        with get_connection() as connection:
+            document_roles = connection.execute(
+                "SELECT access_roles FROM documents WHERE id = %s", (doctor_document_id,)
+            ).fetchone()
+            chunk_roles = connection.execute(
+                "SELECT access_roles FROM chunks WHERE id = %s", (doctor_chunk_id,)
+            ).fetchone()
+        assert document_roles == (["doctor"],)
+        assert chunk_roles == (["doctor"],)
+    finally:
+        with get_connection() as connection:
+            connection.execute(
+                "DELETE FROM documents WHERE id = ANY(%s)",
+                ([doctor_document_id, manager_document_id],),
+            )
 
 
 @pytest.mark.parametrize(

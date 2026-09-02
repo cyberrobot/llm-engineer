@@ -26,24 +26,23 @@ The RAG UI sends an `application/json` object with these fields:
 
 Unknown object fields are ignored but still count toward the raw request-body limit. The RAG UI no
 longer sends `user_role`. A null, omitted, or empty value selects the authenticated principal's
-server-derived document role.
+server-defined default role, `doctor`.
 Non-string role values, a missing or non-string `message`, and malformed JSON return `422`.
 Messages longer than 4,000 characters return `422` without invoking RAG orchestration. The raw
 encoded request body is independently limited to 32,768 bytes and larger bodies return `413`
 before body parsing or orchestration.
 
-The authenticated `Administrator` identity is the authorization source of truth. Its established
-`AdministratorRole` is exposed by the administrator domain as its document-access role set; the
-current `administrator` principal therefore receives only the `administrator` document role. It is
-not implicitly granted `doctor`, `nurse`, `analyst`, `manager`, `agent`, or every role found in
-stored documents. This preserves the repository's existing single-role administrator model instead
-of adding RAG-specific RBAC.
+Administrator authentication protects this internal debugging boundary. Application roles and RAG
+document roles remain separate concepts: `AdministratorRole.administrator` is not stored or queried
+as a document access role. The server-owned internal administrator RAG policy permits inspection of
+the established legacy role set: `doctor`, `nurse`, `analyst`, `manager`, and `agent`. That policy is
+centralized in the Assistant domain and is not derived from request data.
 
 A supplied legacy `user_role` can only select from that server-derived set and cannot add a role;
 unknown or unpermitted roles return the standard administrator `403` response. Retrieval, audit
 lookup, and cache keys receive only this validated effective role, so a cached response from one
-role cannot cross into another role's authorization context. Documents intended for this internal
-administrator experience must include `administrator` in their existing `access_roles` metadata.
+role cannot cross into another role's authorization context. Existing role-tagged documents remain
+usable without re-ingestion, relabelling, or a data migration.
 
 The success response is an object containing `reply`, `sources`, and `evaluation`. Source ID and
 source array order are preserved:

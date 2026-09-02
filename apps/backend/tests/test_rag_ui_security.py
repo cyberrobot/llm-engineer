@@ -87,20 +87,20 @@ def test_rag_routes_reject_anonymous_callers_before_sensitive_work(client, monke
     assert audit_response.headers["cache-control"] == "no-store"
 
 
-def test_production_authorization_derives_role_and_blocks_cross_role_retrieval(client, monkeypatch):
-    administrator = _authenticate(client)
+def test_production_authorization_uses_trusted_legacy_rag_policy(client, monkeypatch):
+    _authenticate(client)
     retrieval_roles = []
-    administrator_chunk = {
-        "id": "administrator-chunk",
-        "doc_id": "administrator-document",
-        "text": "Administrator-only policy",
+    doctor_chunk = {
+        "id": "doctor-chunk",
+        "doc_id": "doctor-document",
+        "text": "Doctor-only policy",
         "distance": 0.1,
         "keyword_match": 0.5,
         "hybrid_score": 0.9,
     }
     reply = {
-        "answer": "Administrator-only answer",
-        "source_ids": [administrator_chunk["id"]],
+        "answer": "Doctor-only answer",
+        "source_ids": [doctor_chunk["id"]],
     }
     evaluation = {"sentences": [], "metrics": {"total_sentences": 0}}
 
@@ -110,7 +110,7 @@ def test_production_authorization_derives_role_and_blocks_cross_role_retrieval(c
 
     def retrieve(_query, role, _start_time):
         retrieval_roles.append(role)
-        return ([administrator_chunk] if role == administrator.role.value else [], [], 0.1)
+        return ([doctor_chunk] if role == "doctor" else [], [], 0.1)
 
     monkeypatch.setattr("assistant.application.rag_chat.retrieve_context", retrieve)
     monkeypatch.setattr(
@@ -124,25 +124,23 @@ def test_production_authorization_derives_role_and_blocks_cross_role_retrieval(c
 
     allowed = client.post(
         "/rag-chat",
-        json={"message": "allowed", "user_role": administrator.role.value},
+        json={"message": "allowed", "user_role": "doctor"},
     )
-    forged = client.post("/rag-chat", json={"message": "forged", "user_role": "manager"})
+    forged = client.post("/rag-chat", json={"message": "forged", "user_role": "administrator"})
     unknown = client.post("/rag-chat", json={"message": "unknown", "user_role": "unknown-role"})
     omitted = client.post("/rag-chat", json={"message": "omitted"})
 
     assert allowed.status_code == 200
-    assert allowed.json()["sources"] == [
-        {"id": "administrator-chunk", "text": "Administrator-only policy"}
-    ]
+    assert allowed.json()["sources"] == [{"id": "doctor-chunk", "text": "Doctor-only policy"}]
     assert forged.status_code == 403
     assert unknown.status_code == 403
     assert omitted.status_code == 200
-    assert omitted.json()["reply"]["answer"] == "Administrator-only answer"
-    assert retrieval_roles == [administrator.role.value, administrator.role.value]
+    assert omitted.json()["reply"]["answer"] == "Doctor-only answer"
+    assert retrieval_roles == ["doctor", "doctor"]
 
 
-def test_cached_privileged_answer_cannot_cross_into_narrower_role(client, monkeypatch):
-    administrator = _authenticate(client)
+def test_cached_answer_cannot_cross_effective_role_boundaries(client, monkeypatch):
+    _authenticate(client)
     cache_lookups = []
     manager_answer = {
         "reply": {"answer": "Manager-only answer", "source_ids": ["manager-chunk"]},
@@ -164,14 +162,18 @@ def test_cached_privileged_answer_cannot_cross_into_narrower_role(client, monkey
         "assistant.application.rag_chat.retrieve_context", lambda *_args: ([], [], 0.1)
     )
 
-    forged = client.post("/rag-chat", json={"message": "policy", "user_role": "manager"})
-    narrower = client.post("/rag-chat", json={"message": "policy"})
+    privileged = client.post("/rag-chat", json={"message": "policy", "user_role": "manager"})
+    narrower = client.post("/rag-chat", json={"message": "policy", "user_role": "doctor"})
+    omitted = client.post("/rag-chat", json={"message": "policy"})
 
-    assert forged.status_code == 403
+    assert privileged.status_code == 200
+    assert privileged.json() == manager_answer
     assert narrower.status_code == 200
     assert narrower.json() == EMPTY_RESPONSE
     assert "Manager-only answer" not in narrower.text
-    assert cache_lookups == [administrator.role.value]
+    assert omitted.status_code == 200
+    assert omitted.json() == EMPTY_RESPONSE
+    assert cache_lookups == ["manager", "doctor", "doctor"]
 
 
 def test_authenticated_caller_without_admin_authorization_cannot_read_audit(client):
