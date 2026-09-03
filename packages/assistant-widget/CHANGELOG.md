@@ -1,5 +1,11 @@
 # @redmoor/assistant-widget
 
+## 0.3.0
+
+### Minor Changes
+
+- db41f1d: Removed obsolete widget legacy client and generated types.
+
 ## 0.2.0
 
 ### Minor Changes
