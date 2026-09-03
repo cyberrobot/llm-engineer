@@ -2,6 +2,8 @@ import logging
 
 from assistant.application.rag_chat import rag_chat
 from assistant.application.rag_search import rag_search
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
+from assistant.infrastructure.repositories.rag_knowledge import PostgresRagKnowledgeRepository
 
 if not logging.getLogger().hasHandlers():
     logging.basicConfig(
@@ -56,9 +58,15 @@ TEST_CASES = [
 
 def evaluate_retrieval():
     hits = 0
+    repository = PostgresRagKnowledgeRepository()
 
     for case in TEST_CASES:
-        results = rag_search(case["query"], case["user_role"])
+        results = rag_search(
+            REDMOOR_ASSISTANT_ID,
+            case["query"],
+            case["user_role"],
+            repository,
+        )
 
         texts = [r["text"].lower() for r in results["results"]]
 
@@ -72,8 +80,9 @@ def evaluate_retrieval():
 
 def evaluate_answers():
     hits = 0
+    repository = PostgresRagKnowledgeRepository()
     for case in TEST_CASES:
-        response = rag_chat(case["query"], case["user_role"])
+        response = rag_chat(case["query"], case["user_role"], repository)
 
         answer = response["reply"]["answer"].lower()
 

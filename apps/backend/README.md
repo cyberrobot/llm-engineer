@@ -64,6 +64,9 @@ Assistant chat retrieves relevant knowledge before generation. With `DATABASE_UR
 retrieval uses the existing pgvector `chunks` and `documents` tables. Without a database it uses
 the small manually curated seed fixture in `assistant/infrastructure/seed_knowledge.py`.
 
+The legacy RAG read boundary, required PostgreSQL schema, least-privilege role, and executable
+compatibility checks are documented in [RAG persistence contract](docs/rag-persistence-contract.md).
+
 The OpenAI client is created lazily, so health endpoints and non-AI workflows can start
 without provider credentials. Missing or invalid AI configuration is returned as a service
 availability error when chat is requested.

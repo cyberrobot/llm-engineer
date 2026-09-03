@@ -3,6 +3,7 @@ from typing import Optional
 
 from fastapi import HTTPException
 
+from assistant.application.ports.rag_knowledge_repository import RagKnowledgeRepository
 from assistant.application.rag_search import rag_search
 from assistant.application.retrieval import filter_chunks_by_source_ids
 from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
@@ -57,9 +58,12 @@ def get_cached_response(query: str, user_role: str, start_time: float) -> Option
 
 
 def retrieve_context(
-    query: str, user_role: str, start_time: float
+    query: str,
+    user_role: str,
+    start_time: float,
+    repository: RagKnowledgeRepository,
 ) -> tuple[list[dict], list[dict], float]:
-    rag_search_output = rag_search(REDMOOR_ASSISTANT_ID, query, user_role)
+    rag_search_output = rag_search(REDMOOR_ASSISTANT_ID, query, user_role, repository)
     retrieval_time = (time.perf_counter() - start_time) * 1000
 
     return (
@@ -144,7 +148,7 @@ def empty_response() -> dict:
     }
 
 
-def rag_chat(query: str, user_role: str):
+def rag_chat(query: str, user_role: str, repository: RagKnowledgeRepository):
     if DEBUG_DELAY:
         time.sleep(2)
     try:
@@ -153,7 +157,9 @@ def rag_chat(query: str, user_role: str):
         if cached_response:
             return cached_response
 
-        results, multi_query, retrieval_time = retrieve_context(query, user_role, start_time)
+        results, multi_query, retrieval_time = retrieve_context(
+            query, user_role, start_time, repository
+        )
         if not results:
             return empty_response()
 
