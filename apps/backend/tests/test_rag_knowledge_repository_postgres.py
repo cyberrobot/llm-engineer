@@ -384,9 +384,12 @@ def test_repository_preserves_vector_candidate_bound(migrated_rag_database):
     assert excluded_chunk not in {row["id"] for row in matches}
 
 
-def test_rag_read_role_can_retrieve_but_cannot_write(migrated_rag_database):
-    role_name = f"rag_reader_test_{uuid4().hex}"
-    role_created = False
+def test_rag_login_inherits_read_group_privileges_without_set_role(migrated_rag_database):
+    suffix = uuid4().hex
+    group_role_name = f"rag_reader_group_test_{suffix}"
+    login_role_name = f"rag_reader_login_test_{suffix}"
+    group_role_created = False
+    login_role_created = False
     assistant_id = uuid4()
     document_id = f"privilege-document-{uuid4()}"
     chunk_id = f"privilege-chunk-{uuid4()}"
@@ -407,48 +410,55 @@ def test_rag_read_role_can_retrieve_but_cannot_write(migrated_rag_database):
                 connection.execute(
                     sql.SQL(
                         "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-                        "NOINHERIT NOREPLICATION NOBYPASSRLS"
-                    ).format(sql.Identifier(role_name))
+                        "INHERIT NOREPLICATION NOBYPASSRLS"
+                    ).format(sql.Identifier(group_role_name))
                 )
-                role_created = True
+                group_role_created = True
+                connection.execute(
+                    sql.SQL(
+                        "CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                        "INHERIT NOREPLICATION NOBYPASSRLS"
+                    ).format(sql.Identifier(login_role_name))
+                )
+                login_role_created = True
             except psycopg.errors.InsufficientPrivilege as exc:
-                pytest.skip(f"PostgreSQL test user cannot create the RAG read role: {exc}")
+                group_role_created = False
+                login_role_created = False
+                pytest.skip(f"PostgreSQL test user cannot create the RAG role topology: {exc}")
+            connection.execute(
+                sql.SQL("GRANT {} TO {}").format(
+                    sql.Identifier(group_role_name), sql.Identifier(login_role_name)
+                )
+            )
             database_name = connection.execute("SELECT current_database()").fetchone()[0]
             connection.execute(
                 sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
-                    sql.Identifier(database_name), sql.Identifier(role_name)
+                    sql.Identifier(database_name), sql.Identifier(group_role_name)
                 )
             )
             connection.execute(
                 sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
-                    sql.Identifier(migrated_rag_database.schema), sql.Identifier(role_name)
+                    sql.Identifier(migrated_rag_database.schema),
+                    sql.Identifier(group_role_name),
                 )
             )
             connection.execute(
                 sql.SQL("GRANT SELECT ON {}.documents, {}.chunks TO {}").format(
                     sql.Identifier(migrated_rag_database.schema),
                     sql.Identifier(migrated_rag_database.schema),
-                    sql.Identifier(role_name),
+                    sql.Identifier(group_role_name),
                 )
             )
-            assert connection.execute(
-                "SELECT has_database_privilege(%s, current_database(), 'CONNECT')",
-                (role_name,),
-            ).fetchone() == (True,)
-            assert connection.execute(
-                "SELECT has_table_privilege(%s, %s, 'SELECT'), "
-                "has_table_privilege(%s, %s, 'INSERT')",
-                (
-                    role_name,
-                    f"{migrated_rag_database.schema}.documents",
-                    role_name,
-                    f"{migrated_rag_database.schema}.documents",
-                ),
-            ).fetchone() == (True, False)
 
-        def role_connection_factory():
+        def login_connection_factory():
             connection = database_connection.get_connection()
-            connection.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(role_name)))
+            try:
+                connection.execute(
+                    sql.SQL("SET SESSION AUTHORIZATION {}").format(sql.Identifier(login_role_name))
+                )
+            except psycopg.errors.InsufficientPrivilege as exc:
+                connection.close()
+                pytest.skip(f"PostgreSQL test user cannot emulate login authentication: {exc}")
             connection.execute(
                 sql.SQL("SET search_path TO {}, public").format(
                     sql.Identifier(migrated_rag_database.schema)
@@ -456,7 +466,15 @@ def test_rag_read_role_can_retrieve_but_cannot_write(migrated_rag_database):
             )
             return connection
 
-        matches = PostgresRagKnowledgeRepository(role_connection_factory).search(
+        with login_connection_factory() as connection:
+            assert connection.execute("SELECT session_user, current_user").fetchone() == (
+                login_role_name,
+                login_role_name,
+            )
+            assert connection.execute("SELECT count(*) FROM documents").fetchone()[0] >= 1
+            assert connection.execute("SELECT count(*) FROM chunks").fetchone()[0] >= 1
+
+        matches = PostgresRagKnowledgeRepository(login_connection_factory).search(
             assistant_id=assistant_id,
             query_embedding=_embedding(),
             query="least privilege retrieval",
@@ -464,29 +482,46 @@ def test_rag_read_role_can_retrieve_but_cannot_write(migrated_rag_database):
             limit=8,
         )
         assert [row["id"] for row in matches] == [chunk_id]
-        with role_connection_factory() as connection:
-            assert connection.execute("SELECT count(*) FROM documents").fetchone()[0] >= 1
-            assert connection.execute("SELECT count(*) FROM chunks").fetchone()[0] >= 1
 
         denied_statements = (
             "INSERT INTO documents (id, doc_type, assistant_id, retrieval_state) VALUES ('denied-document', 'text', 'denied', 'enabled')",
             f"UPDATE documents SET status = 'indexed' WHERE id = '{document_id}'",
             f"DELETE FROM documents WHERE id = '{document_id}'",
+            "TRUNCATE documents CASCADE",
             f"INSERT INTO chunks (id, doc_id, text, embedding, access_roles, assistant_id) SELECT 'denied-chunk', doc_id, text, embedding, access_roles, assistant_id FROM chunks WHERE id = '{chunk_id}'",
             f"UPDATE chunks SET text = 'denied' WHERE id = '{chunk_id}'",
             f"DELETE FROM chunks WHERE id = '{chunk_id}'",
             "TRUNCATE chunks",
             "INSERT INTO ingestion_jobs (id, source_url, status, created_at) VALUES ('denied-job', 'https://example.test', 'pending', NOW())",
+            f"INSERT INTO document_ingestion_jobs (id, document_id, stage, status, progress) VALUES ('denied-document-job', '{document_id}', 'queued', 'queued', 0)",
             "INSERT INTO audit_logs (user_role, question) VALUES ('doctor', 'denied')",
+            "INSERT INTO assistants (id, slug, name, status, visibility) VALUES ('denied-assistant', 'denied-assistant', 'Denied', 'inactive', 'private')",
+            f"CREATE TABLE {migrated_rag_database.schema}.denied_object (id integer)",
         )
         for statement in denied_statements:
-            with role_connection_factory() as connection:
+            with login_connection_factory() as connection:
                 with pytest.raises(psycopg.errors.InsufficientPrivilege):
                     connection.execute(statement)
     finally:
-        if role_created:
+        if group_role_created or login_role_created:
             with database_connection.get_connection() as connection:
-                connection.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role_name)))
+                if group_role_created and login_role_created:
+                    connection.execute(
+                        sql.SQL("REVOKE {} FROM {}").format(
+                            sql.Identifier(group_role_name), sql.Identifier(login_role_name)
+                        )
+                    )
+                if login_role_created:
+                    connection.execute(
+                        sql.SQL("DROP OWNED BY {}").format(sql.Identifier(login_role_name))
+                    )
+                    connection.execute(
+                        sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(login_role_name))
+                    )
+                if group_role_created:
+                    connection.execute(
+                        sql.SQL("DROP OWNED BY {}").format(sql.Identifier(group_role_name))
+                    )
                 connection.execute(
-                    sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role_name))
+                    sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(group_role_name))
                 )

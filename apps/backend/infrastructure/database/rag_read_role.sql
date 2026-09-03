@@ -1,16 +1,16 @@
 -- Run with psql as the database owner after application migrations.
 -- This group role intentionally has no login or credentials. Deployments create a
--- separate LOGIN role, grant it rag_reader membership, and supply that credential
+-- separate INHERIT LOGIN role, grant it rag_reader membership, and supply that credential
 -- only when the application supports a distinct RAG connection factory.
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rag_reader') THEN
         CREATE ROLE rag_reader
-            NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
+            NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT
             NOREPLICATION NOBYPASSRLS;
     ELSE
         ALTER ROLE rag_reader
-            NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT
+            NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT
             NOREPLICATION NOBYPASSRLS;
     END IF;
 END

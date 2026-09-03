@@ -23,17 +23,19 @@ retains the existing maximum-distance cutoff.
 ## Least-privilege role
 
 After migrations, a database owner can apply
-`infrastructure/database/rag_read_role.sql` with `psql`. It creates or hardens the `rag_reader`
-group role without login credentials, removes table and sequence privileges in `public`, denies
-schema creation, and grants only database `CONNECT`, schema `USAGE`, and `SELECT` on `documents`
-and `chunks`. Do not grant this role membership in administrative or write-capable roles. Audit
+`infrastructure/database/rag_read_role.sql` with `psql`. It creates or hardens `rag_reader` as an
+inheritable, non-login group role, removes table and sequence privileges in `public`, denies schema
+creation, and grants only database `CONNECT`, schema `USAGE`, and `SELECT` on `documents` and
+`chunks`. Do not grant this group role membership in administrative or write-capable roles. Audit
 effective privileges as well as direct grants if a deployment changes PostgreSQL's `PUBLIC` grants.
 
-Create deployment-specific login credentials outside source control and grant that login membership
-in `rag_reader`. The backend currently has one `DATABASE_URL` and does **not** activate a distinct
-RAG credential; configuring it with `rag_reader` would also remove the writes needed by ingestion,
-audit, and administration. Activating separate credentials later requires wiring a distinct RAG
-connection factory while leaving ingestion on its write credential.
+Deployments create a separate inheritable login role and credential outside source control, then
+grant that login membership in `rag_reader`. The login automatically inherits the group's RAG read
+privileges and executes retrieval directly; no `SET ROLE` step is required. Ingestion and
+administrative connections must continue using write-capable credentials. The backend currently has
+one `DATABASE_URL` and does **not** activate a distinct RAG credential in this change. Activating
+separate credentials later requires wiring a distinct RAG connection factory while leaving
+ingestion and administration on their write credential.
 
 ## Verification
 
@@ -47,7 +49,9 @@ RAG_REPOSITORY_POSTGRES_REQUIRED=true pytest -q tests/test_rag_knowledge_reposit
 
 The test exercises the real repository after direct fixture inserts, checks the generated
 `text_search` value and required indexes, proves Assistant/role/retrieval-state isolation, and—when
-the configured test user can create roles—executes retrieval under a read role and verifies that
-document, chunk, ingestion-job, and administrative writes are denied. If the test database user
-cannot create roles, that test skips with the PostgreSQL permission error; deployment validation
-must then apply the SQL as the database owner and repeat the grant audit.
+the configured test user can create roles—creates a non-login read group and a separate login member,
+emulates authentication as that login without switching to the group, and verifies inherited reads,
+real retrieval, and denied document, chunk, ingestion-job, administrative, and schema writes. If the
+test database user cannot create roles or emulate login authentication, that test skips with the
+PostgreSQL permission error; deployment validation must then apply the SQL as the database owner and
+repeat the topology and grant checks.

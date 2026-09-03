@@ -8,7 +8,8 @@ ROLE_SQL = (
 def test_rag_read_role_sql_defines_only_the_required_read_privileges():
     normalized = " ".join(ROLE_SQL.upper().split())
 
-    assert "NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT" in normalized
+    assert "NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT" in normalized
+    assert "NOINHERIT" not in normalized
     assert "NOREPLICATION NOBYPASSRLS" in normalized
     assert "GRANT CONNECT ON DATABASE" in normalized
     assert "GRANT USAGE ON SCHEMA PUBLIC TO RAG_READER" in normalized
