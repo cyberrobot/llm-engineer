@@ -4,11 +4,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from assistant.api.dependencies import get_rag_knowledge_repository
 from assistant.api.rag_ui_security import (
     RagRetrievalAuthorization,
     require_rag_retrieval_authorization,
     resolve_effective_rag_role,
 )
+from assistant.application.ports.rag_knowledge_repository import RagKnowledgeRepository
 from assistant.application.rag_chat import rag_chat
 from assistant.schemas.chat import MAX_CHAT_MESSAGE_LENGTH
 from shared.dependencies.rate_limit import limiter
@@ -38,12 +40,17 @@ def rag_chat_endpoint(
     authorization: Annotated[
         RagRetrievalAuthorization, Depends(require_rag_retrieval_authorization)
     ],
+    repository: Annotated[RagKnowledgeRepository, Depends(get_rag_knowledge_repository)],
 ):
     del request
     response.headers["Cache-Control"] = "no-store"
     effective_role = resolve_effective_rag_role(body.user_role, authorization)
     try:
-        return rag_chat(query=body.message, user_role=effective_role)
+        return rag_chat(
+            query=body.message,
+            user_role=effective_role,
+            repository=repository,
+        )
     except HTTPException as exc:
         if exc.status_code >= 500:
             logger.error(

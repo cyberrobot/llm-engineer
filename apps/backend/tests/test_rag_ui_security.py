@@ -108,7 +108,7 @@ def test_production_authorization_uses_trusted_legacy_rag_policy(client, monkeyp
     monkeypatch.setattr("assistant.application.rag_chat.DISABLE_AUDIT_LOGS", True)
     monkeypatch.setattr("assistant.application.rag_chat.get_cached_response", lambda *_args: None)
 
-    def retrieve(_query, role, _start_time):
+    def retrieve(_query, role, _start_time, _repository):
         retrieval_roles.append(role)
         return ([doctor_chunk] if role == "doctor" else [], [], 0.1)
 

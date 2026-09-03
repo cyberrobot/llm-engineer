@@ -30,7 +30,7 @@ from assistant.infrastructure.repositories.document_ingestion_job import (
 from assistant.infrastructure.repositories.knowledge_persistence import (
     PostgresKnowledgePersistenceRepository,
 )
-from assistant.infrastructure.storage import search_chunks_by_embedding
+from assistant.infrastructure.repositories.rag_knowledge import PostgresRagKnowledgeRepository
 from assistant.infrastructure.vector_store.pgvector import PgVectorStore
 from core.config import DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS
 from infrastructure.database.connection import get_connection, init_db
@@ -163,11 +163,11 @@ def role_filtered_texts(source_url: str, role: str) -> list[str]:
             "SELECT id FROM documents WHERE source_url = %s AND assistant_id = %s",
             (source_url, str(REDMOOR_ASSISTANT_ID)),
         ).fetchone()[0]
-    matches = search_chunks_by_embedding(
-        REDMOOR_ASSISTANT_ID,
-        [1.0] + [0.0] * (EMBEDDING_VECTOR_DIMENSIONS - 1),
-        "persistence knowledge",
-        role,
+    matches = PostgresRagKnowledgeRepository().search(
+        assistant_id=REDMOOR_ASSISTANT_ID,
+        query_embedding=[1.0] + [0.0] * (EMBEDDING_VECTOR_DIMENSIONS - 1),
+        query="persistence knowledge",
+        access_role=role,
         limit=50,
     )
     return [str(item["text"]) for item in matches if item["doc_id"] == document_id]

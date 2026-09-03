@@ -10,6 +10,7 @@ from admin_auth.passwords import AdministratorPasswordService
 from admin_auth.repository import InMemoryAdministratorAuthRepository
 from admin_auth.service import AdministratorAuthenticationService
 from assistant.api.audit import MAX_AUDIT_LOG_LIMIT
+from assistant.api.dependencies import get_rag_knowledge_repository
 from assistant.api.rag import MAX_RAG_MESSAGE_CHARACTERS
 from assistant.application import rag_chat as rag_chat_application
 from core.config import AUDIT_LOG_LIMIT
@@ -112,7 +113,8 @@ def test_rag_chat_forwards_explicit_role_and_preserves_complete_ordered_response
         },
     }
 
-    def complete_response(**kwargs):
+    def complete_response(repository, **kwargs):
+        del repository
         calls.append(kwargs)
         return expected
 
@@ -146,7 +148,8 @@ def test_rag_chat_preserves_current_accepted_request_values(
 ) -> None:
     calls = []
 
-    def response_for(**kwargs):
+    def response_for(repository, **kwargs):
+        del repository
         calls.append(kwargs)
         return EMPTY_RESPONSE
 
@@ -241,18 +244,26 @@ def test_rag_chat_preserves_empty_context_success_through_http(client, monkeypat
 def test_rag_chat_maps_unexpected_exceptions_to_safe_error_through_http(
     client, monkeypatch
 ) -> None:
+    secret = "postgresql://rag-secret@database/internal chunks SQL"
+
+    class FailingRepository:
+        def search(self, **_kwargs):
+            raise RuntimeError(secret)
+
     monkeypatch.setattr(rag_chat_application, "DEBUG_DELAY", False)
+    monkeypatch.setattr(rag_chat_application, "get_cached_response", lambda *_args: None)
     monkeypatch.setattr(
-        rag_chat_application,
-        "get_cached_response",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("fictional retrieval failure")),
+        "assistant.application.retrieval.generate_queries_cached", lambda query: [query]
     )
+    monkeypatch.setattr("assistant.application.retrieval.get_embedding", lambda _query: [1.0])
+    app.dependency_overrides[get_rag_knowledge_repository] = lambda: FailingRepository()
 
     response = client.post("/rag-chat", json={"message": "What is required?"})
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Internal server error"}
-    assert "fictional retrieval failure" not in response.text
+    assert "rag-secret" not in response.text
+    assert "chunks SQL" not in response.text
 
 
 def _audit_item(*, item_id: int, timestamp: str, question: str) -> dict:

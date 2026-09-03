@@ -1,11 +1,6 @@
 import json
 from uuid import UUID
 
-from core.config import (
-    CHUNKS_SEARCH_RESULTS_LIMIT,
-    WEIGHT_EMBEDDING_SIMILARITY,
-    WEIGHT_KEYWORD_MATCH,
-)
 from infrastructure.database.connection import get_connection
 
 
@@ -85,66 +80,6 @@ def create_ingestion_job(job_id, document_id, stage, status, progress):
                 """,
                 (job_id, document_id, stage, status, progress),
             )
-
-
-def search_chunks_by_embedding(
-    assistant_id: UUID,
-    query_embedding: list[float],
-    query: str,
-    access_role: str,
-    limit: int = CHUNKS_SEARCH_RESULTS_LIMIT,
-    weight_keyword_match: float = WEIGHT_KEYWORD_MATCH,
-    weight_embedding_similarity: float = WEIGHT_EMBEDDING_SIMILARITY,
-):
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                WITH vector_candidates AS (
-                  SELECT chunks.id, chunks.doc_id, chunks.text,
-                         chunks.embedding <=> %s::vector AS distance,
-                         chunks.access_roles, chunks.text_search
-                  FROM chunks
-                  JOIN documents ON documents.id = chunks.doc_id
-                  WHERE chunks.assistant_id = %s
-                    AND documents.assistant_id = %s
-                    AND documents.retrieval_state = 'enabled'
-                    AND chunks.access_roles ? %s
-                  ORDER BY chunks.embedding <=> %s::vector
-                  LIMIT 50
-                )
-                SELECT id, doc_id, text, distance, access_roles, ts_rank(text_search, plainto_tsquery('english', %s)) AS keyword_match,
-                    ((1 - distance) * %s + ts_rank(text_search, plainto_tsquery('english', %s)) * %s) AS hybrid_score
-                FROM vector_candidates
-                ORDER BY hybrid_score DESC
-                LIMIT %s
-            """,
-                (
-                    query_embedding,
-                    str(assistant_id),
-                    str(assistant_id),
-                    access_role,
-                    query_embedding,
-                    query,
-                    weight_embedding_similarity,
-                    query,
-                    weight_keyword_match,
-                    limit,
-                ),
-            )
-            rows = cur.fetchall()
-            return [
-                {
-                    "id": row[0],
-                    "doc_id": row[1],
-                    "text": row[2],
-                    "distance": row[3],
-                    "access_roles": row[4],
-                    "keyword_match": float(row[5]),
-                    "hybrid_score": row[6],
-                }
-                for row in rows
-            ]
 
 
 def list_all_chunks(*, assistant_id: UUID):

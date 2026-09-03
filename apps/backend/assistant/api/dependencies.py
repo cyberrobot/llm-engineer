@@ -33,6 +33,7 @@ from assistant.application.ingestion_service import IngestionService
 from assistant.application.knowledge_persistence_service import KnowledgePersistenceService
 from assistant.application.knowledge_source_service import KnowledgeSourceService
 from assistant.application.ports.content_extractor import ContentExtractor
+from assistant.application.ports.rag_knowledge_repository import RagKnowledgeRepository
 from assistant.application.ports.text_chunker import TextChunker
 from assistant.application.ports.text_cleaner import TextCleaner
 from assistant.application.ports.website_loader import WebsiteLoader
@@ -84,6 +85,7 @@ from assistant.infrastructure.repositories.ingestion_observability import (
     PostgresIngestionStepExecutionRepository,
 )
 from assistant.infrastructure.repositories.knowledge_source import PostgresKnowledgeSourceRepository
+from assistant.infrastructure.repositories.rag_knowledge import PostgresRagKnowledgeRepository
 from assistant.infrastructure.seed_knowledge import SEED_VECTOR_ENTRIES
 from assistant.infrastructure.vector_store import InMemoryVectorStore, PgVectorStore, VectorStore
 from core.config import (
@@ -126,6 +128,11 @@ def get_knowledge_repository(
     vector_store: Annotated[VectorStore, Depends(get_vector_store)],
 ) -> KnowledgeRepository:
     return VectorKnowledgeRepository(vector_store)
+
+
+def get_rag_knowledge_repository() -> RagKnowledgeRepository:
+    """Provide the read-only PostgreSQL boundary used by the legacy RAG endpoint."""
+    return PostgresRagKnowledgeRepository()
 
 
 def get_retrieval_service(

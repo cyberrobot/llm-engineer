@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -94,7 +94,7 @@ def test_rag_chat_returns_cached_response_without_retrieval():
         patch.object(rag_chat, "get_cached_response", return_value=cached_response),
         patch.object(rag_chat, "retrieve_context") as retrieve_context,
     ):
-        result = rag_chat.rag_chat("question", "user")
+        result = rag_chat.rag_chat("question", "user", repository=MagicMock())
 
     assert result == cached_response
     retrieve_context.assert_not_called()
@@ -108,7 +108,7 @@ def test_rag_chat_returns_empty_response_when_no_context_is_found():
         patch.object(rag_chat, "generate_answer") as generate_answer,
         patch.object(rag_chat, "set_cache") as set_cache,
     ):
-        result = rag_chat.rag_chat("question", "user")
+        result = rag_chat.rag_chat("question", "user", repository=MagicMock())
 
     assert result == rag_chat.empty_response()
     generate_answer.assert_not_called()
@@ -167,7 +167,7 @@ def test_rag_chat_generates_logs_caches_and_returns_response():
         patch.object(rag_chat, "format_sources", return_value=sources),
         patch.object(rag_chat, "set_cache") as set_cache,
     ):
-        response = rag_chat.rag_chat("question", "user")
+        response = rag_chat.rag_chat("question", "user", repository=MagicMock())
 
     assert response == expected_response
     assert "debug" not in response
@@ -274,7 +274,7 @@ def test_rag_chat_wraps_unexpected_errors_as_http_500():
         patch.object(rag_chat, "get_cached_response", side_effect=RuntimeError("boom")),
     ):
         with pytest.raises(HTTPException) as context:
-            rag_chat.rag_chat("question", "user")
+            rag_chat.rag_chat("question", "user", repository=MagicMock())
 
     assert context.value.status_code == 500
     assert context.value.detail == "Internal server error"
