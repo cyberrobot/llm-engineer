@@ -127,6 +127,21 @@ for (const script of ['test', 'lint', 'typecheck', 'build', 'build-storybook']) 
   assertRequiredStep(step)
 }
 
+for (const [script, description] of [
+  ['install-playwright', 'Playwright Chromium installation'],
+  ['test:e2e', 'Admin browser tests'],
+]) {
+  const step = findStep(
+    (candidate) => runsAdminScript(candidate, script),
+    description,
+  )
+  assertRequiredStep(step)
+  assert(
+    !step.run.includes('--update-snapshots'),
+    `${step.name} must not update visual baselines in CI`,
+  )
+}
+
 const serializedWorkflow = JSON.stringify(workflow)
 assert(!serializedWorkflow.includes('dorny/paths-filter'))
 assert(!serializedWorkflow.includes('steps.filter'))

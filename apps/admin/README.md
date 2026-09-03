@@ -74,12 +74,17 @@ The app checks `GET /admin/auth/me` before showing protected content. A confirme
 
 Run `npm run dev:admin`, `npm run lint:admin`, `npm run typecheck --workspace @ai-discovery-assistant/admin`, `npm run test:admin`, `npm run build:admin`, or `npm run build-storybook --workspace=apps/admin` from the repository root.
 
+For full-browser and visual regression testing, first run `npm run install-playwright --workspace @ai-discovery-assistant/admin` to install Chromium and its system dependencies. Run the complete suite with `npm run test:e2e --workspace @ai-discovery-assistant/admin`, or only screenshot scenarios with `npm run test:visual --workspace @ai-discovery-assistant/admin`.
+
+The committed screenshots are canonical Linux baselines and CI compares against them without accepting changes. Regenerate them deliberately with `npm run test:visual:update --workspace @ai-discovery-assistant/admin` in the canonical Linux environment, inspect every changed image, and commit only reviewed changes. Manual page inspection complements but does not replace the automated semantic and screenshot assertions.
+
 ## Continuous integration
 
 The dedicated **Admin UI CI / Admin validation** check is path-scoped and appears only for pull
 requests that can affect the Admin deliverable. When present, it installs the root workspace and
-runs the complete Admin quality gate: tests, lint, type checking, the production build, and the
-Storybook build. The same validation runs for relevant pushes to `main`.
+runs the complete Admin quality gate: unit tests, Chromium browser and visual tests, lint, type
+checking, the production build, and the Storybook build. The same validation runs for relevant
+pushes to `main`.
 
 Admin source and configuration, the root npm manifests, the Admin workflow, and the Assistant
 widget package are Admin CI inputs. The widget is included because Admin TypeScript, Vite, and
