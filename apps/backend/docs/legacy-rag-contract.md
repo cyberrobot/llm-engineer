@@ -24,9 +24,9 @@ The RAG UI sends an `application/json` object with these fields:
 | `message` | string | Required; at most 4,000 characters. Empty strings remain accepted. |
 | `user_role` | string or null | Optional role narrowing hint; never an authorization claim. |
 
-Unknown object fields are ignored but still count toward the raw request-body limit. The RAG UI no
-longer sends `user_role`. A null, omitted, or empty value selects the authenticated principal's
-server-defined default role, `doctor`.
+Unknown object fields are ignored but still count toward the raw request-body limit. The RAG UI
+sends the administrator's selected legacy document role as this non-authoritative hint. A null,
+omitted, or empty value selects the server-defined default role, `doctor`.
 Non-string role values, a missing or non-string `message`, and malformed JSON return `422`.
 Messages longer than 4,000 characters return `422` without invoking RAG orchestration. The raw
 encoded request body is independently limited to 32,768 bytes and larger bodies return `413`
