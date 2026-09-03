@@ -75,13 +75,15 @@ function Context({
   children,
   api,
   initialUser,
+  initialEntries = ['/'],
 }: {
   children: ReactNode;
   api: AdminApi;
   initialUser?: Administrator;
+  initialEntries?: string[];
 }) {
   return (
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <AuthProvider api={api} initialUser={initialUser}>
         {children}
       </AuthProvider>
@@ -132,16 +134,26 @@ export const LoginInvalidCredentials: Story = {
   ),
 };
 
-function Shell() {
+function Shell({
+  path = '/admin',
+  administrator = user,
+  initialMenuOpen = false,
+  layout = 'responsive',
+}: {
+  path?: string;
+  administrator?: Administrator;
+  initialMenuOpen?: boolean;
+  layout?: 'desktop' | 'mobile' | 'responsive';
+}) {
   return (
-    <Context api={authenticatedApi} initialUser={user}>
+    <Context api={authenticatedApi} initialUser={administrator} initialEntries={[path]}>
       <Routes>
-        <Route element={<AdminShell />}>
+        <Route element={<AdminShell initialMenuOpen={initialMenuOpen} layout={layout} />}>
           <Route
             path="*"
             element={
               <section className="placeholder">
-                <p>Dashboard functionality is not implemented yet.</p>
+                <p>Deterministic shell content for visual review.</p>
               </section>
             }
           />
@@ -151,11 +163,22 @@ function Shell() {
   );
 }
 
-export const ShellDesktopAuthenticated: Story = { render: () => <Shell /> };
+export const ShellDesktopAuthenticated: Story = { render: () => <Shell layout="desktop" /> };
 export const ShellMobileAuthenticated: Story = {
+  parameters: { viewport: { defaultViewport: 'mobile1' } },
   render: () => (
     <div className="stories-mobile">
-      <Shell />
+      <Shell layout="mobile" />
     </div>
   ),
+};
+export const ShellMobileNavigationOpen: Story = {
+  parameters: { viewport: { defaultViewport: 'mobile1' } },
+  render: () => <div className="stories-mobile"><Shell layout="mobile" initialMenuOpen /></div>,
+};
+export const ShellOperationsNested: Story = {
+  render: () => <Shell path="/admin/operations/health" />,
+};
+export const ShellLongAdministratorEmail: Story = {
+  render: () => <Shell administrator={{...user,email:'avery.long.fictional.administrator.address@example.test'}} />,
 };
