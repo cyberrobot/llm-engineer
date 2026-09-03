@@ -193,10 +193,15 @@ The intentional anonymous Assistant boundary is
 `POST /public/assistants/{assistant_slug}/chat`. The legacy `/assistant/chat`, `/chunks`, and
 raw-text `/ingest` routes are not mounted.
 
-`POST /rag-chat` and `GET /audit-logs` remain unchanged as temporary legacy exceptions because they
-are active dependencies of `apps/rag-ui`. They remain candidates for removal and must be retired
-together with RAG UI in a separate PR; this change does not partially secure, migrate, or replace
-them with administrator endpoints. Their consumer-specific behavior is recorded in
+`POST /rag-chat` and `GET /audit-logs` remain temporary legacy dependencies of `apps/rag-ui`, but
+both now require the existing administrator cookie session and administrator role. Retrieval roles
+remain the established legacy roles (`doctor`, `nurse`, `analyst`, `manager`, and `agent`). The
+server's internal administrator-debug policy grants authenticated administrators permission to
+inspect that set; it does not treat the administrator application role as a document role. A legacy
+client role hint may only narrow that server-permitted set. Existing RAG data requires no access-role
+migration. Both routes bound caller-controlled input, return safe unexpected errors, and disable
+response caching. They remain candidates for removal and must be retired together with RAG UI. Their
+consumer-specific behavior is recorded in
 [`docs/legacy-rag-contract.md`](docs/legacy-rag-contract.md); new consumers must not adopt it.
 
 `POST /ingest/upload` remains a supported machine-to-machine integration protected by the existing

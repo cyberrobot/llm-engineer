@@ -1,8 +1,16 @@
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 from limits.storage import MemoryStorage
 from limits.strategies import FixedWindowRateLimiter
 
+from admin_auth.dependencies import get_administrator_auth_service
+from admin_auth.passwords import AdministratorPasswordService
+from admin_auth.repository import InMemoryAdministratorAuthRepository
+from admin_auth.service import AdministratorAuthenticationService
+from assistant.api.audit import MAX_AUDIT_LOG_LIMIT
+from assistant.api.rag import MAX_RAG_MESSAGE_CHARACTERS
 from assistant.application import rag_chat as rag_chat_application
 from core.config import AUDIT_LOG_LIMIT
 from main import app
@@ -27,6 +35,8 @@ EMPTY_RESPONSE = {
         },
     },
 }
+NOW = datetime(2026, 9, 2, 10, tzinfo=timezone.utc)
+PASSWORD = "correct horse battery staple"
 
 
 @pytest.fixture(autouse=True)
@@ -43,11 +53,31 @@ def isolated_legacy_runtime_state():
         message=previous_maintenance_state.message,
         actor=previous_maintenance_state.updated_by or "legacy-contract-test",
     )
+    app.dependency_overrides.clear()
+
+
+def _authenticate(client: TestClient) -> None:
+    repository = InMemoryAdministratorAuthRepository()
+    service = AdministratorAuthenticationService(
+        repository,
+        AdministratorPasswordService(),
+        session_ttl_seconds=3600,
+        login_max_failures=3,
+        login_lockout_seconds=300,
+        clock=lambda: NOW,
+        token_factory=lambda: "legacy-rag-contract-session",
+    )
+    service.bootstrap("admin@example.com", PASSWORD)
+    login = service.login("admin@example.com", PASSWORD)
+    app.dependency_overrides[get_administrator_auth_service] = lambda: service
+    client.cookies.set("redmoor_admin_session", login.session_token)
 
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    client = TestClient(app)
+    _authenticate(client)
+    return client
 
 
 def test_rag_chat_forwards_explicit_role_and_preserves_complete_ordered_response(
@@ -101,15 +131,15 @@ def test_rag_chat_forwards_explicit_role_and_preserves_complete_ordered_response
 @pytest.mark.parametrize(
     ("body", "expected_query", "expected_role"),
     [
-        ({"message": "What is required?"}, "What is required?", "user"),
-        ({"message": "", "user_role": ""}, "", ""),
+        ({"message": "What is required?"}, "What is required?", "doctor"),
+        ({"message": "", "user_role": ""}, "", "doctor"),
         (
             {"message": "What is required?", "unexpected": "ignored"},
             "What is required?",
-            "user",
+            "doctor",
         ),
     ],
-    ids=["omitted-role-defaults-to-user", "empty-strings", "extra-fields-ignored"],
+    ids=["omitted-role-is-server-derived", "empty-role-cannot-expand", "extra-fields-ignored"],
 )
 def test_rag_chat_preserves_current_accepted_request_values(
     client, monkeypatch, body, expected_query, expected_role
@@ -133,13 +163,13 @@ def test_rag_chat_preserves_current_accepted_request_values(
     ("request_kwargs", "expected_detail"),
     [
         (
-            {"json": {"user_role": "user"}},
+            {"json": {"user_role": "manager"}},
             [
                 {
                     "type": "missing",
                     "loc": ["body", "message"],
                     "msg": "Field required",
-                    "input": {"user_role": "user"},
+                    "input": {"user_role": "manager"},
                 }
             ],
         ),
@@ -149,17 +179,6 @@ def test_rag_chat_preserves_current_accepted_request_values(
                 {
                     "type": "string_type",
                     "loc": ["body", "message"],
-                    "msg": "Input should be a valid string",
-                    "input": None,
-                }
-            ],
-        ),
-        (
-            {"json": {"message": "hello", "user_role": None}},
-            [
-                {
-                    "type": "string_type",
-                    "loc": ["body", "user_role"],
                     "msg": "Input should be a valid string",
                     "input": None,
                 }
@@ -195,7 +214,7 @@ def test_rag_chat_preserves_current_accepted_request_values(
             ],
         ),
     ],
-    ids=["missing-message", "null-message", "null-role", "wrong-types", "malformed-json"],
+    ids=["missing-message", "null-message", "wrong-types", "malformed-json"],
 )
 def test_rag_chat_preserves_validation_errors(client, request_kwargs, expected_detail) -> None:
     response = client.post("/rag-chat", **request_kwargs)
@@ -219,7 +238,9 @@ def test_rag_chat_preserves_empty_context_success_through_http(client, monkeypat
     assert response.json() == EMPTY_RESPONSE
 
 
-def test_rag_chat_preserves_existing_exception_mapping_through_http(client, monkeypatch) -> None:
+def test_rag_chat_maps_unexpected_exceptions_to_safe_error_through_http(
+    client, monkeypatch
+) -> None:
     monkeypatch.setattr(rag_chat_application, "DEBUG_DELAY", False)
     monkeypatch.setattr(
         rag_chat_application,
@@ -230,7 +251,8 @@ def test_rag_chat_preserves_existing_exception_mapping_through_http(client, monk
     response = client.post("/rag-chat", json={"message": "What is required?"})
 
     assert response.status_code == 500
-    assert response.json() == {"detail": "fictional retrieval failure"}
+    assert response.json() == {"detail": "Internal server error"}
+    assert "fictional retrieval failure" not in response.text
 
 
 def _audit_item(*, item_id: int, timestamp: str, question: str) -> dict:
@@ -329,6 +351,7 @@ def test_audit_logs_preserve_complete_newest_first_array_and_default_limit(
 
     assert response.status_code == 200
     assert received_limits == [AUDIT_LOG_LIMIT]
+    assert response.headers["cache-control"] == "no-store"
     assert response.json() == expected
     assert [item["id"] for item in response.json()] == [12, 11]
     keyword_matches = [
@@ -354,29 +377,26 @@ def test_audit_logs_preserve_empty_array(client, monkeypatch) -> None:
     ("query", "expected_limit"),
     [
         ("?limit=4", 4),
-        ("?limit=0", 0),
-        ("?limit=-2", -2),
         ("?limit=4&limit=7", 7),
-        ("?limit=999999999999999999999999999999", 999999999999999999999999999999),
+        (f"?limit={MAX_AUDIT_LOG_LIMIT}", MAX_AUDIT_LOG_LIMIT),
     ],
-    ids=["explicit", "zero", "negative", "repeated-last-wins", "excessively-large"],
+    ids=["explicit", "repeated-last-wins", "maximum"],
 )
-def test_audit_logs_parse_and_forward_current_integer_limits(
+def test_audit_logs_parse_and_forward_bounded_integer_limits(
     client, monkeypatch, query, expected_limit
 ) -> None:
-    class ForwardedLimit(Exception):
-        def __init__(self, limit: int) -> None:
-            self.limit = limit
+    received = []
 
     def rows(limit):
-        raise ForwardedLimit(limit)
+        received.append(limit)
+        return []
 
     monkeypatch.setattr("assistant.api.audit.get_audit_logs", rows)
 
-    with pytest.raises(ForwardedLimit) as raised:
-        client.get(f"/audit-logs{query}")
+    response = client.get(f"/audit-logs{query}")
 
-    assert raised.value.limit == expected_limit
+    assert response.status_code == 200
+    assert received == [expected_limit]
 
 
 def test_audit_logs_reject_malformed_limit(client) -> None:
@@ -395,11 +415,16 @@ def test_audit_logs_reject_malformed_limit(client) -> None:
     }
 
 
-def test_legacy_routes_remain_anonymous_and_keep_maintenance_asymmetry(client, monkeypatch) -> None:
+def test_legacy_routes_require_authentication_and_keep_maintenance_asymmetry(
+    client, monkeypatch
+) -> None:
     monkeypatch.setattr("assistant.api.rag.rag_chat", lambda **_kwargs: EMPTY_RESPONSE)
     monkeypatch.setattr("assistant.api.audit.get_audit_logs", lambda _limit: [])
     maintenance = MaintenanceService(get_runtime_state_store())
 
+    anonymous = TestClient(app)
+    assert anonymous.post("/rag-chat", json={"message": "hello"}).status_code == 401
+    assert anonymous.get("/audit-logs").status_code == 401
     assert client.post("/rag-chat", json={"message": "hello"}).status_code == 200
     assert client.get("/audit-logs").status_code == 200
 
@@ -428,6 +453,7 @@ def test_legacy_routes_preserve_public_http_rate_limits(monkeypatch) -> None:
     monkeypatch.setattr("assistant.api.rag.rag_chat", lambda **_kwargs: EMPTY_RESPONSE)
     monkeypatch.setattr("assistant.api.audit.get_audit_logs", lambda _limit: [])
     client = TestClient(app)
+    _authenticate(client)
 
     rag_responses = [client.post("/rag-chat", json={"message": "hello"}) for _ in range(21)]
 
@@ -479,8 +505,15 @@ def test_openapi_freezes_legacy_route_methods_and_transport_schemas() -> None:
     }
     assert schema["components"]["schemas"]["RagChatRequest"] == {
         "properties": {
-            "message": {"type": "string", "title": "Message"},
-            "user_role": {"type": "string", "title": "User Role", "default": "user"},
+            "message": {
+                "type": "string",
+                "maxLength": MAX_RAG_MESSAGE_CHARACTERS,
+                "title": "Message",
+            },
+            "user_role": {
+                "anyOf": [{"type": "string"}, {"type": "null"}],
+                "title": "User Role",
+            },
         },
         "type": "object",
         "required": ["message"],
@@ -517,7 +550,13 @@ def test_openapi_freezes_legacy_route_methods_and_transport_schemas() -> None:
             "name": "limit",
             "in": "query",
             "required": False,
-            "schema": {"type": "integer", "default": AUDIT_LOG_LIMIT, "title": "Limit"},
+            "schema": {
+                "type": "integer",
+                "maximum": MAX_AUDIT_LOG_LIMIT,
+                "minimum": 1,
+                "default": AUDIT_LOG_LIMIT,
+                "title": "Limit",
+            },
         }
     ]
     assert audit_operation["responses"]["200"]["content"]["application/json"]["schema"] == {}

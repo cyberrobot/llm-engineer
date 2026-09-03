@@ -43,7 +43,7 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
-  const [sources, setSources] = useState<any[]>([]);
+  const [sources, setSources] = useState<{ text: string; id: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const { refreshDebugHistory, setDebugHistoryLoading } = useDebugContext();
   const { userRole } = useUser();
@@ -61,7 +61,7 @@ export default function App() {
     try {
       const data = await getRagChat({
         query: str,
-        userRole: userRole,
+        userRole,
       });
 
       setAnswer(data.reply);
@@ -69,7 +69,7 @@ export default function App() {
       setSources(data.sources || []);
       refreshDebugHistory();
       setLoading(false);
-    } catch (error) {
+    } catch {
       setAnswer({
         answer: 'Error fetching answer. Please try again.',
         source_ids: [],

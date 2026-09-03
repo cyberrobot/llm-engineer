@@ -277,4 +277,4 @@ def test_rag_chat_wraps_unexpected_errors_as_http_500():
             rag_chat.rag_chat("question", "user")
 
     assert context.value.status_code == 500
-    assert context.value.detail == "boom"
+    assert context.value.detail == "Internal server error"

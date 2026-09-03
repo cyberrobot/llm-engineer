@@ -183,5 +183,7 @@ def rag_chat(query: str, user_role: str):
 
         return cached_response
 
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Internal server error") from exc

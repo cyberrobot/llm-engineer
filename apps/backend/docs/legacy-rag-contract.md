@@ -1,14 +1,18 @@
 # Temporary legacy RAG contract
 
-This document records the existing HTTP contract between `apps/rag-ui` and two legacy backend
-routes. The routes are anonymous, temporary exceptions retained for that application only:
+This document records the protected internal/debug contract between `apps/rag-ui` and two legacy
+backend routes retained for that application only:
 
 - `POST /rag-chat`
 - `GET /audit-logs`
 
-This freeze makes accidental drift visible while the RAG UI exists. It is not a long-term
-compatibility promise, and no new consumer should integrate with either route. New anonymous
-Assistant integrations must use the supported
+Both routes require the existing opaque HTTP-only administrator session cookie and the
+`administrator` role. The browser first restores that session through `GET /admin/auth/me` and
+sends credentials with subsequent requests. No administrator token or API key is exposed to
+frontend JavaScript, browser storage, build-time configuration, or query strings.
+
+This contract is not a long-term compatibility promise, and no new consumer should integrate with
+either route. New anonymous Assistant integrations must use the supported
 `POST /public/assistants/{assistant_slug}/chat` endpoint.
 
 ## `POST /rag-chat`
@@ -17,12 +21,28 @@ The RAG UI sends an `application/json` object with these fields:
 
 | Field | Type | Requirement |
 | --- | --- | --- |
-| `message` | string | Required. Empty strings are currently accepted. |
-| `user_role` | string | Optional; defaults to `"user"`. Empty strings are currently accepted. |
+| `message` | string | Required; at most 4,000 characters. Empty strings remain accepted. |
+| `user_role` | string or null | Optional role narrowing hint; never an authorization claim. |
 
-Unknown object fields are ignored. `null` and non-string values for either declared field are
-rejected with FastAPI's `422` validation response. A missing `message` and malformed JSON also
-return `422`. These are characterized legacy behaviors, not recommendations for new APIs.
+Unknown object fields are ignored but still count toward the raw request-body limit. The RAG UI
+sends the administrator's selected legacy document role as this non-authoritative hint. A null,
+omitted, or empty value selects the server-defined default role, `doctor`.
+Non-string role values, a missing or non-string `message`, and malformed JSON return `422`.
+Messages longer than 4,000 characters return `422` without invoking RAG orchestration. The raw
+encoded request body is independently limited to 32,768 bytes and larger bodies return `413`
+before body parsing or orchestration.
+
+Administrator authentication protects this internal debugging boundary. Application roles and RAG
+document roles remain separate concepts: `AdministratorRole.administrator` is not stored or queried
+as a document access role. The server-owned internal administrator RAG policy permits inspection of
+the established legacy role set: `doctor`, `nurse`, `analyst`, `manager`, and `agent`. That policy is
+centralized in the Assistant domain and is not derived from request data.
+
+A supplied legacy `user_role` can only select from that server-derived set and cannot add a role;
+unknown or unpermitted roles return the standard administrator `403` response. Retrieval, audit
+lookup, and cache keys receive only this validated effective role, so a cached response from one
+role cannot cross into another role's authorization context. Existing role-tagged documents remain
+usable without re-ingestion, relabelling, or a data migration.
 
 The success response is an object containing `reply`, `sources`, and `evaluation`. Source ID and
 source array order are preserved:
@@ -76,34 +96,22 @@ No retrieved context is a successful `200` response, not an error:
 }
 ```
 
-Existing orchestration exceptions return `500` with `{"detail": "<message>"}`. This records the
-current behavior; it does not authorize exposing secrets, provider payloads, prompts, document
-contents, or other sensitive details.
+Unexpected orchestration failures return the stable `500` body
+`{"detail": "Internal server error"}`. Raw provider, database, prompt, document, credential, and
+exception details are never returned.
 
-The route accepts anonymous requests and is limited to 20 requests per minute per SlowAPI client
-key. Exceeding the limit returns `429` with the existing structured rate-limit error. Maintenance
-mode blocks the route with `503` and the generic `maintenance_mode` response. When maintenance is
-disabled, requests proceed normally.
+Anonymous and invalid sessions receive the established administrator `401` response before RAG
+work. The route remains limited to 20 requests per minute per SlowAPI client key. Maintenance mode
+blocks it with the generic `503 maintenance_mode` response. Successful and internal-error responses
+include `Cache-Control: no-store` because answers and sources are debug-sensitive.
 
 ## `GET /audit-logs`
 
-The RAG UI sends an anonymous `GET` request without a query parameter. The optional integer
-`limit` parameter defaults to the configured `AUDIT_LOG_LIMIT`, currently `10`, and the effective
-value is forwarded directly to persistence. FastAPI parses and forwards explicit positive, zero,
-negative, repeated, and arbitrarily large integers without clamping; if repeated, the last `limit`
-value wins. PostgreSQL then determines whether the forwarded value is a valid `LIMIT`:
-
-- the omitted default and explicit positive values return up to that many rows with `200`;
-- zero returns `[]` with `200`;
-- repeated values use the last value and return `200` when it is a valid PostgreSQL limit;
-- a negative value is rejected by PostgreSQL and currently surfaces as a plain-text `500 Internal
-  Server Error`;
-- an integer larger than PostgreSQL's `bigint` range is parsed and forwarded by FastAPI, then
-  rejected by PostgreSQL and likewise surfaces as a plain-text `500 Internal Server Error`;
-- a non-integer is rejected by FastAPI before persistence with its JSON `422` validation response.
-
-These outcomes characterize the current unbounded parameter and uncaught persistence errors; they
-do not endorse or add validation, clamping, or error mapping.
+The RAG UI sends an authenticated `GET` request without a query parameter. The optional integer
+`limit` defaults to `AUDIT_LOG_LIMIT` (`10`) and accepts values from 1 through 200 inclusive. Zero,
+negative, malformed, larger-than-maximum, and excessively large values return `422` before
+persistence. Repeated values retain FastAPI's last-value behavior when that final value is valid.
+Persistence therefore never receives an unbounded caller-controlled limit.
 
 A successful request returns a top-level JSON array. An empty result is `[]` with status `200`.
 Rows are selected by `id` descending, so the newest row is first, and the SQL query applies the
@@ -170,13 +178,14 @@ renders every metric shown above and every retrieved/reranked chunk field shown 
 retrieved and reranked items must preserve that numeric type because the RAG UI invokes
 `keyword_match.toFixed(3)`.
 
-The route accepts anonymous requests and is limited to 60 requests per minute per SlowAPI client
-key. Unlike `/rag-chat`, `/audit-logs` is not classified as public Assistant traffic by the
-maintenance middleware and remains reachable during maintenance mode.
+The route requires an authenticated administrator and is limited to 60 requests per minute per
+SlowAPI client key. Unlike `/rag-chat`, `/audit-logs` is not classified as public Assistant traffic
+by the maintenance middleware and remains reachable during maintenance mode. Successful responses
+include `Cache-Control: no-store`. Unexpected persistence failures use the same stable, generic
+`500` response as RAG chat and never expose raw exception text.
 
 ## Change and retirement rule
 
-The RAG UI and these backend routes form one temporary consumer-specific boundary. Any retirement,
-migration, authentication change, validation change, or response redesign must update
-`apps/rag-ui` and the backend routes together in a separately scoped change. Do not introduce an
+The RAG UI and these backend routes form one temporary consumer-specific boundary. Any retirement
+or response redesign must update `apps/rag-ui` and the backend routes together. Do not introduce an
 administrator alias or direct another consumer to these routes as a migration shortcut.

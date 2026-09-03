@@ -10,6 +10,7 @@ export const getAuditLogs = async () => {
   try {
     const res = await fetch(`${API_URL}/audit-logs`, {
       method: 'GET',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
       },

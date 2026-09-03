@@ -8,12 +8,20 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
-from core.config import AUDIT_LOG_LIMIT, DATABASE_URL
+from admin_auth.dependencies import get_administrator_auth_service
+from admin_auth.passwords import AdministratorPasswordService
+from admin_auth.repository import InMemoryAdministratorAuthRepository
+from admin_auth.service import AdministratorAuthenticationService
+from assistant.domain.assistant import REDMOOR_ASSISTANT_ID
+from assistant.infrastructure.storage import save_document_with_chunks
+from core.config import AUDIT_LOG_LIMIT, DATABASE_URL, EMBEDDING_VECTOR_DIMENSIONS
 from infrastructure.database.connection import get_connection, init_db
 from main import app
 from shared.dependencies.rate_limit import limiter
 
 OVERSIZED_LIMIT = 999999999999999999999999999999
+NOW = datetime(2026, 9, 2, 10, tzinfo=timezone.utc)
+PASSWORD = "correct horse battery staple"
 
 
 def _require_database() -> None:
@@ -82,10 +90,120 @@ def persisted_audit_questions() -> Iterator[list[str]]:
 def postgres_client() -> Iterator[TestClient]:
     previous = limiter.enabled
     limiter.enabled = False
+    repository = InMemoryAdministratorAuthRepository()
+    service = AdministratorAuthenticationService(
+        repository,
+        AdministratorPasswordService(),
+        session_ttl_seconds=3600,
+        login_max_failures=3,
+        login_lockout_seconds=300,
+        clock=lambda: NOW,
+        token_factory=lambda: "legacy-rag-postgres-session",
+    )
+    service.bootstrap("admin@example.com", PASSWORD)
+    login = service.login("admin@example.com", PASSWORD)
+    app.dependency_overrides[get_administrator_auth_service] = lambda: service
+    client = TestClient(app, raise_server_exceptions=False)
+    client.cookies.set("redmoor_admin_session", login.session_token)
     try:
-        yield TestClient(app, raise_server_exceptions=False)
+        yield client
     finally:
         limiter.enabled = previous
+        app.dependency_overrides.clear()
+
+
+def test_authenticated_administrator_retrieves_existing_role_content_from_postgres(
+    postgres_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _require_database()
+    init_db()
+    doctor_document_id = str(uuid4())
+    manager_document_id = str(uuid4())
+    doctor_chunk_id = str(uuid4())
+    manager_chunk_id = str(uuid4())
+    embedding = [1.0] + [0.0] * (EMBEDDING_VECTOR_DIMENSIONS - 1)
+
+    save_document_with_chunks(
+        doctor_document_id,
+        "policy",
+        ["doctor"],
+        [
+            {
+                "id": doctor_chunk_id,
+                "doc_id": doctor_document_id,
+                "text": "Doctors must complete the surgical checklist.",
+                "embedding": embedding,
+                "access_roles": ["doctor"],
+            }
+        ],
+        assistant_id=REDMOOR_ASSISTANT_ID,
+    )
+    save_document_with_chunks(
+        manager_document_id,
+        "policy",
+        ["manager"],
+        [
+            {
+                "id": manager_chunk_id,
+                "doc_id": manager_document_id,
+                "text": "Managers can approve operational exceptions.",
+                "embedding": embedding,
+                "access_roles": ["manager"],
+            }
+        ],
+        assistant_id=REDMOOR_ASSISTANT_ID,
+    )
+
+    monkeypatch.setattr("assistant.application.rag_chat.DEBUG_DELAY", False)
+    monkeypatch.setattr("assistant.application.rag_chat.DISABLE_AUDIT_LOGS", True)
+    monkeypatch.setattr("assistant.application.rag_chat.get_cached_response", lambda *_args: None)
+    monkeypatch.setattr(
+        "assistant.application.retrieval.generate_queries_cached", lambda query: [query]
+    )
+    monkeypatch.setattr("assistant.application.retrieval.get_embedding", lambda _query: embedding)
+
+    def generate_answer(_query, results):
+        reply = {"answer": results[0]["text"], "source_ids": [results[0]["id"]]}
+        return reply, results, results, 0.1
+
+    monkeypatch.setattr("assistant.application.rag_chat.generate_answer", generate_answer)
+    monkeypatch.setattr(
+        "assistant.application.rag_chat.build_evaluation",
+        lambda *_args: {"sentences": [], "metrics": {"total_sentences": 0}},
+    )
+    monkeypatch.setattr("assistant.application.rag_chat.set_cache", lambda *_args: None)
+
+    try:
+        response = postgres_client.post(
+            "/rag-chat",
+            json={"message": "What is required before surgery?", "user_role": "doctor"},
+        )
+
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert response.json()["sources"] == [
+            {
+                "id": doctor_chunk_id,
+                "text": "Doctors must complete the surgical checklist.",
+            }
+        ]
+        assert manager_chunk_id not in response.text
+        with get_connection() as connection:
+            document_roles = connection.execute(
+                "SELECT access_roles FROM documents WHERE id = %s", (doctor_document_id,)
+            ).fetchone()
+            chunk_roles = connection.execute(
+                "SELECT access_roles FROM chunks WHERE id = %s", (doctor_chunk_id,)
+            ).fetchone()
+        assert document_roles == (["doctor"],)
+        assert chunk_roles == (["doctor"],)
+    finally:
+        with get_connection() as connection:
+            connection.execute(
+                "DELETE FROM documents WHERE id = ANY(%s)",
+                ([doctor_document_id, manager_document_id],),
+            )
 
 
 @pytest.mark.parametrize(
@@ -93,10 +211,10 @@ def postgres_client() -> Iterator[TestClient]:
     [
         ("", AUDIT_LOG_LIMIT),
         ("?limit=4", 4),
-        ("?limit=0", 0),
         ("?limit=4&limit=7", 7),
+        ("?limit=200", AUDIT_LOG_LIMIT + 2),
     ],
-    ids=["default", "explicit", "zero", "repeated-last-wins"],
+    ids=["default", "explicit", "repeated-last-wins", "maximum"],
 )
 def test_audit_limits_execute_through_postgres(
     postgres_client: TestClient,
@@ -108,6 +226,7 @@ def test_audit_limits_execute_through_postgres(
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/json"
+    assert response.headers["cache-control"] == "no-store"
     assert [item["question"] for item in response.json()] == persisted_audit_questions[
         :expected_count
     ]
@@ -115,19 +234,17 @@ def test_audit_limits_execute_through_postgres(
 
 @pytest.mark.parametrize(
     "query",
-    ["?limit=-2", f"?limit={OVERSIZED_LIMIT}"],
-    ids=["negative", "exceeds-postgres-bigint"],
+    ["?limit=0", "?limit=-2", "?limit=201", f"?limit={OVERSIZED_LIMIT}"],
+    ids=["zero", "negative", "maximum-plus-one", "excessively-large"],
 )
-def test_audit_limits_rejected_by_postgres_surface_current_http_500(
+def test_invalid_audit_limits_are_rejected_before_postgres(
     postgres_client: TestClient,
     persisted_audit_questions: list[str],
     query: str,
 ) -> None:
     response = postgres_client.get(f"/audit-logs{query}")
 
-    assert response.status_code == 500
-    assert response.headers["content-type"] == "text/plain; charset=utf-8"
-    assert response.text == "Internal Server Error"
+    assert response.status_code == 422
 
 
 def test_malformed_audit_limit_is_rejected_before_postgres(

@@ -1,5 +1,5 @@
-import UserRoleDropdown from './UserRoleDropdown';
 import RobotIcon from '../assets/robot.svg?react';
+import UserRoleDropdown from './UserRoleDropdown';
 
 const Header = () => {
   return (

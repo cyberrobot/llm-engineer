@@ -1,11 +1,11 @@
-import { API_URL } from '../utils/settings';
+import { API_URL, type UserRole } from '../utils/settings';
 
 export const getRagChat = async ({
   query,
   userRole,
 }: {
   query: string;
-  userRole: string;
+  userRole: UserRole;
 }) => {
   const controller = new AbortController();
 
@@ -16,6 +16,7 @@ export const getRagChat = async ({
   try {
     const res = await fetch(`${API_URL}/rag-chat`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
