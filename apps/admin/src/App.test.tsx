@@ -11,6 +11,17 @@ const assistant:Assistant={id:'11111111-1111-4111-8111-111111111111',slug:'legal
 function deferred<T>(){let resolve!:(value:T)=>void,reject!:(reason?:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}}
 type TestLocation=string|{pathname:string;state:unknown};
 function renderApp(api:AdminApi,path:TestLocation='/admin'){const router=createMemoryRouter([{path:'*',element:<AuthProvider api={api}><App/></AuthProvider>}],{initialEntries:[path]});return{...render(<RouterProvider router={router}/>),router}}
+function useMobileViewport(){
+  let matches=true;
+  let listener:((event:MediaQueryListEvent)=>void)|undefined;
+  const media={
+    get matches(){return matches},media:'(max-width: 1023px)',onchange:null,
+    addEventListener:vi.fn((_type:string,handler:(event:MediaQueryListEvent)=>void)=>{listener=handler}),
+    removeEventListener:vi.fn(),addListener:vi.fn(),removeListener:vi.fn(),dispatchEvent:vi.fn(),
+  };
+  vi.stubGlobal('matchMedia',vi.fn().mockReturnValue(media));
+  return {change(next:boolean){matches=next;act(()=>listener?.({matches:next} as MediaQueryListEvent))}};
+}
 const source:KnowledgeSource={id:'22222222-2222-4222-8222-222222222222',assistantId:assistant.id,sourceType:'direct_text',name:'Policy guide',retrievalState:'enabled',url:null,directText:null,documentId:'document-1',createdAt:'2026-08-05T09:00:00Z',updatedAt:'2026-08-05T09:00:00Z',latestIngestion:{id:'33333333-3333-4333-8333-333333333333',status:'completed',currentStep:null,createdAt:'2026-08-05T09:00:00Z',startedAt:'2026-08-05T09:01:00Z',completedAt:'2026-08-05T09:02:00Z',failureCode:null,failureMessage:null},activeJobReused:false};
 const behaviour:AssistantBehaviour={assistantId:assistant.id,draft:{revision:2,instructions:'Answer only from fictional policy.\nPreserve this line.',welcomeMessage:'Welcome to policy help.',inputPlaceholder:'Ask about policy',suggestedQuestions:['What is covered?','How do I appeal?'],createdAt:'2026-08-05T09:00:00Z'},published:{revision:1,publishedAt:'2026-08-04T09:00:00Z'},hasUnpublishedChanges:true,concurrencyToken:'2'};
 const operationsSummary:OperationsSummary={generatedAt:'2026-08-25T10:00:00Z',health:'healthy',maintenance:false,cache:{regions:3},jobs:{running:1,failed:0},audit:{today:4},assistants:{total:2,published:1},knowledgeSources:{total:5,enabled:4,failed:null},ingestion:{queued:2,running:1,recoverable:0,failed:0,oldestQueuedAgeSeconds:4320,workersObserved:2}};
@@ -27,14 +38,85 @@ describe('administrator application workflows',()=>{
     [`/admin/operations/jobs/${assistant.id}`,'Operational job details','Job not found'],
     ['/admin/operations/audit','Administrative audit','No audit entries'],
     [`/admin/operations/audit/${assistant.id}`,'Audit entry details','Audit entry not found'],
-  ])('routes protected deep link %s and keeps Operations navigation active',async(path,title,content)=>{renderApp(apiWith(),path);expect(await screen.findByRole('heading',{name:title})).toBeInTheDocument();expect(await screen.findByText(content)).toBeInTheDocument();expect(screen.getByRole('link',{name:'Operations'})).toHaveClass('active')});
+  ])('routes protected deep link %s and keeps Operations navigation active',async(path,title,content)=>{renderApp(apiWith(),path);expect(await screen.findByRole('heading',{name:title})).toBeInTheDocument();expect(await screen.findByText(content)).toBeInTheDocument();expect(within(screen.getByRole('navigation',{name:'Primary'})).getByText('Operations')).toHaveAttribute('aria-current','true')});
   it('returns to login when a detailed Operations read reports an expired session',async()=>{renderApp(apiWith({getOperationsHealth:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated'))}),'/admin/operations/health');expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();expect(screen.queryByRole('heading',{name:'Overall health'})).not.toBeInTheDocument()});
   it('hides protected content until session restoration completes',async()=>{const session=deferred<Administrator>();renderApp(apiWith({currentUser:vi.fn(()=>session.promise)}));expect(screen.getByRole('heading',{name:'Restoring your session'})).toBeInTheDocument();expect(screen.queryByText('Service status')).not.toBeInTheDocument();session.resolve(administrator);expect(await screen.findByRole('heading',{name:'Service status'})).toBeInTheDocument()});
   it('redirects a confirmed unauthenticated session with a safe return path',async()=>{renderApp(apiWith({currentUser:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated'))}),'/admin/assistants');expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument()});
   it('shows a retryable restoration failure and retries manually',async()=>{const currentUser=vi.fn().mockRejectedValueOnce(new AdminApiError('network')).mockResolvedValueOnce(administrator);renderApp(apiWith({currentUser}));expect(await screen.findByRole('heading',{name:'Unable to restore your session'})).toBeInTheDocument();await userEvent.click(screen.getByRole('button',{name:'Try again'}));expect(await screen.findByRole('heading',{name:'Service status'})).toBeInTheDocument();expect(currentUser).toHaveBeenCalledTimes(2)});
   it('validates required fields and signs in by keyboard without duplicate pending requests',async()=>{const login=vi.fn().mockResolvedValue(administrator);renderApp(apiWith({currentUser:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated')),login}),'/login?returnTo=/admin/assistants');const email=await screen.findByLabelText('Email address');await userEvent.click(screen.getByRole('button',{name:'Sign in'}));expect(screen.getByRole('alert')).toHaveFocus();await userEvent.type(email,'admin@example.test');await userEvent.type(screen.getByLabelText('Password'),'correct password{Enter}');expect(await screen.findByText('No assistants yet')).toBeInTheDocument();expect(login).toHaveBeenCalledOnce()});
   it('preserves email and safely reports invalid credentials',async()=>{renderApp(apiWith({currentUser:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated')),login:vi.fn().mockRejectedValue(new AdminApiError('invalid_credentials'))}),'/login');await userEvent.type(await screen.findByLabelText('Email address'),'admin@example.test');await userEvent.type(screen.getByLabelText('Password'),'wrong{Enter}');expect(await screen.findByRole('alert')).toHaveTextContent('email or password is invalid');expect(screen.getByLabelText('Email address')).toHaveValue('admin@example.test');expect(screen.getByLabelText('Password')).toHaveValue('')});
-  it('renders shell landmarks and logs out even when the session is already expired',async()=>{const logout=vi.fn().mockResolvedValue(undefined);renderApp(apiWith({logout}));expect(await screen.findByRole('navigation',{name:'Primary'})).toBeInTheDocument();expect(screen.getByText('admin@example.test')).toBeInTheDocument();await userEvent.click(screen.getByRole('button',{name:'Sign out'}));expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();expect(logout).toHaveBeenCalledOnce()});
+  it('renders the complete authenticated shell navigation and account context',async()=>{
+    renderApp(apiWith());
+    const navigation=await screen.findByRole('navigation',{name:'Primary'});
+    expect(screen.getByRole('main')).toHaveAttribute('id','main');
+    expect(screen.getByRole('link',{name:'Skip to main content'})).toHaveAttribute('href','#main');
+    expect(screen.getByText('admin@example.test')).toHaveAttribute('title','admin@example.test');
+    expect(screen.getByText('Platform Administrator')).toBeInTheDocument();
+    expect(within(navigation).getByRole('link',{name:'Dashboard'})).toHaveAttribute('href','/admin');
+    expect(within(navigation).getByRole('link',{name:'Assistants'})).toHaveAttribute('href','/admin/assistants');
+    expect(within(navigation).getByRole('link',{name:'Knowledge Sources'})).toHaveAttribute('href','/admin/knowledge-sources');
+    for(const [name,href] of [
+      ['Overview','/admin/operations'],['Health','/admin/operations/health'],['Jobs','/admin/operations/jobs'],
+      ['Cache','/admin/operations/cache'],['Maintenance','/admin/operations/maintenance'],
+      ['Audit & Activity','/admin/operations/audit'],
+    ]) expect(within(navigation).getByRole('link',{name})).toHaveAttribute('href',href);
+    expect(within(navigation).queryByRole('link',{name:'Settings'})).not.toBeInTheDocument();
+  });
+  it('indicates exact, parent, and nested navigation state',async()=>{
+    const {router}=renderApp(apiWith(),'/admin/operations/health');
+    await screen.findByRole('heading',{name:'Overall health'});
+    expect(screen.getByText('Operations')).toHaveAttribute('aria-current','true');
+    expect(screen.getByRole('link',{name:'Health'})).toHaveAttribute('aria-current','page');
+    expect(screen.getByRole('link',{name:'Dashboard'})).not.toHaveAttribute('aria-current');
+    await act(()=>router.navigate('/admin/assistants/new'));
+    expect(await screen.findByRole('heading',{name:'Create assistant'})).toHaveFocus();
+    expect(screen.getByRole('link',{name:'Assistants'})).toHaveAttribute('aria-current','page');
+  });
+  it('changes and focuses the route heading after shell navigation',async()=>{
+    renderApp(apiWith());
+    await screen.findByRole('heading',{name:'Service status'});
+    await userEvent.click(screen.getByRole('link',{name:'Knowledge Sources'}));
+    expect(await screen.findByRole('heading',{name:'Knowledge Sources'})).toHaveFocus();
+  });
+  it('opens and closes mobile navigation through selection and Escape',async()=>{
+    useMobileViewport();
+    renderApp(apiWith());
+    const menu=await screen.findByRole('button',{name:'Open navigation'});
+    expect(menu).toHaveAttribute('aria-expanded','false');
+    expect(screen.queryByRole('navigation',{name:'Primary'})).not.toBeInTheDocument();
+    await userEvent.click(menu);
+    expect(menu).toHaveAttribute('aria-expanded','true');
+    expect(screen.getByRole('navigation',{name:'Primary'})).toBeInTheDocument();
+    expect(screen.getByRole('main')).toHaveAttribute('inert');
+    await userEvent.click(screen.getByRole('link',{name:'Health'}));
+    expect(await screen.findByRole('heading',{name:'Health diagnostics'})).toHaveFocus();
+    expect(screen.queryByRole('navigation',{name:'Primary'})).not.toBeInTheDocument();
+    await userEvent.click(menu);
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('navigation',{name:'Primary'})).not.toBeInTheDocument();
+    expect(menu).toHaveFocus();
+  });
+  it('switches to persistent desktop navigation without retaining an open mobile drawer',async()=>{
+    const viewport=useMobileViewport();
+    renderApp(apiWith());
+    const menu=await screen.findByRole('button',{name:'Open navigation'});
+    await userEvent.click(menu);
+    expect(menu).toHaveAttribute('aria-expanded','true');
+    viewport.change(false);
+    expect(screen.queryByRole('button',{name:/navigation/})).not.toBeInTheDocument();
+    expect(screen.getByRole('navigation',{name:'Primary'})).toBeInTheDocument();
+    viewport.change(true);
+    expect(screen.getByRole('button',{name:'Open navigation'})).toHaveAttribute('aria-expanded','false');
+    expect(screen.queryByRole('navigation',{name:'Primary'})).not.toBeInTheDocument();
+  });
+  it('logs out once and converges to login when the backend session is already expired',async()=>{
+    const logout=vi.fn().mockRejectedValue(new AdminApiError('unauthenticated'));
+    renderApp(apiWith({logout}));
+    await screen.findByRole('navigation',{name:'Primary'});
+    await userEvent.click(screen.getByRole('button',{name:'Sign out'}));
+    expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();
+    expect(logout).toHaveBeenCalledOnce();
+  });
   it('renders the authoritative operational summary without secondary aggregate requests',async()=>{
     const getOperationsSummary=vi.fn().mockResolvedValue(operationsSummary);
     const listAssistants=vi.fn();
