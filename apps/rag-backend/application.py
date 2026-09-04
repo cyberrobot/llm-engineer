@@ -1,0 +1,229 @@
+import json
+import math
+import time
+from pathlib import Path
+
+from infrastructure import (
+    REDMOOR_ASSISTANT_ID,
+    AuditRepository,
+    Cache,
+    PostgresKnowledgeRepository,
+    Provider,
+)
+
+PROMPTS = Path(__file__).resolve().parent / "prompts"
+query_cache: dict[str, list[str]] = {}
+MAX_QUERY_CACHE_SIZE = 100
+
+
+def prompt(name: str) -> str:
+    return (PROMPTS / name).read_text(encoding="utf-8")
+
+
+def empty_response() -> dict:
+    return {
+        "reply": {
+            "answer": "I could not find relevant information in the provided documents.",
+            "source_ids": [],
+        },
+        "sources": [],
+        "evaluation": {
+            "sentences": [],
+            "metrics": {
+                "groundedness_score": 0,
+                "verified_sentences": 0,
+                "unsupported_claims": 0,
+                "total_sentences": 0,
+                "citation_count": 0,
+            },
+        },
+    }
+
+
+def estimate_tokens(text: str) -> int:
+    return len(text) // 4
+
+
+def _cosine(left: list[float], right: list[float]) -> float:
+    denominator = math.sqrt(sum(x * x for x in left)) * math.sqrt(
+        sum(x * x for x in right)
+    )
+    return sum(x * y for x, y in zip(left, right)) / denominator if denominator else 0.0
+
+
+def evaluate_answer(answer: str, chunks: list[dict], provider: Provider) -> dict:
+    sentences = [
+        part.strip()
+        for part in answer.replace("!", ".").replace("?", ".").split(".")
+        if part.strip()
+    ]
+    results = []
+    for sentence in sentences:
+        sentence_embedding = provider.embedding(sentence)
+        source_ids = []
+        best_score = 0.0
+        for chunk in chunks:
+            chunk_embedding = chunk.get("embedding") or provider.embedding(
+                chunk.get("text", "")
+            )
+            score = _cosine(sentence_embedding, chunk_embedding)
+            best_score = max(best_score, score)
+            if score >= 0.78:
+                source_ids.append(str(chunk["id"]))
+        results.append(
+            {
+                "sentence": sentence,
+                "supported": bool(source_ids),
+                "source_ids": source_ids,
+                "support_score": round(best_score, 4),
+            }
+        )
+    supported = [item for item in results if item["supported"]]
+    source_ids = {source_id for item in supported for source_id in item["source_ids"]}
+    return {
+        "sentences": results,
+        "metrics": {
+            "groundedness_score": round(len(supported) / len(results), 2)
+            if results
+            else 0,
+            "verified_sentences": len(supported),
+            "unsupported_claims": len(results) - len(supported),
+            "total_sentences": len(results),
+            "citation_count": len(source_ids),
+        },
+    }
+
+
+def format_chunks_for_audit(chunks: list[dict]) -> list[dict]:
+    return [
+        {
+            "id": chunk["id"],
+            "doc_id": chunk["doc_id"],
+            "text_snippet": chunk["text"][:150],
+            "distance": chunk["distance"],
+            "keyword_match": chunk["keyword_match"],
+            "hybrid_score": chunk["hybrid_score"],
+            "rank": rank,
+        }
+        for rank, chunk in enumerate(chunks, 1)
+    ]
+
+
+def rag_chat(
+    query: str,
+    role: str,
+    repository: PostgresKnowledgeRepository,
+    provider: Provider,
+    cache: Cache,
+    audit: AuditRepository,
+) -> dict:
+    start = time.perf_counter()
+    cached = cache.get(query, role)
+    if cached:
+        latest = audit.latest(question=query, role=role)
+        if latest is not None:
+            audit.write(
+                role=role,
+                question=query,
+                reply=latest["reply"],
+                retrieved=latest["retrieved_chunks"],
+                reranked=latest["reranked_chunks"],
+                queries=latest["queries"],
+                evaluation=latest["evaluation"],
+                metrics={
+                    **latest["metrics"],
+                    "cache_hit": True,
+                    "retrieval_time": 0,
+                    "llm_time": 0,
+                    "total_time": round((time.perf_counter() - start) * 1000, 4),
+                },
+            )
+        cached.setdefault("evaluation", empty_response()["evaluation"])
+        return cached
+    queries = [query]
+    if query in query_cache:
+        queries = query_cache[query]
+    else:
+        try:
+            generated = json.loads(
+                provider.text(f"{prompt('query_generation.md')}\nUser query:\n{query}")
+            )
+            if isinstance(generated, list) and all(
+                isinstance(x, str) for x in generated
+            ):
+                queries = generated
+        except (json.JSONDecodeError, ValueError):
+            queries = [query]
+        if len(query_cache) >= MAX_QUERY_CACHE_SIZE:
+            query_cache.pop(next(iter(query_cache)))
+        query_cache[query] = queries
+    results = []
+    for item in queries:
+        results.extend(
+            repository.search(
+                assistant_id=REDMOOR_ASSISTANT_ID,
+                query_embedding=provider.embedding(item),
+                query=item,
+                role=role,
+                limit=8,
+            )
+        )
+    retrieval_time = (time.perf_counter() - start) * 1000
+    unique = []
+    seen = set()
+    for item in results:
+        if item["id"] not in seen:
+            unique.append(item)
+            seen.add(item["id"])
+    if not unique:
+        return empty_response()
+    llm_start = time.perf_counter()
+    try:
+        ranked = json.loads(
+            provider.text(
+                f"{prompt('rerank_chunks.md')}\nQuery:\n{query}\nChunks:\n"
+                + "\n".join(f"[{i}] {x['text']}" for i, x in enumerate(unique))
+            )
+        )
+    except (json.JSONDecodeError, ValueError):
+        ranked = list(range(len(unique)))
+    reranked = [unique[index] for index in ranked[:3]]
+    answer = json.loads(
+        provider.text(
+            f"{prompt('answer_system.md')}\nContext:\n"
+            + "\n\n".join(f"[Source: {x['id']}]\n{x['text']}" for x in reranked)
+            + "\nQuestion:\n"
+            + query
+        )
+    )
+    llm_time = (time.perf_counter() - llm_start) * 1000
+    ids = set(answer.get("source_ids", []))
+    sources = [
+        {"id": str(x["id"]), "text": x["text"][:150]}
+        for x in reranked
+        if str(x["id"]) in ids
+    ]
+    evaluation = evaluate_answer(answer.get("answer", ""), reranked, provider)
+    result = {"reply": answer, "sources": sources, "evaluation": evaluation}
+    if not __import__("config").settings.disable_audit:
+        audit.write(
+            role=role,
+            question=query,
+            reply=answer,
+            retrieved=format_chunks_for_audit(unique),
+            reranked=format_chunks_for_audit(reranked),
+            queries=queries,
+            evaluation=evaluation,
+            metrics={
+                "input_tokens": estimate_tokens(query),
+                "output_tokens": estimate_tokens(
+                    f"{answer['answer']} Sources: {', '.join(answer.get('source_ids', []))}"
+                ),
+                "retrieval_time": round(retrieval_time, 4),
+                "llm_time": round(llm_time, 4),
+                "total_time": round((time.perf_counter() - start) * 1000, 4),
+                "cache_hit": False,
+            },
+        )
+    cache.set(query, role, result)
+    return result

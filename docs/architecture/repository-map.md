@@ -53,6 +53,12 @@ Inspect these paths first:
 - `apps/backend/README.md`, `apps/backend/.env.example`, and `apps/backend/pyproject.toml` — backend
   behaviour, configuration, and Python tool settings.
 
+### `apps/rag-backend`
+
+Staged standalone FastAPI RAG extraction. It owns only the RAG health, chat, and audit routes and
+is intentionally not production-routed yet. Its local configuration, provider, Redis, PostgreSQL,
+prompt, and lifecycle code must remain independent from `apps/backend` until a later cutover.
+
 Backend dependency rules:
 
 - Domain modules own business rules and remain independent of FastAPI, database sessions,
