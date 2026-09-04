@@ -4,7 +4,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
-from application import RequestTimedOut, rag_chat
+from application import RequestTimedOut, commit_rag_chat_outcome, prepare_rag_chat
 from config import settings
 from contracts import RagChatRequest, RagChatResponse
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -132,18 +132,27 @@ async def chat(request: Request, response: Response, body: RagChatRequest):
         if request.app.state.provider is None:
             request.app.state.provider = Provider()
         provider = request.app.state.provider
-        return await asyncio.wait_for(
+        deadline = time.monotonic() + settings.request_timeout_seconds
+        outcome = await asyncio.wait_for(
             asyncio.to_thread(
-                rag_chat,
+                prepare_rag_chat,
                 body.message,
                 role,
                 request.app.state.repository,
                 provider,
                 request.app.state.cache,
                 request.app.state.audit,
-                time.monotonic() + settings.request_timeout_seconds,
+                deadline,
             ),
             settings.request_timeout_seconds,
+        )
+        return await asyncio.to_thread(
+            commit_rag_chat_outcome,
+            outcome,
+            body.message,
+            role,
+            request.app.state.cache,
+            request.app.state.audit,
         )
     except (asyncio.TimeoutError, RequestTimedOut) as exc:
         raise HTTPException(

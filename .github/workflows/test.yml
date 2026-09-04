@@ -126,3 +126,6 @@ jobs:
 
       - name: Lint and format check
         run: ruff check . && ruff format --check .
+
+      - name: Type check
+        run: mypy .

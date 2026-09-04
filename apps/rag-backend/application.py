@@ -1,10 +1,11 @@
 import json
 import math
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
-import pysbd
+import pysbd  # type: ignore[import-untyped]
 from config import settings
 from infrastructure import REDMOOR_ASSISTANT_ID
 
@@ -16,6 +17,13 @@ sentence_segmenter = pysbd.Segmenter(language="en", clean=False)
 
 class RequestTimedOut(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class RagChatOutcome:
+    response: dict
+    audit_event: dict | None
+    cache_response: dict | None
 
 
 def _ensure_before_deadline(deadline: float | None) -> None:
@@ -87,7 +95,7 @@ def evaluate_answer(answer: str, chunks: list[dict], provider: RagProvider) -> d
     results = []
     for sentence in sentences:
         sentence_embedding = provider.embedding(sentence)
-        source_ids = []
+        supported_source_ids: list[str] = []
         best_score = 0.0
         for chunk in chunks:
             chunk_embedding = chunk.get("embedding") or provider.embedding(
@@ -96,17 +104,19 @@ def evaluate_answer(answer: str, chunks: list[dict], provider: RagProvider) -> d
             score = _cosine(sentence_embedding, chunk_embedding)
             best_score = max(best_score, score)
             if score >= 0.78:
-                source_ids.append(str(chunk["id"]))
+                supported_source_ids.append(str(chunk["id"]))
         results.append(
             {
                 "sentence": sentence,
-                "supported": bool(source_ids),
-                "source_ids": source_ids,
+                "supported": bool(supported_source_ids),
+                "source_ids": supported_source_ids,
                 "support_score": round(best_score, 4),
             }
         )
     supported = [item for item in results if item["supported"]]
-    source_ids = {source_id for item in supported for source_id in item["source_ids"]}
+    cited_source_ids = {
+        source_id for item in supported for source_id in item["source_ids"]
+    }
     return {
         "sentences": results,
         "metrics": {
@@ -116,7 +126,7 @@ def evaluate_answer(answer: str, chunks: list[dict], provider: RagProvider) -> d
             "verified_sentences": len(supported),
             "unsupported_claims": len(results) - len(supported),
             "total_sentences": len(results),
-            "citation_count": len(source_ids),
+            "citation_count": len(cited_source_ids),
         },
     }
 
@@ -136,7 +146,7 @@ def format_chunks_for_audit(chunks: list[dict]) -> list[dict]:
     ]
 
 
-def rag_chat(
+def prepare_rag_chat(
     query: str,
     role: str,
     repository: KnowledgeRepository,
@@ -144,7 +154,7 @@ def rag_chat(
     cache: RagCache,
     audit: RagAuditRepository,
     deadline: float | None = None,
-) -> dict:
+) -> RagChatOutcome:
     start = time.perf_counter()
     cached = cache.get(query, role)
     if cached:
@@ -154,27 +164,28 @@ def rag_chat(
             if not settings.disable_audit
             else None
         )
+        audit_event = None
         if latest is not None:
             _ensure_before_deadline(deadline)
-            audit.write(
-                role=role,
-                question=query,
-                reply=latest["reply"],
-                retrieved=latest["retrieved_chunks"],
-                reranked=latest["reranked_chunks"],
-                queries=latest["queries"],
-                evaluation=latest["evaluation"],
-                metrics={
+            audit_event = {
+                "role": role,
+                "question": query,
+                "reply": latest["reply"],
+                "retrieved": latest["retrieved_chunks"],
+                "reranked": latest["reranked_chunks"],
+                "queries": latest["queries"],
+                "evaluation": latest["evaluation"],
+                "metrics": {
                     **latest["metrics"],
                     "cache_hit": True,
                     "retrieval_time": 0,
                     "llm_time": 0,
                     "total_time": round((time.perf_counter() - start) * 1000, 4),
                 },
-            )
+            }
         cached.setdefault("evaluation", empty_response()["evaluation"])
-        return cached
-    queries = [query]
+        return RagChatOutcome(cached, audit_event, None)
+    queries: Any = [query]
     if query in query_cache:
         queries = query_cache[query]
     else:
@@ -188,7 +199,7 @@ def rag_chat(
         if len(query_cache) > MAX_QUERY_CACHE_SIZE:
             query_cache.pop(next(iter(query_cache)))
         query_cache[query] = queries
-    results = []
+    results: list[dict[str, Any]] = []
     for item in queries:
         query_results = repository.search(
             assistant_id=REDMOOR_ASSISTANT_ID,
@@ -200,14 +211,14 @@ def rag_chat(
         if query_results and query_results[0]["distance"] <= 0.8:
             results.extend(query_results)
     retrieval_time = (time.perf_counter() - start) * 1000
-    unique = []
-    seen = set()
+    unique: list[dict[str, Any]] = []
+    seen: set[Any] = set()
     for item in results:
         if item["id"] not in seen:
             unique.append(item)
             seen.add(item["id"])
     if not unique:
-        return empty_response()
+        return RagChatOutcome(empty_response(), None, None)
     llm_start = time.perf_counter()
     try:
         ranked = json.loads(
@@ -228,7 +239,7 @@ def rag_chat(
         )
     )
     llm_time = (time.perf_counter() - llm_start) * 1000
-    ids = set(answer.get("source_ids", []))
+    ids: set[Any] = set(answer.get("source_ids", []))
     sources = [
         {"id": str(x["id"]), "text": x["text"][:150]}
         for x in reranked
@@ -237,16 +248,17 @@ def rag_chat(
     evaluation = evaluate_answer(answer.get("answer", ""), reranked, provider)
     result = {"reply": answer, "sources": sources, "evaluation": evaluation}
     _ensure_before_deadline(deadline)
+    audit_event = None
     if not settings.disable_audit:
-        audit.write(
-            role=role,
-            question=query,
-            reply=answer,
-            retrieved=format_chunks_for_audit(unique),
-            reranked=format_chunks_for_audit(reranked),
-            queries=queries,
-            evaluation=evaluation,
-            metrics={
+        audit_event = {
+            "role": role,
+            "question": query,
+            "reply": answer,
+            "retrieved": format_chunks_for_audit(unique),
+            "reranked": format_chunks_for_audit(reranked),
+            "queries": queries,
+            "evaluation": evaluation,
+            "metrics": {
                 "input_tokens": estimate_tokens(query),
                 "output_tokens": estimate_tokens(
                     f"{answer['answer']} Sources: {', '.join(answer.get('source_ids', []))}"
@@ -256,7 +268,35 @@ def rag_chat(
                 "total_time": round((time.perf_counter() - start) * 1000, 4),
                 "cache_hit": False,
             },
-        )
+        }
     _ensure_before_deadline(deadline)
-    cache.set(query, role, result)
-    return result
+    return RagChatOutcome(result, audit_event, result)
+
+
+def commit_rag_chat_outcome(
+    outcome: RagChatOutcome,
+    query: str,
+    role: str,
+    cache: RagCache,
+    audit: RagAuditRepository,
+) -> dict:
+    if outcome.audit_event is not None:
+        audit.write(**outcome.audit_event)
+    if outcome.cache_response is not None:
+        cache.set(query, role, outcome.cache_response)
+    return outcome.response
+
+
+def rag_chat(
+    query: str,
+    role: str,
+    repository: KnowledgeRepository,
+    provider: RagProvider,
+    cache: RagCache,
+    audit: RagAuditRepository,
+    deadline: float | None = None,
+) -> dict:
+    outcome = prepare_rag_chat(
+        query, role, repository, provider, cache, audit, deadline
+    )
+    return commit_rag_chat_outcome(outcome, query, role, cache, audit)

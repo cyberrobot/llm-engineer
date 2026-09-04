@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -109,9 +110,9 @@ class AuditRepository:
         role: str,
         question: str,
         reply: dict,
-        retrieved: list,
-        reranked: list,
-        queries: list,
+        retrieved: Sequence[Any],
+        reranked: Sequence[Any],
+        queries: Sequence[Any],
         evaluation: dict,
         metrics: dict,
     ) -> None:
