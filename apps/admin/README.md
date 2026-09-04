@@ -74,12 +74,28 @@ The app checks `GET /admin/auth/me` before showing protected content. A confirme
 
 Run `npm run dev:admin`, `npm run lint:admin`, `npm run typecheck --workspace @ai-discovery-assistant/admin`, `npm run test:admin`, `npm run build:admin`, or `npm run build-storybook --workspace=apps/admin` from the repository root.
 
+For full-browser and visual regression testing, first run `npm run install-playwright --workspace @ai-discovery-assistant/admin` to install Chromium and its system dependencies. Run the complete suite with `npm run test:e2e --workspace @ai-discovery-assistant/admin`, or only screenshot scenarios with `npm run test:visual --workspace @ai-discovery-assistant/admin`.
+
+Normal local visual tests compare against the committed Ubuntu 24.04 baselines. Do not regenerate those baselines directly on macOS or another non-canonical platform. CI never accepts screenshot updates automatically.
+
+When a reviewed UI change requires new baselines, generate them deliberately in the same Linux architecture as CI: `ubuntu-24.04` on `linux/amd64`, with the Chromium revision installed from the locked `@playwright/test` dependency. On an Apple-Silicon development machine, explicitly select amd64 when using the maintained Playwright Ubuntu image:
+
+```sh
+docker run --platform linux/amd64 --rm --ipc=host \
+  --volume "$PWD:/work" --workdir /work \
+  mcr.microsoft.com/playwright:v1.62.1-noble \
+  bash -lc 'npm ci && npm run test:visual:update --workspace @ai-discovery-assistant/admin'
+```
+
+Inspect every changed expected, actual, and diff image before committing the baseline. Manual page inspection complements but does not replace the automated semantic and screenshot assertions.
+
 ## Continuous integration
 
 The dedicated **Admin UI CI / Admin validation** check is path-scoped and appears only for pull
 requests that can affect the Admin deliverable. When present, it installs the root workspace and
-runs the complete Admin quality gate: tests, lint, type checking, the production build, and the
-Storybook build. The same validation runs for relevant pushes to `main`.
+runs the complete Admin quality gate: unit tests, Chromium browser and visual tests, lint, type
+checking, the production build, and the Storybook build. The same validation runs for relevant
+pushes to `main`.
 
 Admin source and configuration, the root npm manifests, the Admin workflow, and the Assistant
 widget package are Admin CI inputs. The widget is included because Admin TypeScript, Vite, and

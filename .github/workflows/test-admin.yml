@@ -25,7 +25,7 @@ on:
 jobs:
   admin:
     name: Admin validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
 
@@ -43,11 +43,28 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Playwright Chromium
+        run: npm run install-playwright --workspace @ai-discovery-assistant/admin
+
       - name: Verify Admin CI workflow
         run: npm run verify:ci --workspace @ai-discovery-assistant/admin
 
       - name: Test Admin
         run: npm test --workspace @ai-discovery-assistant/admin
+
+      - name: Test Admin in Chromium
+        run: npm run test:e2e --workspace @ai-discovery-assistant/admin
+
+      - name: Upload Playwright failure report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-playwright-report
+          path: |
+            apps/admin/playwright-report/
+            apps/admin/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Lint Admin
         run: npm run lint --workspace @ai-discovery-assistant/admin

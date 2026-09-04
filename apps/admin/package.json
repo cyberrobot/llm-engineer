@@ -9,6 +9,10 @@
     "lint": "eslint .",
     "typecheck": "tsc -b",
     "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:visual": "playwright test --grep @visual",
+    "test:visual:update": "playwright test --grep @visual --update-snapshots",
+    "install-playwright": "playwright install --with-deps chromium",
     "verify:ci": "node scripts/verify-ci-workflow.mjs",
     "storybook": "storybook dev -p 6007",
     "build-storybook": "storybook build"
@@ -21,6 +25,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
     "@storybook/addon-docs": "^10.4.6",
     "@storybook/react-vite": "^10.4.6",
     "@tailwindcss/vite": "^4.3.3",

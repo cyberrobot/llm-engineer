@@ -5,6 +5,9 @@ __pycache__/
 node_modules/
 dist/
 storybook-static/
+.DS_Store
+playwright-report/
+test-results/
 *.py[cod]
 apps/backend/uploads/
 apps/backend/evaluation-reports/

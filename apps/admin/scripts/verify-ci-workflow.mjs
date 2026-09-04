@@ -72,6 +72,7 @@ assert(workflow.jobs && typeof workflow.jobs === 'object')
 const job = workflow.jobs.admin
 assert(job, 'Admin workflow must define the admin job')
 assert.equal(job.name, 'Admin validation')
+assert.equal(job['runs-on'], 'ubuntu-24.04', 'Admin validation must use the canonical Ubuntu runner')
 assert(!Object.hasOwn(job, 'if'), 'Admin validation must run whenever the workflow is triggered')
 assert(Array.isArray(job.steps), 'Admin validation must define steps')
 
@@ -125,6 +126,21 @@ for (const script of ['test', 'lint', 'typecheck', 'build', 'build-storybook']) 
     `Admin ${script}`,
   )
   assertRequiredStep(step)
+}
+
+for (const [script, description] of [
+  ['install-playwright', 'Playwright Chromium installation'],
+  ['test:e2e', 'Admin browser tests'],
+]) {
+  const step = findStep(
+    (candidate) => runsAdminScript(candidate, script),
+    description,
+  )
+  assertRequiredStep(step)
+  assert(
+    !step.run.includes('--update-snapshots'),
+    `${step.name} must not update visual baselines in CI`,
+  )
 }
 
 const serializedWorkflow = JSON.stringify(workflow)
