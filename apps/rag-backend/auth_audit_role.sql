@@ -26,6 +26,8 @@ REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM rag_auth_audit;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM rag_auth_audit;
 REVOKE CREATE ON SCHEMA public FROM rag_auth_audit;
 GRANT USAGE ON SCHEMA public TO rag_auth_audit;
-GRANT SELECT ON TABLE public.administrator_sessions, public.administrators TO rag_auth_audit;
+GRANT SELECT (administrator_id, token_hash, revoked_at, expires_at)
+    ON TABLE public.administrator_sessions TO rag_auth_audit;
+GRANT SELECT (id, role, status) ON TABLE public.administrators TO rag_auth_audit;
 GRANT SELECT, INSERT ON TABLE public.audit_logs TO rag_auth_audit;
 GRANT USAGE, SELECT ON SEQUENCE public.audit_logs_id_seq TO rag_auth_audit;

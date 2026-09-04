@@ -1,5 +1,6 @@
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
@@ -43,6 +44,14 @@ def test_rag_routes_reject_anonymous_callers():
         logs = client.get("/audit-logs")
     assert chat.status_code == 401
     assert logs.status_code == 401
+    assert chat.json() == {
+        "detail": {
+            "code": "authentication_required",
+            "message": "Administrator authentication is required.",
+        }
+    }
+    assert chat.headers["Cache-Control"] == "no-store"
+    assert chat.headers["Pragma"] == "no-cache"
 
 
 def test_request_id_is_normalized_and_returned():
@@ -50,6 +59,104 @@ def test_request_id_is_normalized_and_returned():
         response = client.get("/health/live", headers={"X-Request-ID": "not-a-uuid"})
     assert response.status_code == 200
     assert len(response.headers["X-Request-ID"]) == 36
+
+
+def test_valid_request_id_and_configured_credentialed_cors_are_preserved():
+    request_id = "12345678-1234-5678-1234-567812345678"
+    with TestClient(app) as client:
+        response = client.options(
+            "/rag-chat",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+                "X-Request-ID": request_id,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == request_id
+    assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
+    assert response.headers["Access-Control-Allow-Credentials"] == "true"
+
+
+def test_untrusted_cors_origin_is_not_allowed():
+    with TestClient(app) as client:
+        response = client.options(
+            "/rag-chat",
+            headers={
+                "Origin": "https://untrusted.example",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "Access-Control-Allow-Origin" not in response.headers
+
+
+def test_readiness_dependency_failure_does_not_affect_liveness(monkeypatch):
+    @contextmanager
+    def unavailable_database(*_args, **_kwargs):
+        raise RuntimeError("database unavailable")
+        yield
+
+    monkeypatch.setattr(
+        main,
+        "settings",
+        replace(
+            main.settings,
+            knowledge_database_url="postgresql://configured",
+            auth_audit_database_url="postgresql://configured",
+            openai_api_key="configured",
+        ),
+    )
+    monkeypatch.setattr(main, "knowledge_connection", unavailable_database)
+
+    with TestClient(app) as client:
+        ready = client.get("/health/ready")
+        live = client.get("/health/live")
+
+    assert ready.status_code == 503
+    assert ready.json() == {"detail": "Service unavailable"}
+    assert live.status_code == 200
+    assert live.json() == {"status": "ok"}
+
+
+def test_readiness_fails_when_enabled_cache_is_unavailable(monkeypatch):
+    @contextmanager
+    def available_database(*_args, **_kwargs):
+        class Connection:
+            def execute(self, _query):
+                return None
+
+        yield Connection()
+
+    class Cache:
+        def ping(self, _deadline):
+            return False
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        main,
+        "settings",
+        replace(
+            main.settings,
+            knowledge_database_url="postgresql://configured",
+            auth_audit_database_url="postgresql://configured",
+            openai_api_key="configured",
+            disable_cache=False,
+        ),
+    )
+    monkeypatch.setattr(main, "knowledge_connection", available_database)
+    monkeypatch.setattr(main, "auth_audit_connection", available_database)
+    monkeypatch.setattr(main, "Cache", Cache)
+
+    with TestClient(app) as client:
+        response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Service unavailable"}
 
 
 def test_rag_rate_limit_matches_the_frozen_error_contract():

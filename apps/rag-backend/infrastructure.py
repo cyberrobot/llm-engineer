@@ -4,7 +4,7 @@ import time
 from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 import psycopg
 import redis
@@ -20,6 +20,10 @@ def _remaining_milliseconds(deadline: float | None) -> int:
     if remaining <= 0:
         raise RequestTimedOut
     return max(1, math.ceil(remaining * 1000))
+
+
+def _remaining_seconds(deadline: float | None, maximum: float) -> float:
+    return min(maximum, _remaining_milliseconds(deadline) / 1000)
 
 
 @contextmanager
@@ -40,8 +44,10 @@ def _connection(
         yield conn
 
 
-def knowledge_connection():
-    return _connection(settings.knowledge_database_url, "RAG_KNOWLEDGE_DATABASE_URL")
+def knowledge_connection(deadline: float | None = None):
+    return _connection(
+        settings.knowledge_database_url, "RAG_KNOWLEDGE_DATABASE_URL", deadline
+    )
 
 
 def auth_audit_connection(deadline: float | None = None):
@@ -61,8 +67,9 @@ class PostgresKnowledgeRepository:
         query: str,
         role: str,
         limit: int,
+        deadline: float | None = None,
     ) -> list[dict[str, Any]]:
-        with knowledge_connection() as conn:
+        with knowledge_connection(deadline) as conn:
             rows = conn.execute(
                 """WITH vector_candidates AS (
                 SELECT c.id, c.doc_id, c.text, c.text_search,
@@ -156,8 +163,10 @@ class AuditRepository:
                 ),
             )
 
-    def latest(self, *, question: str, role: str) -> dict | None:
-        with auth_audit_connection() as conn:
+    def latest(
+        self, *, question: str, role: str, deadline: float | None = None
+    ) -> dict | None:
+        with auth_audit_connection(deadline) as conn:
             row = conn.execute(
                 """SELECT reply,retrieved_chunks,reranked_chunks,metrics,queries,evaluation
                 FROM audit_logs WHERE question = %s AND user_role = %s
@@ -178,7 +187,7 @@ class AuditRepository:
 
 class Cache:
     def __init__(self):
-        self.client = redis.from_url(
+        self.client = redis.Redis.from_url(
             settings.redis_url,
             decode_responses=True,
             socket_connect_timeout=settings.request_timeout_seconds,
@@ -188,14 +197,23 @@ class Cache:
     def key(self, query: str, role: str) -> str:
         return f"rag:{' '.join(query.strip().lower().split())}:{role}"
 
-    def get(self, query: str, role: str):
+    def get(self, query: str, role: str, *, deadline: float | None = None):
         if settings.disable_cache:
             return None
+        timeout = _remaining_seconds(deadline, settings.request_timeout_seconds)
+        client = redis.Redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=timeout,
+            socket_timeout=timeout,
+        )
         try:
-            value = self.client.get(self.key(query, role))
+            value = cast(str | None, client.get(self.key(query, role)))
             return json.loads(value) if value else None
         except redis.RedisError:
             return None
+        finally:
+            client.close()
 
     def set(
         self,
@@ -207,7 +225,7 @@ class Cache:
     ):
         if not settings.disable_cache:
             timeout = _remaining_milliseconds(deadline) / 1000
-            client = redis.from_url(
+            client = redis.Redis.from_url(
                 settings.redis_url,
                 decode_responses=True,
                 socket_connect_timeout=timeout,
@@ -222,11 +240,20 @@ class Cache:
             finally:
                 client.close()
 
-    def ping(self) -> bool:
+    def ping(self, deadline: float | None = None) -> bool:
+        timeout = _remaining_seconds(deadline, settings.health_timeout_seconds)
+        client = redis.Redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=timeout,
+            socket_timeout=timeout,
+        )
         try:
-            return bool(self.client.ping())
+            return bool(client.ping())
         except redis.RedisError:
             return False
+        finally:
+            client.close()
 
     def close(self) -> None:
         self.client.close()
@@ -242,15 +269,21 @@ class Provider:
             max_retries=settings.provider_max_retries,
         )
 
-    def embedding(self, text: str) -> list[float]:
+    def embedding(self, text: str, *, deadline: float | None = None) -> list[float]:
+        client = self.client.with_options(
+            timeout=_remaining_seconds(deadline, settings.provider_timeout_seconds)
+        )
         return (
-            self.client.embeddings.create(model=settings.embedding_model, input=text)
+            client.embeddings.create(model=settings.embedding_model, input=text)
             .data[0]
             .embedding
         )
 
-    def text(self, prompt: str) -> str:
-        return self.client.responses.create(
+    def text(self, prompt: str, *, deadline: float | None = None) -> str:
+        client = self.client.with_options(
+            timeout=_remaining_seconds(deadline, settings.provider_timeout_seconds)
+        )
+        return client.responses.create(
             model=settings.chat_model, input=prompt
         ).output_text.strip()
 

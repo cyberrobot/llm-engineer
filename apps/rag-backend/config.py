@@ -18,6 +18,7 @@ class Settings:
     request_timeout_seconds: float = float(
         os.getenv("RAG_REQUEST_TIMEOUT_SECONDS", "45")
     )
+    health_timeout_seconds: float = float(os.getenv("RAG_HEALTH_TIMEOUT_SECONDS", "2"))
     allowed_origins: tuple[str, ...] = tuple(
         filter(
             None, os.getenv("RAG_ALLOWED_ORIGINS", "http://localhost:5173").split(",")
@@ -39,7 +40,11 @@ class Settings:
             raise ValueError("RAG_AI_PROVIDER must be openai")
         if "*" in self.allowed_origins:
             raise ValueError("RAG_ALLOWED_ORIGINS must not contain a wildcard")
-        if self.provider_timeout_seconds <= 0 or self.request_timeout_seconds <= 0:
+        if (
+            self.provider_timeout_seconds <= 0
+            or self.request_timeout_seconds <= 0
+            or self.health_timeout_seconds <= 0
+        ):
             raise ValueError("RAG timeouts must be positive")
         if self.provider_max_retries < 0:
             raise ValueError("RAG_PROVIDER_MAX_RETRIES must not be negative")

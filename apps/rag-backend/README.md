@@ -21,6 +21,7 @@ Configuration defaults: `RAG_CHAT_MODEL=gpt-5.4-nano`,
 `RAG_AI_PROVIDER=openai`,
 `RAG_EMBEDDING_MODEL=text-embedding-3-small`, `RAG_PROVIDER_TIMEOUT_SECONDS=30`,
 `RAG_PROVIDER_MAX_RETRIES=2`, `RAG_REQUEST_TIMEOUT_SECONDS=45`,
+`RAG_HEALTH_TIMEOUT_SECONDS=2`,
 `RAG_ALLOWED_ORIGINS=http://localhost:5173`, and
 `RAG_SESSION_COOKIE_NAME=redmoor_admin_session`. `RAG_DISABLE_CACHE` and
 `RAG_DISABLE_AUDIT_LOGS` default to `false`; disabling either intentionally removes the respective

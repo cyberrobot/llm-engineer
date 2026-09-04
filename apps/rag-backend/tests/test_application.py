@@ -58,14 +58,14 @@ class Provider:
     def __init__(self):
         self.responses = [json.dumps(["checklist"]), json.dumps([0])]
 
-    def text(self, _prompt):
+    def text(self, _prompt, **_kwargs):
         if self.responses:
             return self.responses.pop(0)
         return json.dumps(
             {"answer": "Review the checklist.", "source_ids": ["chunk-1"]}
         )
 
-    def embedding(self, _text):
+    def embedding(self, _text, **_kwargs):
         return [1.0, 0.0]
 
 
@@ -73,7 +73,7 @@ class Cache:
     def __init__(self):
         self.value = None
 
-    def get(self, *_args):
+    def get(self, *_args, **_kwargs):
         return self.value
 
     def set(self, *_args, **_kwargs):
@@ -206,10 +206,10 @@ def test_retrieval_discards_a_query_when_its_best_match_exceeds_maximum_distance
 
 def test_cache_hit_does_not_read_or_write_audit_when_auditing_is_disabled(monkeypatch):
     class CacheHit:
-        def get(self, *_args):
+        def get(self, *_args, **_kwargs):
             return application.empty_response()
 
-        def set(self, *_args):
+        def set(self, *_args, **_kwargs):
             raise AssertionError("cache hit must not be overwritten")
 
     class NoAudit:

@@ -112,11 +112,12 @@ def live():
 def ready():
     try:
         settings.validate_runtime()
-        with knowledge_connection() as conn:
+        deadline = time.monotonic() + settings.health_timeout_seconds
+        with knowledge_connection(deadline) as conn:
             conn.execute("SELECT 1")
-        with auth_audit_connection() as conn:
+        with auth_audit_connection(deadline) as conn:
             conn.execute("SELECT 1")
-        if not settings.disable_cache and not app.state.cache.ping():
+        if not settings.disable_cache and not app.state.cache.ping(deadline):
             raise RuntimeError("Redis unavailable")
         return {"status": "ok"}
     except Exception as exc:

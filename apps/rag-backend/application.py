@@ -28,16 +28,18 @@ def _ensure_before_deadline(deadline: float | None) -> None:
 
 
 class KnowledgeRepository(Protocol):
-    def search(self, **kwargs) -> list[dict]: ...
+    def search(self, *, deadline: float | None = None, **kwargs) -> list[dict]: ...
 
 
 class RagProvider(Protocol):
-    def embedding(self, text: str) -> list[float]: ...
-    def text(self, prompt: str) -> str: ...
+    def embedding(self, text: str, *, deadline: float | None = None) -> list[float]: ...
+    def text(self, prompt: str, *, deadline: float | None = None) -> str: ...
 
 
 class RagCache(Protocol):
-    def get(self, query: str, role: str) -> dict | None: ...
+    def get(
+        self, query: str, role: str, *, deadline: float | None = None
+    ) -> dict | None: ...
     def set(
         self,
         query: str,
@@ -49,7 +51,9 @@ class RagCache(Protocol):
 
 
 class RagAuditRepository(Protocol):
-    def latest(self, *, question: str, role: str) -> dict | None: ...
+    def latest(
+        self, *, question: str, role: str, deadline: float | None = None
+    ) -> dict | None: ...
     def write(self, *, deadline: float | None = None, **kwargs) -> None: ...
 
 
@@ -117,7 +121,12 @@ def _cosine(left: list[float], right: list[float]) -> float:
     return sum(x * y for x, y in zip(left, right)) / denominator if denominator else 0.0
 
 
-def evaluate_answer(answer: str, chunks: list[dict], provider: RagProvider) -> dict:
+def evaluate_answer(
+    answer: str,
+    chunks: list[dict],
+    provider: RagProvider,
+    deadline: float | None = None,
+) -> dict:
     normalised = " ".join(answer.split())
     sentences = [
         sentence.strip()
@@ -126,12 +135,12 @@ def evaluate_answer(answer: str, chunks: list[dict], provider: RagProvider) -> d
     ]
     results = []
     for sentence in sentences:
-        sentence_embedding = provider.embedding(sentence)
+        sentence_embedding = provider.embedding(sentence, deadline=deadline)
         supported_source_ids: list[str] = []
         best_score = 0.0
         for chunk in chunks:
             chunk_embedding = chunk.get("embedding") or provider.embedding(
-                chunk.get("text", "")
+                chunk.get("text", ""), deadline=deadline
             )
             score = _cosine(sentence_embedding, chunk_embedding)
             best_score = max(best_score, score)
@@ -188,11 +197,11 @@ def prepare_rag_chat(
     deadline: float | None = None,
 ) -> RagChatOutcome:
     start = time.perf_counter()
-    cached = cache.get(query, role)
+    cached = cache.get(query, role, deadline=deadline)
     if cached:
         _ensure_before_deadline(deadline)
         latest = (
-            audit.latest(question=query, role=role)
+            audit.latest(question=query, role=role, deadline=deadline)
             if not settings.disable_audit
             else None
         )
@@ -222,7 +231,9 @@ def prepare_rag_chat(
         queries = query_cache[query]
     else:
         try:
-            generated = json.loads(provider.text(build_query_generation_prompt(query)))
+            generated = json.loads(
+                provider.text(build_query_generation_prompt(query), deadline=deadline)
+            )
             queries = generated
         except (json.JSONDecodeError, ValueError):
             queries = [query]
@@ -233,10 +244,11 @@ def prepare_rag_chat(
     for item in queries:
         query_results = repository.search(
             assistant_id=REDMOOR_ASSISTANT_ID,
-            query_embedding=provider.embedding(item),
+            query_embedding=provider.embedding(item, deadline=deadline),
             query=item,
             role=role,
             limit=8,
+            deadline=deadline,
         )
         if query_results and query_results[0]["distance"] <= 0.8:
             results.extend(query_results)
@@ -251,11 +263,15 @@ def prepare_rag_chat(
         return RagChatOutcome(empty_response(), None, None)
     llm_start = time.perf_counter()
     try:
-        ranked = json.loads(provider.text(build_rerank_prompt(query, unique)))
+        ranked = json.loads(
+            provider.text(build_rerank_prompt(query, unique), deadline=deadline)
+        )
     except Exception:  # noqa: BLE001 - preserves legacy rerank JSON fallback
         ranked = list(range(len(unique)))
     reranked = [unique[index] for index in ranked[:3]]
-    answer = json.loads(provider.text(build_answer_prompt(query, reranked)))
+    answer = json.loads(
+        provider.text(build_answer_prompt(query, reranked), deadline=deadline)
+    )
     llm_time = (time.perf_counter() - llm_start) * 1000
     ids: set[Any] = set(answer["source_ids"])
     sources = [
@@ -263,7 +279,7 @@ def prepare_rag_chat(
         for x in reranked
         if str(x["id"]) in ids
     ]
-    evaluation = evaluate_answer(answer["answer"], reranked, provider)
+    evaluation = evaluate_answer(answer["answer"], reranked, provider, deadline)
     result = {"reply": answer, "sources": sources, "evaluation": evaluation}
     _ensure_before_deadline(deadline)
     audit_event = None
