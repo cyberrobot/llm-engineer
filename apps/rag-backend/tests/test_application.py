@@ -4,6 +4,8 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 import application
@@ -74,7 +76,7 @@ class Cache:
     def get(self, *_args):
         return self.value
 
-    def set(self, *_args):
+    def set(self, *_args, **_kwargs):
         self.value = _args[-1]
 
 
@@ -135,6 +137,62 @@ def test_empty_response_has_frozen_legacy_shape():
     }
 
 
+def test_composed_provider_prompts_match_legacy_format_exactly():
+    query = "How do I review this?"
+    chunks = [{"id": "chunk-1", "text": "First"}, {"id": "chunk-2", "text": "Second"}]
+
+    assert application.build_query_generation_prompt(query) == (
+        f"\n{application.prompt('query_generation.md')}\n\nUser query: \n{query}\n"
+    )
+    assert (
+        application.build_rerank_prompt(query, chunks)
+        == f"""
+{application.prompt("rerank_chunks.md")}
+
+Query:
+{query}
+
+Chunks:
+[0] First
+[1] Second
+"""
+    )
+    assert application.build_answer_prompt(query, chunks) == (
+        f"\n{application.prompt('answer_system.md')}\n\nContext:\n"
+        f"[Source: chunk-1]\nFirst\n\n[Source: chunk-2]\nSecond"
+        f"\n\nQuestion: \n{query}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"answer": "Missing sources"},
+        {"source_ids": ["chunk-1"]},
+    ],
+)
+def test_malformed_answer_shape_preserves_legacy_key_error(monkeypatch, answer):
+    class MalformedAnswerProvider(Provider):
+        def __init__(self):
+            self.responses = [
+                json.dumps(["checklist"]),
+                json.dumps([0]),
+                json.dumps(answer),
+            ]
+
+    monkeypatch.setattr(application, "query_cache", {})
+
+    with pytest.raises(KeyError):
+        application.rag_chat(
+            "question",
+            "doctor",
+            Repository(),
+            MalformedAnswerProvider(),
+            Cache(),
+            Audit(),
+        )
+
+
 def test_retrieval_discards_a_query_when_its_best_match_exceeds_maximum_distance(
     monkeypatch,
 ):
@@ -179,7 +237,7 @@ def test_expired_deadline_prevents_audit_and_cache_side_effects(monkeypatch):
             super().__init__()
             self.writes = 0
 
-        def set(self, *_args):
+        def set(self, *_args, **_kwargs):
             self.writes += 1
 
     class RecordingAudit(Audit):

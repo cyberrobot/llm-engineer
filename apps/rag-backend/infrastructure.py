@@ -1,24 +1,41 @@
 import json
+import math
+import time
 from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
-from uuid import NAMESPACE_URL, uuid5
 
 import psycopg
 import redis
 from config import settings
+from domain import RequestTimedOut
 from openai import OpenAI
 
-REDMOOR_ASSISTANT_ID = uuid5(NAMESPACE_URL, "assistant:redmoor")
+
+def _remaining_milliseconds(deadline: float | None) -> int:
+    if deadline is None:
+        return 30_000
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RequestTimedOut
+    return max(1, math.ceil(remaining * 1000))
 
 
 @contextmanager
-def _connection(database_url: str | None, setting_name: str):
+def _connection(
+    database_url: str | None,
+    setting_name: str,
+    deadline: float | None = None,
+):
     if not database_url:
         raise RuntimeError(f"{setting_name} is not configured")
+    timeout_ms = _remaining_milliseconds(deadline)
+    connect_timeout = max(1, min(3, math.ceil(timeout_ms / 1000)))
     with psycopg.connect(
-        database_url, connect_timeout=3, options="-c statement_timeout=30000"
+        database_url,
+        connect_timeout=connect_timeout,
+        options=f"-c statement_timeout={timeout_ms}",
     ) as conn:
         yield conn
 
@@ -27,8 +44,12 @@ def knowledge_connection():
     return _connection(settings.knowledge_database_url, "RAG_KNOWLEDGE_DATABASE_URL")
 
 
-def auth_audit_connection():
-    return _connection(settings.auth_audit_database_url, "RAG_AUTH_AUDIT_DATABASE_URL")
+def auth_audit_connection(deadline: float | None = None):
+    return _connection(
+        settings.auth_audit_database_url,
+        "RAG_AUTH_AUDIT_DATABASE_URL",
+        deadline,
+    )
 
 
 class PostgresKnowledgeRepository:
@@ -115,8 +136,9 @@ class AuditRepository:
         queries: Sequence[Any],
         evaluation: dict,
         metrics: dict,
+        deadline: float | None = None,
     ) -> None:
-        with auth_audit_connection() as conn:
+        with auth_audit_connection(deadline) as conn:
             conn.execute(
                 """INSERT INTO audit_logs
                 (timestamp,user_role,question,queries,reply,retrieved_chunks,
@@ -156,7 +178,12 @@ class AuditRepository:
 
 class Cache:
     def __init__(self):
-        self.client = redis.from_url(settings.redis_url, decode_responses=True)
+        self.client = redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=settings.request_timeout_seconds,
+            socket_timeout=settings.request_timeout_seconds,
+        )
 
     def key(self, query: str, role: str) -> str:
         return f"rag:{' '.join(query.strip().lower().split())}:{role}"
@@ -170,14 +197,30 @@ class Cache:
         except redis.RedisError:
             return None
 
-    def set(self, query: str, role: str, value: dict):
+    def set(
+        self,
+        query: str,
+        role: str,
+        value: dict,
+        *,
+        deadline: float | None = None,
+    ):
         if not settings.disable_cache:
+            timeout = _remaining_milliseconds(deadline) / 1000
+            client = redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=timeout,
+                socket_timeout=timeout,
+            )
             try:
-                self.client.setex(
+                client.setex(
                     self.key(query, role), settings.cache_ttl_seconds, json.dumps(value)
                 )
             except redis.RedisError:
                 pass
+            finally:
+                client.close()
 
     def ping(self) -> bool:
         try:

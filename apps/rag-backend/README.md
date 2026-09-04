@@ -14,8 +14,11 @@ timeout, and a 30-second provider timeout.
 schema (`documents` and `chunks`). `RAG_AUTH_AUDIT_DATABASE_URL` is a distinct credential limited
 to administrator-session lookup plus `audit_logs` reads/inserts; it must not be granted ingestion,
 document, chunk, or administrator-management write privileges.
+Apply `auth_audit_role.sql` as the database owner after migrations, then grant its
+`rag_auth_audit` group role to the login used by `RAG_AUTH_AUDIT_DATABASE_URL`.
 
 Configuration defaults: `RAG_CHAT_MODEL=gpt-5.4-nano`,
+`RAG_AI_PROVIDER=openai`,
 `RAG_EMBEDDING_MODEL=text-embedding-3-small`, `RAG_PROVIDER_TIMEOUT_SECONDS=30`,
 `RAG_PROVIDER_MAX_RETRIES=2`, `RAG_REQUEST_TIMEOUT_SECONDS=45`,
 `RAG_ALLOWED_ORIGINS=http://localhost:5173`, and

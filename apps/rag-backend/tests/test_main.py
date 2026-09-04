@@ -96,7 +96,7 @@ def test_timeout_cannot_be_followed_by_audit_or_cache_mutations(monkeypatch):
         def get(self, *_args):
             return None
 
-        def set(self, *_args):
+        def set(self, *_args, **_kwargs):
             self.writes += 1
 
         def ping(self):
@@ -151,4 +151,101 @@ def test_timeout_cannot_be_followed_by_audit_or_cache_mutations(monkeypatch):
     assert response.status_code == 504
     assert response.headers["Cache-Control"] == "no-store"
     assert audit.writes == 0
+    assert cache.writes == 0
+
+
+def test_slow_audit_commit_times_out_without_late_cache_write(monkeypatch):
+    rate_windows.clear()
+
+    class Cache:
+        writes = 0
+
+        def set(self, *_args, **_kwargs):
+            self.writes += 1
+
+        def close(self):
+            pass
+
+    class Audit:
+        def write(self, *, deadline=None, **_kwargs):
+            while time.monotonic() < deadline:
+                time.sleep(0.001)
+            raise application.RequestTimedOut
+
+    class Provider:
+        def close(self):
+            pass
+
+    cache = Cache()
+    monkeypatch.setattr(main, "Cache", lambda: cache)
+    monkeypatch.setattr(main, "AuditRepository", Audit)
+    monkeypatch.setattr(main, "Provider", Provider)
+    monkeypatch.setattr(
+        main,
+        "prepare_rag_chat",
+        lambda *_args, **_kwargs: application.RagChatOutcome(
+            {"reply": {"answer": "answer", "source_ids": []}, "sources": []},
+            {"role": "doctor"},
+            {"reply": {"answer": "answer", "source_ids": []}},
+        ),
+    )
+    monkeypatch.setattr(
+        main, "require_admin", lambda _request: Authorization("administrator")
+    )
+    monkeypatch.setattr(
+        main, "settings", replace(main.settings, request_timeout_seconds=0.02)
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/rag-chat", json={"message": "hello"})
+
+    assert response.status_code == 504
+    assert cache.writes == 0
+
+
+def test_slow_cache_commit_times_out_without_late_write(monkeypatch):
+    rate_windows.clear()
+
+    class Cache:
+        writes = 0
+
+        def set(self, *_args, deadline=None, **_kwargs):
+            while time.monotonic() < deadline:
+                time.sleep(0.001)
+            raise application.RequestTimedOut
+
+        def close(self):
+            pass
+
+    class Audit:
+        pass
+
+    class Provider:
+        def close(self):
+            pass
+
+    cache = Cache()
+    monkeypatch.setattr(main, "Cache", lambda: cache)
+    monkeypatch.setattr(main, "AuditRepository", Audit)
+    monkeypatch.setattr(main, "Provider", Provider)
+    monkeypatch.setattr(
+        main,
+        "prepare_rag_chat",
+        lambda *_args, **_kwargs: application.RagChatOutcome(
+            {"reply": {"answer": "answer", "source_ids": []}, "sources": []},
+            None,
+            {"reply": {"answer": "answer", "source_ids": []}},
+        ),
+    )
+    monkeypatch.setattr(
+        main, "require_admin", lambda _request: Authorization("administrator")
+    )
+    monkeypatch.setattr(
+        main, "settings", replace(main.settings, request_timeout_seconds=0.02)
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/rag-chat", json={"message": "hello"})
+
+    assert response.status_code == 504
     assert cache.writes == 0

@@ -7,16 +7,12 @@ from typing import Any, Protocol
 
 import pysbd  # type: ignore[import-untyped]
 from config import settings
-from infrastructure import REDMOOR_ASSISTANT_ID
+from domain import REDMOOR_ASSISTANT_ID, RequestTimedOut
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 query_cache: dict[str, list[str]] = {}
 MAX_QUERY_CACHE_SIZE = 100
 sentence_segmenter = pysbd.Segmenter(language="en", clean=False)
-
-
-class RequestTimedOut(Exception):
-    pass
 
 
 @dataclass(frozen=True)
@@ -42,16 +38,52 @@ class RagProvider(Protocol):
 
 class RagCache(Protocol):
     def get(self, query: str, role: str) -> dict | None: ...
-    def set(self, query: str, role: str, value: dict) -> None: ...
+    def set(
+        self,
+        query: str,
+        role: str,
+        value: dict,
+        *,
+        deadline: float | None = None,
+    ) -> None: ...
 
 
 class RagAuditRepository(Protocol):
     def latest(self, *, question: str, role: str) -> dict | None: ...
-    def write(self, **kwargs) -> None: ...
+    def write(self, *, deadline: float | None = None, **kwargs) -> None: ...
 
 
 def prompt(name: str) -> str:
     return (PROMPTS / name).read_text(encoding="utf-8")
+
+
+def build_query_generation_prompt(query: str) -> str:
+    return f"\n{prompt('query_generation.md')}\n\nUser query: \n{query}\n"
+
+
+def build_rerank_prompt(query: str, chunks: list[dict]) -> str:
+    chunk_lines = "\n".join(
+        f"[{index}] {chunk['text']}" for index, chunk in enumerate(chunks)
+    )
+    return f"""
+{prompt("rerank_chunks.md")}
+
+Query:
+{query}
+
+Chunks:
+{chunk_lines}
+"""
+
+
+def build_answer_prompt(question: str, chunks: list[dict]) -> str:
+    context = "\n\n".join(
+        f"[Source: {chunk['id']}]\n{chunk['text']}" for chunk in chunks
+    )
+    return (
+        f"\n{prompt('answer_system.md')}\n\nContext:\n{context}"
+        f"\n\nQuestion: \n{question}\n"
+    )
 
 
 def empty_response() -> dict:
@@ -190,9 +222,7 @@ def prepare_rag_chat(
         queries = query_cache[query]
     else:
         try:
-            generated = json.loads(
-                provider.text(f"{prompt('query_generation.md')}\nUser query:\n{query}")
-            )
+            generated = json.loads(provider.text(build_query_generation_prompt(query)))
             queries = generated
         except (json.JSONDecodeError, ValueError):
             queries = [query]
@@ -221,31 +251,19 @@ def prepare_rag_chat(
         return RagChatOutcome(empty_response(), None, None)
     llm_start = time.perf_counter()
     try:
-        ranked = json.loads(
-            provider.text(
-                f"{prompt('rerank_chunks.md')}\nQuery:\n{query}\nChunks:\n"
-                + "\n".join(f"[{i}] {x['text']}" for i, x in enumerate(unique))
-            )
-        )
+        ranked = json.loads(provider.text(build_rerank_prompt(query, unique)))
     except Exception:  # noqa: BLE001 - preserves legacy rerank JSON fallback
         ranked = list(range(len(unique)))
     reranked = [unique[index] for index in ranked[:3]]
-    answer = json.loads(
-        provider.text(
-            f"{prompt('answer_system.md')}\nContext:\n"
-            + "\n\n".join(f"[Source: {x['id']}]\n{x['text']}" for x in reranked)
-            + "\nQuestion:\n"
-            + query
-        )
-    )
+    answer = json.loads(provider.text(build_answer_prompt(query, reranked)))
     llm_time = (time.perf_counter() - llm_start) * 1000
-    ids: set[Any] = set(answer.get("source_ids", []))
+    ids: set[Any] = set(answer["source_ids"])
     sources = [
         {"id": str(x["id"]), "text": x["text"][:150]}
         for x in reranked
         if str(x["id"]) in ids
     ]
-    evaluation = evaluate_answer(answer.get("answer", ""), reranked, provider)
+    evaluation = evaluate_answer(answer["answer"], reranked, provider)
     result = {"reply": answer, "sources": sources, "evaluation": evaluation}
     _ensure_before_deadline(deadline)
     audit_event = None
@@ -261,7 +279,7 @@ def prepare_rag_chat(
             "metrics": {
                 "input_tokens": estimate_tokens(query),
                 "output_tokens": estimate_tokens(
-                    f"{answer['answer']} Sources: {', '.join(answer.get('source_ids', []))}"
+                    f"{answer['answer']} Sources: {', '.join(answer['source_ids'])}"
                 ),
                 "retrieval_time": round(retrieval_time, 4),
                 "llm_time": round(llm_time, 4),
@@ -279,11 +297,15 @@ def commit_rag_chat_outcome(
     role: str,
     cache: RagCache,
     audit: RagAuditRepository,
+    deadline: float | None = None,
 ) -> dict:
+    _ensure_before_deadline(deadline)
     if outcome.audit_event is not None:
-        audit.write(**outcome.audit_event)
+        audit.write(**outcome.audit_event, deadline=deadline)
+    _ensure_before_deadline(deadline)
     if outcome.cache_response is not None:
-        cache.set(query, role, outcome.cache_response)
+        cache.set(query, role, outcome.cache_response, deadline=deadline)
+    _ensure_before_deadline(deadline)
     return outcome.response
 
 
@@ -299,4 +321,4 @@ def rag_chat(
     outcome = prepare_rag_chat(
         query, role, repository, provider, cache, audit, deadline
     )
-    return commit_rag_chat_outcome(outcome, query, role, cache, audit)
+    return commit_rag_chat_outcome(outcome, query, role, cache, audit, deadline)

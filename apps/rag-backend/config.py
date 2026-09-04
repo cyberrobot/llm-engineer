@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Settings:
+    ai_provider: str = os.getenv("RAG_AI_PROVIDER", "openai")
     knowledge_database_url: str | None = os.getenv("RAG_KNOWLEDGE_DATABASE_URL")
     auth_audit_database_url: str | None = os.getenv("RAG_AUTH_AUDIT_DATABASE_URL")
     redis_url: str = os.getenv("RAG_REDIS_URL", "redis://localhost:6379/1")
@@ -34,6 +35,8 @@ class Settings:
     disable_audit: bool = os.getenv("RAG_DISABLE_AUDIT_LOGS", "false").lower() == "true"
 
     def validate(self) -> None:
+        if self.ai_provider != "openai":
+            raise ValueError("RAG_AI_PROVIDER must be openai")
         if "*" in self.allowed_origins:
             raise ValueError("RAG_ALLOWED_ORIGINS must not contain a wildcard")
         if self.provider_timeout_seconds <= 0 or self.request_timeout_seconds <= 0:

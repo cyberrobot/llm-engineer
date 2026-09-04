@@ -1,7 +1,7 @@
 import asyncio
 import time
 from collections import defaultdict, deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from uuid import UUID, uuid4
 
 from application import RequestTimedOut, commit_rag_chat_outcome, prepare_rag_chat
@@ -146,14 +146,29 @@ async def chat(request: Request, response: Response, body: RagChatRequest):
             ),
             settings.request_timeout_seconds,
         )
-        return await asyncio.to_thread(
-            commit_rag_chat_outcome,
-            outcome,
-            body.message,
-            role,
-            request.app.state.cache,
-            request.app.state.audit,
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RequestTimedOut
+        commit = asyncio.create_task(
+            asyncio.to_thread(
+                commit_rag_chat_outcome,
+                outcome,
+                body.message,
+                role,
+                request.app.state.cache,
+                request.app.state.audit,
+                deadline,
+            )
         )
+        try:
+            return await asyncio.wait_for(asyncio.shield(commit), remaining)
+        except asyncio.TimeoutError:
+            # The adapters use the same absolute deadline for their underlying I/O.
+            # Wait for that bounded operation to stop before returning 504 so no
+            # worker can mutate state after the response has been sent.
+            with suppress(Exception):
+                await commit
+            raise
     except (asyncio.TimeoutError, RequestTimedOut) as exc:
         raise HTTPException(
             504, detail="Request timed out", headers={"Cache-Control": "no-store"}
