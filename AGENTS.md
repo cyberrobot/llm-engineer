@@ -13,11 +13,13 @@
 
 ### Repository navigation
 
-Read the task, this file, `git status -sb`, the nearest scoped `AGENTS.md`, and the focused relevant
-README, manifest/configuration, tests, and diff. The nearest scoped guidance supplements or overrides
-this file. Start from a concrete symbol, route, configuration key, business concept, or filename and
-follow direct imports, callers, ports, adapters, registrations, and public contracts outward only as
-needed. Do not scan or enumerate the entire repository as a default discovery step.
+Read the task, this file, `git status -sb`, and the nearest scoped `AGENTS.md`; scoped guidance
+supplements or overrides this file. Inspect the smallest implementation, configuration, test, or
+existing-diff surface relevant to the task. Read a README or manifest only when it defines behaviour,
+commands, dependencies, configuration, or contracts relevant to the change. Start from a concrete
+symbol, route, configuration key, business concept, or filename and follow direct imports, callers,
+ports, adapters, registrations, and public contracts outward only as needed. Do not scan or enumerate
+the entire repository as a default discovery step.
 
 Read `docs/architecture/repository-map.md` when ownership is unclear, work is cross-application, a
 significant boundary is introduced or relocated, or focused inspection cannot identify ownership.
