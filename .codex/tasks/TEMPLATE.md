@@ -12,11 +12,10 @@ Dependencies:
 
 ### Read first
 
-- AGENTS.md
-
-- docs/architecture/repository-map.md
-
-- docs/architecture/dependency-rules.md
+- `AGENTS.md`
+- nearest scoped `AGENTS.md` for the primary change area, when one exists
+- `docs/architecture/repository-map.md` when ownership or cross-application context is relevant
+- `docs/architecture/dependency-rules.md` when dependency or architectural boundaries are affected
 
 ### Primary change area
 

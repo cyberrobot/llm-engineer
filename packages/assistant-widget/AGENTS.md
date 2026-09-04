@@ -2,9 +2,8 @@
 
 ## Repository Navigation
 
-Read the root `AGENTS.md`, `docs/architecture/repository-map.md`, and
-`docs/architecture/dependency-rules.md` before changing the assistant widget. Start at the narrowest
-affected public or internal boundary:
+Read the root `AGENTS.md` and start at the narrowest affected public or internal boundary. Load the
+architecture documents only under its conditional-read policy:
 
 - `src/index.ts`, `src/AssistantWidget.tsx`, and `src/AssistantWidget.types.ts` for the supported
   package surface.

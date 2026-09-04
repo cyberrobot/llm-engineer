@@ -2,9 +2,8 @@
 
 ## Repository Navigation
 
-Read the root `AGENTS.md`, `docs/architecture/repository-map.md`, and
-`docs/architecture/dependency-rules.md` before changing backend code. Start with the owning bounded
-context and inspect only the layers participating in the requested behaviour:
+Read the root `AGENTS.md` and start with the owning bounded context; load the architecture documents
+only under its conditional-read policy. Inspect only the layers participating in the requested behaviour:
 
 - `assistant/domain/` for assistant, document, ingestion, citation, and evaluation rules.
 - `assistant/application/` and `assistant/application/ports/` for use-case orchestration and
@@ -76,25 +75,22 @@ Default to sequential execution. Add concurrency only for a demonstrated need, b
 
 ## Backend Testing
 
-### Test doubles and infrastructure
+Test observable behaviour through public boundaries. Cover the happy path and the boundary,
+authorization, persistence, idempotency/concurrency, and failure cases relevant to the changed
+contract. Use real application layers and disposable migrated databases when practical; mock only
+true external boundaries. Use `docs/engineering/backend-testing.md` when the task is security-,
+persistence-, ingestion-, concurrency-, provider-, or failure-mode-heavy.
 
-Do not mock the unit under test or internal application layers when realistic integration is practical. Use real validation, middleware, routes, services, repositories, serializers, queries, constraints, transactions, migrations, and state management.
+## Verification
 
-Mock only true external boundaries such as email, SMS, payments, malware scanning, cloud storage, third-party APIs, or unavailable operating-system integrations. Mocks must model realistic success and failure without reproducing implementation details. Unit and integration tests must not call live providers, production databases, or uncontrolled networks.
+Run the narrowest affected tests first and the broader relevant suite before completion. For complete
+backend verification when warranted, run from `apps/backend`:
 
-Use disposable databases and run real migrations for persistence tests. Use temporary directories, deterministic fixtures, fixed clocks and IDs, and realistic fictional data. Tests must be independent of execution order, shared mutable state, current production state, uncontrolled time, and unseeded randomness. Clean up files, records, timers, and mocks.
+```sh
+python -m pytest
+ruff check .
+ruff format --check .
+python -m mypy .
+```
 
-### Required coverage where applicable
-
-Cover:
-
-- Happy paths and precise user-visible or persisted outcomes.
-- Missing, empty, malformed, mistyped, unsupported, extra, contradictory, and out-of-range input.
-- Authentication, invalid or expired credentials, roles, ownership, tenant boundaries, deleted or unavailable resources, privilege escalation, and confirmation that denied actions have no side effects.
-- Minimum, maximum, just-outside-boundary, null, empty, single-item, and large collection cases.
-- Duplicate submissions, retries, stale requests, idempotency, concurrent creation or updates, deletion races, and database enforcement.
-- Domain, database, storage, network, timeout, malformed-provider-response, partial-completion, retry-exhaustion, cancellation, rollback, and cleanup failures.
-- Persistence after reload, record counts, absence of unintended records, immutable and omitted fields, valid state transitions, and incomplete-operation consistency.
-- Input immutability, ordering, backward compatibility, and resource cleanup where contractual.
-
-Security-sensitive flows must directly test server-side validation, ownership and organisation isolation, unguessable access boundaries, safe errors, audit events, path traversal, upload size and signature validation, and storage/database reconciliation where relevant. A successful status alone is insufficient.
+Report any command that cannot run rather than claiming success.

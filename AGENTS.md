@@ -6,6 +6,7 @@
 - Prefer the smallest complete, backward-compatible change that satisfies the requirement.
 - Reuse proven libraries and existing project abstractions before creating new ones.
 - Keep each change independently reviewable, testable, deliverable, and limited to its stated scope.
+- Do not perform unrelated refactors or dependency upgrades.
 - Verify externally observable behaviour and business rules, not implementation details or coverage numbers.
 - Never claim a command or scenario passed unless it was actually run successfully.
 
@@ -13,65 +14,41 @@
 
 ### Repository navigation
 
-Start with `docs/architecture/repository-map.md` and `docs/architecture/dependency-rules.md`. Use
-them to select the smallest relevant application and layer and to confirm its allowed dependency
-directions before reading implementation files. For every selected subtree, locate and read the
-nearest scoped `AGENTS.md` between the repository root and the target file; its more specific
-instructions supplement or override broader repository guidance for that scope. Do not scan or
-enumerate the entire repository as a default discovery step.
+Read the task, this file, `git status -sb`, and the nearest scoped `AGENTS.md`; scoped guidance
+supplements or overrides this file. Inspect the smallest implementation, configuration, test, or
+existing-diff surface relevant to the task. Read a README or manifest only when it defines behaviour,
+commands, dependencies, configuration, or contracts relevant to the change. Start from a concrete
+symbol, route, configuration key, business concept, or filename and follow direct imports, callers,
+ports, adapters, registrations, and public contracts outward only as needed. Do not scan or enumerate
+the entire repository as a default discovery step.
+
+Read `docs/architecture/repository-map.md` when ownership is unclear, work is cross-application, a
+significant boundary is introduced or relocated, or focused inspection cannot identify ownership.
+Read `docs/architecture/dependency-rules.md` when changing dependencies between layers, packages, or
+apps; moving responsibilities; adding shared abstractions or infrastructure; changing ports/adapters;
+or making architecture-sensitive refactors.
 
 Current scoped guidance:
 
 - `apps/backend/AGENTS.md` applies to backend code, tests, migrations, operations, and backend docs.
+- `apps/admin/AGENTS.md` applies to the Admin application.
 - `packages/assistant-widget/AGENTS.md` applies to the published assistant widget, package fixtures,
   and tests.
-- `apps/rag-ui/` currently has no scoped file, so this root file and the architecture documents
-  remain authoritative there.
+- `apps/rag-ui/` currently has no scoped file, so this root file remains authoritative there.
 
 For every task:
 
-1. Read the task, `git status -sb`, the focused diff, the nearest scoped `AGENTS.md`, and the nearest
-   relevant README, manifest, configuration, and tests.
-2. Search by a concrete symbol, route, configuration key, business concept, or filename within the
-   selected subtree. Prefer scoped commands such as `rg <pattern> apps/backend/assistant` or
-   `rg --files packages/assistant-widget/src` over repository-wide searches.
-3. Follow direct imports, callers, ports, adapters, registrations, and tests outward from the primary
-   change area. Expand into another subtree only when this dependency trail or a public contract
-   requires it.
-4. Inspect shared bootstrap, exports, migrations, dependency injection, and lockfiles only when the
-   change crosses those boundaries. Do not read them speculatively.
-5. Exclude generated and runtime directories from discovery, including `node_modules/`, `dist/`,
-   virtual environments, caches, uploads, evaluation reports, coverage output, and `.codex/results/`.
+1. Search within the selected subtree; prefer scoped `rg` commands over repository-wide searches.
+2. Expand into another subtree only when a dependency trail or public contract requires it.
+3. Inspect bootstrap, exports, migrations, dependency injection, and lockfiles only when the change
+   crosses those boundaries. Exclude generated and runtime directories from discovery.
 
-Route initial inspection by change area:
-
-- Backend API or business behaviour: start in the matching `apps/backend/<context>/api/`,
-  `application/`, and `domain/` paths, then inspect its infrastructure adapters and focused tests.
-- Shared backend runtime or provider behaviour: start in `apps/backend/core/`,
-  `apps/backend/infrastructure/`, or `apps/backend/shared/`, then identify the bounded-context callers.
-- Database changes: start with the owning repository and domain model, then inspect
-  `apps/backend/infrastructure/database/migrations/` and relevant persistence tests.
-- Internal RAG UI changes: start in `apps/rag-ui/src/components/`, follow calls into
-  `apps/rag-ui/src/services/` and `src/utils/`, and inspect colocated stories or tests.
-- Published assistant widget changes: start at `packages/assistant-widget/src/index.ts`, the public
-  widget facade, or the affected `src/components/assistant-widget/` code; inspect
-  `src/publicChatClient.ts`, package exports, consumer fixtures, and `apps/assistant-demo/` only as
-  required by the affected contract.
-- Documentation or workflow changes: start with the named document plus the implementation,
-  manifest, or command it describes; verify referenced paths without walking unrelated source trees.
-
-Repository-wide enumeration is a fallback for genuinely cross-cutting work or when focused searches
-cannot locate an owning boundary. If used, state what uncertainty requires it and filter out generated
-and ignored content.
-
-Before implementation:
-
-1. Inspect the relevant domain models, services, repositories, factories, utilities, configuration, dependencies, conventions, and tests.
-2. Identify expected behaviour, invariants, failure modes, security boundaries, callers, stored data, and public contracts.
-3. Confirm prerequisite branches or earlier pull requests are present. If repository state contradicts task assumptions, stop and report the mismatch instead of recreating missing work.
-4. Follow existing structure and naming unless a documented reason justifies a change.
-
-Assume each pull request begins on a fresh feature branch. Implement only its owned scope and make dependencies on earlier work explicit. Avoid unrelated refactoring, renaming, formatting, dependency upgrades, migrations, or architecture changes. In parallel worktrees, minimise overlap in shared bootstrap, exports, migrations, and dependency-injection files.
+For backend work, start in the owning context; for frontend work, start in the affected component or
+feature and its API boundary; for documentation, start with the named document and the command or
+implementation it describes. Repository-wide enumeration is a last resort: state the uncertainty and
+filter generated and ignored content. Before implementation, identify the relevant invariants,
+failure modes, security boundaries, callers, stored data, and public contracts. If repository state
+contradicts task prerequisites, report it rather than recreating missing work.
 
 ## Design and Reuse
 
@@ -114,39 +91,10 @@ Treat existing public behaviour as a contract, including APIs, exports, serializ
 
 ## Testing
 
-### Test observable behaviour
-
-Tests must fail for realistic defects and verify results through public interfaces: endpoints, exported functions, public service methods, rendered interactions, persisted state, files, and observable side effects. Refactoring internals without changing behaviour should not break tests.
-
-Do not test private helpers, internal variables or structure, exact internal call order, or a mock call without verifying its outcome. Never write tests merely to increase coverage or endorse the current implementation.
-
-### Development process
-
-For every feature or bug fix, where practical:
-
-1. Add or update behaviour-focused tests before production code.
-2. Run the new test and confirm it fails for the expected reason.
-3. Implement the smallest production change.
-4. Run targeted tests, the broader affected suite, integration checks, type checking, formatting, and linting using repository commands.
-5. Review whether the suite catches plausible mutations such as removed validation or ownership filters, reversed comparisons, skipped transactions, duplicate creation, omitted constraints, hard-coded results, ignored provider failure, unintended field resets, and invalid state transitions.
-
-Every bug fix needs a clearly named regression test that reproduces the defect and fails before the fix, unless automated testing is genuinely impossible and the reason is documented. Never weaken expected behaviour or assertions to accommodate an implementation.
-
-### Assertions
-
-Use precise assertions for status or result type, response fields, persisted values, ownership, counts, transitions, timestamps, immutable fields, events, side effects, and user-visible output. Avoid truthiness-only checks, “no exception” checks, mock-call-only checks, status-only checks, or broad snapshots. Snapshots may supplement but never replace semantic assertions. Avoid brittle complete exception-string or log assertions when structured data is available.
-
-### Prohibited test practices
-
-Never:
-
-- Delete a test solely because a change breaks it.
-- Skip or disable a failure without a documented valid reason, or commit focused tests such as `.only`.
-- Loosen a meaningful assertion, replace it with a snapshot, hide failures, or mock away the behaviour under test.
-- Change production code solely for test convenience when realistic setup is possible.
-- Change expected behaviour merely to match the current implementation.
-
-If a test appears wrong, confirm intended behaviour and explain the correction.
+Test realistic observable behaviour through endpoints, public APIs, rendered interactions, persisted
+state, files, and side effects. Use precise assertions, not implementation details, mock-call-only
+checks, broad snapshots, or truthiness. Add regression coverage for defects where practical; do not
+delete, weaken, skip, or mock away meaningful tests to make an implementation pass.
 
 ## Verification and Documentation
 
@@ -163,29 +111,10 @@ Update documentation for public APIs, configuration, operations, persisted forma
 
 ## Completion Report
 
-For implementation work, report:
+Report what changed, checks actually run and their result, material public/configuration/migration
+changes, and known limitations or risks. Do not claim success for an unrun check.
 
-1. Branch and files changed.
-2. Behaviour and tests added or updated, including the initial expected failure where practical.
-3. Production changes and important design or reuse decisions.
-4. Migrations, configuration, dependencies, and public-interface changes.
-5. Commands actually run and their final results.
-6. Known limitations, unverified behaviour, repository mismatches, deviations, and remaining risks.
+## Git and GitHub
 
-Completion requires defined behaviour, meaningful regression coverage, passing relevant tests, type checks, and linting, verified security and persistence boundaries where applicable, and explicit disclosure of remaining limitations.
-
-## GitHub Branches and Pull Requests
-
-Create a new branch only after fetching the latest remote state. Base it on current `origin/main` with `git switch --no-track -c <branch> origin/main`; never use a stale local branch or configure a feature branch to track the default branch. On first push, use `git push --set-upstream origin <branch>` and verify it tracks the same-named remote branch.
-
-Sandboxed `gh auth status` may not see host keychain credentials. Before requesting login, run `gh auth status` and `gh repo view --json nameWithOwner,defaultBranchRef` with the necessary host permission. Ask for `gh auth login` only if those checks fail outside the sandbox.
-
-When commit, push, and pull-request creation are requested:
-
-1. Inspect `git status -sb` and the diff.
-2. Stage only in-scope files; leave unrelated work untouched unless the user confirms inclusion.
-3. Commit with a concise description of the complete change.
-4. Push the feature branch to the same-named remote branch with upstream tracking; never push it to the default branch.
-5. Open a draft pull request against the repository default branch unless the user requests another base or ready-for-review status.
-6. Use a Markdown body with real newlines describing the change, impact, and checks that actually passed.
-7. Verify and report branch, commit, base, URL, draft status, and deliberately uncommitted files.
+When branch, commit, push, or pull-request operations are requested, follow
+`docs/engineering/git-workflow.md`.

@@ -1,8 +1,7 @@
 # Repository Map
 
-This document identifies the paths to inspect first and the dependency rules to preserve when
-changing this repository. `AGENTS.md` remains the authoritative source for engineering and testing
-rules.
+This document identifies the paths to inspect first. `AGENTS.md` remains the authoritative source
+for engineering rules; see `dependency-rules.md` when a change affects architecture boundaries.
 
 ## Repository root
 
@@ -87,6 +86,28 @@ Inspect these paths first:
 Keep user-visible behaviour covered through rendered interactions and accessible selectors. Add or
 update stories for meaningful reusable-component states, and keep backend access behind `src/services/`.
 
+### `apps/admin`
+
+Internal React/Vite application for administrator workflows. Navigate from an affected feature/page
+to colocated tests, shared components when required, the API/auth boundary when required, and
+`src/App.tsx` or `src/routing.ts` only when composition changes. Inspect `e2e/` and Playwright when
+browser-visible behaviour materially changes.
+
+- `apps/admin/src/App.tsx` and `src/routing.ts` — route composition and safe return locations.
+- `apps/admin/src/features/` — page and feature behaviour.
+- `apps/admin/src/components/` — reusable rendered UI.
+- `apps/admin/src/api/` and `src/auth/` — backend and administrator-session boundaries.
+- colocated `apps/admin/src/**/*.test.ts` and `*.test.tsx` — feature and component tests;
+  `apps/admin/src/test/` — shared test setup.
+- `apps/admin/e2e/` and `playwright.config.ts` — Playwright browser and visual tests.
+- `apps/admin/vitest.config.ts`, `.storybook/`, `vite.config.ts`, `eslint.config.js`, and
+  `tsconfig*.json` — test, Storybook, build, lint, and TypeScript configuration.
+- `apps/admin/package.json` — workspace commands and dependencies.
+
+Components use the established API/client boundary; backend authentication and authorization remain
+authoritative. Test user-visible behaviour through rendered interactions. Inspect shared composition
+only when the change crosses that boundary.
+
 ### `packages/assistant-widget`
 
 Publishable `@redmoor/assistant-widget` React package. The supported package surface is declared by
@@ -161,6 +182,13 @@ npm run test:api
 npm run lint --workspace @ai-discovery-assistant/rag-ui
 npm run build --workspace @ai-discovery-assistant/rag-ui
 npm run test:storybook
+
+# Admin
+npm run lint --workspace @ai-discovery-assistant/admin
+npm run typecheck --workspace @ai-discovery-assistant/admin
+npm test --workspace @ai-discovery-assistant/admin
+npm run build --workspace @ai-discovery-assistant/admin
+npm run build-storybook --workspace @ai-discovery-assistant/admin
 
 # Assistant widget
 npm run lint --workspace @redmoor/assistant-widget

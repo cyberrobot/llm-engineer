@@ -1,151 +1,24 @@
 # Dependency Rules
 
-This document defines the allowed dependency directions within the Redmoor monorepo.
+These are architectural constraints, not implementation preferences.
 
-Violations should be treated as architecture issues, not implementation preferences.
-
----
-
-# High-level architecture
+## Backend direction
 
 ```text
-Frontend
-    │
-    ▼
-API Layer
-    │
-    ▼
-Application Services
-    │
-    ▼
-Domain
-    │
-    ▼
-Persistence
+API → application → domain
+          ↓
+ application-owned ports ← infrastructure adapters
+
+composition/bootstrap → concrete implementations
 ```
 
-Dependencies flow downwards only.
+- API owns routing, authentication, validation, and HTTP mapping. It depends on application services and transport-facing domain or application models where appropriate.
+- Application services orchestrate domain rules and depend on application-owned ports. They should not normally depend on concrete infrastructure adapters, FastAPI, or frontend models.
+- Domain owns business rules, validation, entities, and value objects. It is independent of FastAPI, databases, Redis, OpenAI, provider clients, environment configuration, and startup.
+- Infrastructure implements application-owned ports and may map persistence or provider representations to application/domain models. Persistence adapters belong in infrastructure; Domain does not depend on persistence.
+- Composition/bootstrap may know concrete implementations to construct the application. Lower-level modules must not import startup or composition roots.
 
-Lower layers must never depend on higher layers.
-
----
-
-# Backend
-
-## API
-
-Responsible for:
-
-- HTTP routing
-- Authentication
-- Request validation
-- Response mapping
-- Status codes
-
-May depend on:
-
-- Application services
-- Domain models
-
-Must NOT depend on:
-
-- Database implementation details
-- Infrastructure concerns
-
----
-
-## Application Services
-
-Responsible for:
-
-- Business orchestration
-- Transactions
-- Calling repositories
-- Calling external services
-- Domain coordination
-
-May depend on:
-
-- Domain
-- Persistence interfaces
-- Infrastructure adapters
-
-Must NOT depend on:
-
-- FastAPI
-- HTTP request/response objects
-- Frontend models
-
----
-
-## Domain
-
-Responsible for:
-
-- Business rules
-- Validation
-- Entities
-- Value objects
-
-May depend on:
-
-- Standard library
-
-Must NOT depend on:
-
-- FastAPI
-- SQLAlchemy
-- PostgreSQL
-- Redis
-- OpenAI
-- HTTP
-- Infrastructure
-
-The domain should be portable.
-
----
-
-## Persistence
-
-Responsible for:
-
-- Database access
-- Queries
-- Transactions
-- Mapping rows to domain models
-
-May depend on:
-
-- SQLAlchemy
-- PostgreSQL
-- Domain models
-
-Must NOT contain:
-
-- Business rules
-- HTTP logic
-
----
-
-# AI Retrieval
-
-Retrieval orchestration belongs in:
-
-apps/backend/app/services/retrieval/
-
-Embedding providers belong in:
-
-apps/backend/app/infrastructure/embeddings/
-
-Vector database implementation belongs in:
-
-apps/backend/app/persistence/vector/
-
-Business logic must never know:
-
-- pgvector
-- embedding model names
-- OpenAI API details
+For example, `assistant/application/ports/rag_knowledge_repository.py` is an application-owned RAG contract, while `assistant/infrastructure/repositories/rag_knowledge.py` provides its PostgreSQL adapter. Retrieval orchestration uses the port; it does not adopt PostgreSQL or provider details as its normal dependency surface.
 
 ---
 
