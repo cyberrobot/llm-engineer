@@ -4,7 +4,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
-from application import rag_chat
+from application import RequestTimedOut, rag_chat
 from config import settings
 from contracts import RagChatRequest, RagChatResponse
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -48,15 +48,40 @@ rate_windows: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 
 @app.middleware("http")
 async def correlation(request: Request, call_next):
-    if request.method in {"POST", "PUT", "PATCH"}:
+    raw_request_id = request.headers.get("X-Request-ID")
+    try:
+        request_id = str(UUID(raw_request_id)) if raw_request_id else str(uuid4())
+    except (ValueError, AttributeError):
+        request_id = str(uuid4())
+    request.state.request_id = request_id
+
+    def early_response(
+        status_code: int, content: str, *, retry_after: str | None = None
+    ):
+        headers = {"X-Request-ID": request_id}
+        if request.url.path in {"/rag-chat", "/audit-logs"}:
+            headers["Cache-Control"] = "no-store"
+        if retry_after is not None:
+            headers["Retry-After"] = retry_after
+        return Response(
+            status_code=status_code,
+            content=content,
+            media_type="application/json",
+            headers=headers,
+        )
+
+    if request.url.path == "/rag-chat" and request.method in {"POST", "PUT", "PATCH"}:
+        declared_size = request.headers.get("content-length")
+        if declared_size is not None:
+            try:
+                parsed_size = int(declared_size)
+            except ValueError:
+                return early_response(400, '{"detail":"Invalid request body size."}')
+            if parsed_size < 0 or parsed_size > settings.max_request_bytes:
+                return early_response(413, '{"detail":"Request body too large."}')
         raw_body = await request.body()
         if len(raw_body) > settings.max_request_bytes:
-            return Response(
-                status_code=413,
-                content='{"detail":"Request body too large"}',
-                media_type="application/json",
-                headers={"Cache-Control": "no-store"},
-            )
+            return early_response(413, '{"detail":"Request body too large."}')
     if request.url.path in {"/rag-chat", "/audit-logs"}:
         key = (request.url.path, request.client.host if request.client else "unknown")
         limit = 20 if request.url.path == "/rag-chat" else 60
@@ -65,19 +90,12 @@ async def correlation(request: Request, call_next):
         while window and window[0] <= now - 60:
             window.popleft()
         if len(window) >= limit:
-            return Response(
-                status_code=429,
-                content='{"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests. Please wait a moment before trying again.","retry_after_seconds":60}}',
-                media_type="application/json",
-                headers={"Cache-Control": "no-store", "Retry-After": "60"},
+            return early_response(
+                429,
+                '{"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests. Please wait a moment before trying again.","retry_after_seconds":60}}',
+                retry_after="60",
             )
         window.append(now)
-    raw = request.headers.get("X-Request-ID")
-    try:
-        request_id = str(UUID(raw)) if raw else str(uuid4())
-    except (ValueError, AttributeError):
-        request_id = str(uuid4())
-    request.state.request_id = request_id
     response = await call_next(request)
     if request.url.path in {"/rag-chat", "/audit-logs"}:
         response.headers["Cache-Control"] = "no-store"
@@ -123,10 +141,11 @@ async def chat(request: Request, response: Response, body: RagChatRequest):
                 provider,
                 request.app.state.cache,
                 request.app.state.audit,
+                time.monotonic() + settings.request_timeout_seconds,
             ),
             settings.request_timeout_seconds,
         )
-    except asyncio.TimeoutError as exc:
+    except (asyncio.TimeoutError, RequestTimedOut) as exc:
         raise HTTPException(
             504, detail="Request timed out", headers={"Cache-Control": "no-store"}
         ) from exc

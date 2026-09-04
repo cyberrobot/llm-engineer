@@ -13,6 +13,7 @@ class Settings:
     provider_timeout_seconds: float = float(
         os.getenv("RAG_PROVIDER_TIMEOUT_SECONDS", "30")
     )
+    provider_max_retries: int = int(os.getenv("RAG_PROVIDER_MAX_RETRIES", "2"))
     request_timeout_seconds: float = float(
         os.getenv("RAG_REQUEST_TIMEOUT_SECONDS", "45")
     )
@@ -37,6 +38,8 @@ class Settings:
             raise ValueError("RAG_ALLOWED_ORIGINS must not contain a wildcard")
         if self.provider_timeout_seconds <= 0 or self.request_timeout_seconds <= 0:
             raise ValueError("RAG timeouts must be positive")
+        if self.provider_max_retries < 0:
+            raise ValueError("RAG_PROVIDER_MAX_RETRIES must not be negative")
 
     def validate_runtime(self) -> None:
         self.validate()

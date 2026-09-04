@@ -195,7 +195,7 @@ class Provider:
         self.client = OpenAI(
             api_key=settings.openai_api_key,
             timeout=settings.provider_timeout_seconds,
-            max_retries=0,
+            max_retries=settings.provider_max_retries,
         )
 
     def embedding(self, text: str) -> list[float]:

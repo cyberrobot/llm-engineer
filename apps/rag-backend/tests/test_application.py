@@ -1,5 +1,7 @@
 import json
 import sys
+import time
+from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
@@ -142,3 +144,65 @@ def test_retrieval_discards_a_query_when_its_best_match_exceeds_maximum_distance
     )
 
     assert result == application.empty_response()
+
+
+def test_cache_hit_does_not_read_or_write_audit_when_auditing_is_disabled(monkeypatch):
+    class CacheHit:
+        def get(self, *_args):
+            return application.empty_response()
+
+        def set(self, *_args):
+            raise AssertionError("cache hit must not be overwritten")
+
+    class NoAudit:
+        def latest(self, **_kwargs):
+            raise AssertionError("disabled audit must not be read")
+
+        def write(self, **_kwargs):
+            raise AssertionError("disabled audit must not be written")
+
+    monkeypatch.setattr(
+        application, "settings", replace(application.settings, disable_audit=True)
+    )
+
+    assert (
+        application.rag_chat(
+            "question", "doctor", Repository(), Provider(), CacheHit(), NoAudit()
+        )
+        == application.empty_response()
+    )
+
+
+def test_expired_deadline_prevents_audit_and_cache_side_effects(monkeypatch):
+    class RecordingCache(Cache):
+        def __init__(self):
+            super().__init__()
+            self.writes = 0
+
+        def set(self, *_args):
+            self.writes += 1
+
+    class RecordingAudit(Audit):
+        pass
+
+    monkeypatch.setattr(application, "query_cache", {})
+    cache = RecordingCache()
+    audit = RecordingAudit()
+
+    try:
+        application.rag_chat(
+            "question",
+            "doctor",
+            Repository(),
+            Provider(),
+            cache,
+            audit,
+            deadline=time.monotonic() - 1,
+        )
+    except application.RequestTimedOut:
+        pass
+    else:
+        raise AssertionError("expected deadline to stop side effects")
+
+    assert audit.events == []
+    assert cache.writes == 0

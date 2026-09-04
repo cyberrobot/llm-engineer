@@ -66,3 +66,17 @@ def test_rag_rate_limit_matches_the_frozen_error_contract():
             "retry_after_seconds": 60,
         }
     }
+
+
+def test_early_request_body_failure_has_a_normalized_request_id_and_no_store():
+    with TestClient(app) as client:
+        response = client.post(
+            "/rag-chat",
+            content=b"{}",
+            headers={"Content-Type": "application/json", "Content-Length": "invalid"},
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid request body size."}
+    assert response.headers["Cache-Control"] == "no-store"
+    assert len(response.headers["X-Request-ID"]) == 36

@@ -5,12 +5,22 @@ from pathlib import Path
 from typing import Protocol
 
 import pysbd
+from config import settings
 from infrastructure import REDMOOR_ASSISTANT_ID
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 query_cache: dict[str, list[str]] = {}
 MAX_QUERY_CACHE_SIZE = 100
 sentence_segmenter = pysbd.Segmenter(language="en", clean=False)
+
+
+class RequestTimedOut(Exception):
+    pass
+
+
+def _ensure_before_deadline(deadline: float | None) -> None:
+    if deadline is not None and time.monotonic() >= deadline:
+        raise RequestTimedOut
 
 
 class KnowledgeRepository(Protocol):
@@ -133,12 +143,19 @@ def rag_chat(
     provider: RagProvider,
     cache: RagCache,
     audit: RagAuditRepository,
+    deadline: float | None = None,
 ) -> dict:
     start = time.perf_counter()
     cached = cache.get(query, role)
     if cached:
-        latest = audit.latest(question=query, role=role)
+        _ensure_before_deadline(deadline)
+        latest = (
+            audit.latest(question=query, role=role)
+            if not settings.disable_audit
+            else None
+        )
         if latest is not None:
+            _ensure_before_deadline(deadline)
             audit.write(
                 role=role,
                 question=query,
@@ -165,10 +182,7 @@ def rag_chat(
             generated = json.loads(
                 provider.text(f"{prompt('query_generation.md')}\nUser query:\n{query}")
             )
-            if isinstance(generated, list) and all(
-                isinstance(x, str) for x in generated
-            ):
-                queries = generated
+            queries = generated
         except (json.JSONDecodeError, ValueError):
             queries = [query]
         if len(query_cache) > MAX_QUERY_CACHE_SIZE:
@@ -202,7 +216,7 @@ def rag_chat(
                 + "\n".join(f"[{i}] {x['text']}" for i, x in enumerate(unique))
             )
         )
-    except (json.JSONDecodeError, ValueError):
+    except Exception:  # noqa: BLE001 - preserves legacy rerank JSON fallback
         ranked = list(range(len(unique)))
     reranked = [unique[index] for index in ranked[:3]]
     answer = json.loads(
@@ -222,7 +236,8 @@ def rag_chat(
     ]
     evaluation = evaluate_answer(answer.get("answer", ""), reranked, provider)
     result = {"reply": answer, "sources": sources, "evaluation": evaluation}
-    if not __import__("config").settings.disable_audit:
+    _ensure_before_deadline(deadline)
+    if not settings.disable_audit:
         audit.write(
             role=role,
             question=query,
@@ -242,5 +257,6 @@ def rag_chat(
                 "cache_hit": False,
             },
         )
+    _ensure_before_deadline(deadline)
     cache.set(query, role, result)
     return result

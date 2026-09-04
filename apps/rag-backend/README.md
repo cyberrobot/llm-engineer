@@ -15,6 +15,14 @@ schema (`documents` and `chunks`). `RAG_AUTH_AUDIT_DATABASE_URL` is a distinct c
 to administrator-session lookup plus `audit_logs` reads/inserts; it must not be granted ingestion,
 document, chunk, or administrator-management write privileges.
 
+Configuration defaults: `RAG_CHAT_MODEL=gpt-5.4-nano`,
+`RAG_EMBEDDING_MODEL=text-embedding-3-small`, `RAG_PROVIDER_TIMEOUT_SECONDS=30`,
+`RAG_PROVIDER_MAX_RETRIES=2`, `RAG_REQUEST_TIMEOUT_SECONDS=45`,
+`RAG_ALLOWED_ORIGINS=http://localhost:5173`, and
+`RAG_SESSION_COOKIE_NAME=redmoor_admin_session`. `RAG_DISABLE_CACHE` and
+`RAG_DISABLE_AUDIT_LOGS` default to `false`; disabling either intentionally removes the respective
+side effect. `RAG_REDIS_URL` defaults to `redis://localhost:6379/1`.
+
 Run it beside the legacy backend with:
 
 ```sh

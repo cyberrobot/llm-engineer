@@ -119,7 +119,10 @@ jobs:
           cache-dependency-path: apps/rag-backend/requirements.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest ruff mypy
 
       - name: Run focused RAG backend tests
         run: pytest -q tests
+
+      - name: Lint and format check
+        run: ruff check . && ruff format --check .
