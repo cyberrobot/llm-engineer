@@ -72,6 +72,7 @@ assert(workflow.jobs && typeof workflow.jobs === 'object')
 const job = workflow.jobs.admin
 assert(job, 'Admin workflow must define the admin job')
 assert.equal(job.name, 'Admin validation')
+assert.equal(job['runs-on'], 'ubuntu-24.04', 'Admin validation must use the canonical Ubuntu runner')
 assert(!Object.hasOwn(job, 'if'), 'Admin validation must run whenever the workflow is triggered')
 assert(Array.isArray(job.steps), 'Admin validation must define steps')
 
