@@ -88,16 +88,20 @@ update stories for meaningful reusable-component states, and keep backend access
 
 ### `apps/admin`
 
-Internal React/Vite application for administrator workflows. Start from the affected feature or page,
-then inspect shared components only when required, the API/auth boundary only when required, and
-`src/App.tsx` or `src/routing.ts` only when composition changes.
+Internal React/Vite application for administrator workflows. Navigate from an affected feature/page
+to colocated tests, shared components when required, the API/auth boundary when required, and
+`src/App.tsx` or `src/routing.ts` only when composition changes. Inspect `e2e/` and Playwright when
+browser-visible behaviour materially changes.
 
 - `apps/admin/src/App.tsx` and `src/routing.ts` — route composition and safe return locations.
 - `apps/admin/src/features/` — page and feature behaviour.
 - `apps/admin/src/components/` — reusable rendered UI.
 - `apps/admin/src/api/` and `src/auth/` — backend and administrator-session boundaries.
-- `apps/admin/src/test/`, `vitest.config.ts`, `.storybook/` when present, `vite.config.ts`, and
-  `eslint.config.js` — tests and tooling configuration.
+- colocated `apps/admin/src/**/*.test.ts` and `*.test.tsx` — feature and component tests;
+  `apps/admin/src/test/` — shared test setup.
+- `apps/admin/e2e/` and `playwright.config.ts` — Playwright browser and visual tests.
+- `apps/admin/vitest.config.ts`, `.storybook/`, `vite.config.ts`, `eslint.config.js`, and
+  `tsconfig*.json` — test, Storybook, build, lint, and TypeScript configuration.
 - `apps/admin/package.json` — workspace commands and dependencies.
 
 Components use the established API/client boundary; backend authentication and authorization remain
