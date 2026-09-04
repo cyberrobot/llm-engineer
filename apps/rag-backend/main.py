@@ -14,7 +14,8 @@ from infrastructure import (
     Cache,
     PostgresKnowledgeRepository,
     Provider,
-    connection,
+    auth_audit_connection,
+    knowledge_connection,
 )
 from security import effective_role, require_admin
 
@@ -54,6 +55,7 @@ async def correlation(request: Request, call_next):
                 status_code=413,
                 content='{"detail":"Request body too large"}',
                 media_type="application/json",
+                headers={"Cache-Control": "no-store"},
             )
     if request.url.path in {"/rag-chat", "/audit-logs"}:
         key = (request.url.path, request.client.host if request.client else "unknown")
@@ -65,8 +67,9 @@ async def correlation(request: Request, call_next):
         if len(window) >= limit:
             return Response(
                 status_code=429,
-                content='{"detail":"Rate limit exceeded"}',
+                content='{"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests. Please wait a moment before trying again.","retry_after_seconds":60}}',
                 media_type="application/json",
+                headers={"Cache-Control": "no-store", "Retry-After": "60"},
             )
         window.append(now)
     raw = request.headers.get("X-Request-ID")
@@ -76,6 +79,8 @@ async def correlation(request: Request, call_next):
         request_id = str(uuid4())
     request.state.request_id = request_id
     response = await call_next(request)
+    if request.url.path in {"/rag-chat", "/audit-logs"}:
+        response.headers["Cache-Control"] = "no-store"
     response.headers["X-Request-ID"] = request_id
     return response
 
@@ -88,7 +93,10 @@ def live():
 @app.get("/health/ready")
 def ready():
     try:
-        with connection() as conn:
+        settings.validate_runtime()
+        with knowledge_connection() as conn:
+            conn.execute("SELECT 1")
+        with auth_audit_connection() as conn:
             conn.execute("SELECT 1")
         if not settings.disable_cache and not app.state.cache.ping():
             raise RuntimeError("Redis unavailable")

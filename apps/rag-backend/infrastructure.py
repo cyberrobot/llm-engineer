@@ -13,13 +13,21 @@ REDMOOR_ASSISTANT_ID = uuid5(NAMESPACE_URL, "assistant:redmoor")
 
 
 @contextmanager
-def connection():
-    if not settings.database_url:
-        raise RuntimeError("RAG_DATABASE_URL is not configured")
+def _connection(database_url: str | None, setting_name: str):
+    if not database_url:
+        raise RuntimeError(f"{setting_name} is not configured")
     with psycopg.connect(
-        settings.database_url, connect_timeout=3, options="-c statement_timeout=30000"
+        database_url, connect_timeout=3, options="-c statement_timeout=30000"
     ) as conn:
         yield conn
+
+
+def knowledge_connection():
+    return _connection(settings.knowledge_database_url, "RAG_KNOWLEDGE_DATABASE_URL")
+
+
+def auth_audit_connection():
+    return _connection(settings.auth_audit_database_url, "RAG_AUTH_AUDIT_DATABASE_URL")
 
 
 class PostgresKnowledgeRepository:
@@ -32,7 +40,7 @@ class PostgresKnowledgeRepository:
         role: str,
         limit: int,
     ) -> list[dict[str, Any]]:
-        with connection() as conn:
+        with knowledge_connection() as conn:
             rows = conn.execute(
                 """WITH vector_candidates AS (
                 SELECT c.id, c.doc_id, c.text, c.text_search,
@@ -67,13 +75,12 @@ class PostgresKnowledgeRepository:
                 "hybrid_score": float(r[5]),
             }
             for r in rows
-            if float(r[3]) <= 0.8
         ]
 
 
 class AuditRepository:
     def list(self, limit: int) -> list[dict]:
-        with connection() as conn:
+        with auth_audit_connection() as conn:
             rows = conn.execute(
                 """SELECT id,timestamp,user_role,question,reply,
                 retrieved_chunks,reranked_chunks,metrics,queries,evaluation
@@ -108,7 +115,7 @@ class AuditRepository:
         evaluation: dict,
         metrics: dict,
     ) -> None:
-        with connection() as conn:
+        with auth_audit_connection() as conn:
             conn.execute(
                 """INSERT INTO audit_logs
                 (timestamp,user_role,question,queries,reply,retrieved_chunks,
@@ -127,7 +134,7 @@ class AuditRepository:
             )
 
     def latest(self, *, question: str, role: str) -> dict | None:
-        with connection() as conn:
+        with auth_audit_connection() as conn:
             row = conn.execute(
                 """SELECT reply,retrieved_chunks,reranked_chunks,metrics,queries,evaluation
                 FROM audit_logs WHERE question = %s AND user_role = %s

@@ -4,7 +4,7 @@ from hashlib import sha256
 
 from config import settings
 from fastapi import HTTPException, Request
-from infrastructure import connection
+from infrastructure import auth_audit_connection
 
 PERMITTED_ROLES = ("doctor", "nurse", "analyst", "manager", "agent")
 
@@ -20,7 +20,7 @@ def require_admin(request: Request) -> Authorization:
     if not token:
         raise HTTPException(401, detail="Authentication required")
     try:
-        with connection() as conn:
+        with auth_audit_connection() as conn:
             row = conn.execute(
                 """SELECT a.id, a.role FROM administrator_sessions s
                 JOIN administrators a ON a.id = s.administrator_id

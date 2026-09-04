@@ -3,11 +3,17 @@
 Standalone FastAPI RAG service staged for a later routing cutover. It is not production-routed and
 the existing `apps/backend` and `apps/rag-ui` contracts remain unchanged.
 
-Configure `RAG_DATABASE_URL`, `RAG_OPENAI_API_KEY`, `RAG_REDIS_URL`, and
+Configure `RAG_KNOWLEDGE_DATABASE_URL`, `RAG_AUTH_AUDIT_DATABASE_URL`,
+`RAG_OPENAI_API_KEY`, `RAG_REDIS_URL`, and
 `RAG_ALLOWED_ORIGINS` using `.env.example`. The service uses the existing administrator session
 cookie tables, a separate Redis database/namespace, a 32 KiB request limit, 4,000-character
 messages, 20 requests/minute for chat, 60 requests/minute for audit logs, a 45-second request
 timeout, and a 30-second provider timeout.
+
+`RAG_KNOWLEDGE_DATABASE_URL` is a read-only credential with access only to the RAG knowledge
+schema (`documents` and `chunks`). `RAG_AUTH_AUDIT_DATABASE_URL` is a distinct credential limited
+to administrator-session lookup plus `audit_logs` reads/inserts; it must not be granted ingestion,
+document, chunk, or administrator-management write privileges.
 
 Run it beside the legacy backend with:
 

@@ -2,18 +2,34 @@ import json
 import math
 import time
 from pathlib import Path
+from typing import Protocol
 
-from infrastructure import (
-    REDMOOR_ASSISTANT_ID,
-    AuditRepository,
-    Cache,
-    PostgresKnowledgeRepository,
-    Provider,
-)
+import pysbd
+from infrastructure import REDMOOR_ASSISTANT_ID
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 query_cache: dict[str, list[str]] = {}
 MAX_QUERY_CACHE_SIZE = 100
+sentence_segmenter = pysbd.Segmenter(language="en", clean=False)
+
+
+class KnowledgeRepository(Protocol):
+    def search(self, **kwargs) -> list[dict]: ...
+
+
+class RagProvider(Protocol):
+    def embedding(self, text: str) -> list[float]: ...
+    def text(self, prompt: str) -> str: ...
+
+
+class RagCache(Protocol):
+    def get(self, query: str, role: str) -> dict | None: ...
+    def set(self, query: str, role: str, value: dict) -> None: ...
+
+
+class RagAuditRepository(Protocol):
+    def latest(self, *, question: str, role: str) -> dict | None: ...
+    def write(self, **kwargs) -> None: ...
 
 
 def prompt(name: str) -> str:
@@ -51,11 +67,12 @@ def _cosine(left: list[float], right: list[float]) -> float:
     return sum(x * y for x, y in zip(left, right)) / denominator if denominator else 0.0
 
 
-def evaluate_answer(answer: str, chunks: list[dict], provider: Provider) -> dict:
+def evaluate_answer(answer: str, chunks: list[dict], provider: RagProvider) -> dict:
+    normalised = " ".join(answer.split())
     sentences = [
-        part.strip()
-        for part in answer.replace("!", ".").replace("?", ".").split(".")
-        if part.strip()
+        sentence.strip()
+        for sentence in sentence_segmenter.segment(normalised)
+        if sentence.strip()
     ]
     results = []
     for sentence in sentences:
@@ -112,10 +129,10 @@ def format_chunks_for_audit(chunks: list[dict]) -> list[dict]:
 def rag_chat(
     query: str,
     role: str,
-    repository: PostgresKnowledgeRepository,
-    provider: Provider,
-    cache: Cache,
-    audit: AuditRepository,
+    repository: KnowledgeRepository,
+    provider: RagProvider,
+    cache: RagCache,
+    audit: RagAuditRepository,
 ) -> dict:
     start = time.perf_counter()
     cached = cache.get(query, role)
@@ -154,20 +171,20 @@ def rag_chat(
                 queries = generated
         except (json.JSONDecodeError, ValueError):
             queries = [query]
-        if len(query_cache) >= MAX_QUERY_CACHE_SIZE:
+        if len(query_cache) > MAX_QUERY_CACHE_SIZE:
             query_cache.pop(next(iter(query_cache)))
         query_cache[query] = queries
     results = []
     for item in queries:
-        results.extend(
-            repository.search(
-                assistant_id=REDMOOR_ASSISTANT_ID,
-                query_embedding=provider.embedding(item),
-                query=item,
-                role=role,
-                limit=8,
-            )
+        query_results = repository.search(
+            assistant_id=REDMOOR_ASSISTANT_ID,
+            query_embedding=provider.embedding(item),
+            query=item,
+            role=role,
+            limit=8,
         )
+        if query_results and query_results[0]["distance"] <= 0.8:
+            results.extend(query_results)
     retrieval_time = (time.perf_counter() - start) * 1000
     unique = []
     seen = set()

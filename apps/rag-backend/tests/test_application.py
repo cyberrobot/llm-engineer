@@ -22,6 +22,34 @@ class Repository:
         ]
 
 
+class DistanceRepository:
+    def __init__(self):
+        self.calls = 0
+
+    def search(self, **_kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return [
+                {
+                    "id": "too-far",
+                    "doc_id": "document-1",
+                    "text": "Irrelevant",
+                    "distance": 0.81,
+                    "keyword_match": 0.0,
+                    "hybrid_score": 0.1,
+                },
+                {
+                    "id": "would-have-been-kept",
+                    "doc_id": "document-1",
+                    "text": "Also irrelevant",
+                    "distance": 0.2,
+                    "keyword_match": 0.0,
+                    "hybrid_score": 0.1,
+                },
+            ]
+        return []
+
+
 class Provider:
     def __init__(self):
         self.responses = [json.dumps(["checklist"]), json.dumps([0])]
@@ -103,3 +131,14 @@ def test_empty_response_has_frozen_legacy_shape():
             },
         },
     }
+
+
+def test_retrieval_discards_a_query_when_its_best_match_exceeds_maximum_distance(
+    monkeypatch,
+):
+    monkeypatch.setattr(application, "query_cache", {"question": ["question"]})
+    result = application.rag_chat(
+        "question", "doctor", DistanceRepository(), Provider(), Cache(), Audit()
+    )
+
+    assert result == application.empty_response()
