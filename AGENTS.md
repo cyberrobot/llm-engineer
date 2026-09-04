@@ -6,6 +6,7 @@
 - Prefer the smallest complete, backward-compatible change that satisfies the requirement.
 - Reuse proven libraries and existing project abstractions before creating new ones.
 - Keep each change independently reviewable, testable, deliverable, and limited to its stated scope.
+- Do not perform unrelated refactors or dependency upgrades.
 - Verify externally observable behaviour and business rules, not implementation details or coverage numbers.
 - Never claim a command or scenario passed unless it was actually run successfully.
 
