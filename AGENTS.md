@@ -34,7 +34,8 @@ Current scoped guidance:
 - `apps/admin/AGENTS.md` applies to the Admin application.
 - `packages/assistant-widget/AGENTS.md` applies to the published assistant widget, package fixtures,
   and tests.
-- `apps/rag-ui/` currently has no scoped file, so this root file remains authoritative there.
+- `apps/rag-ui/` and `apps/assistant-demo/` have no scoped file, so this root file remains
+  authoritative there.
 
 For every task:
 
@@ -108,6 +109,19 @@ Run the repository-defined commands relevant to the change:
 If a command cannot run, report the exact command, reason, observed error, and remaining risk. Do not declare completion while relevant checks fail.
 
 Update documentation for public APIs, configuration, operations, persisted formats, exit codes, side effects, failure and retry behaviour, idempotency, compatibility, recovery, and migration procedures. Keep examples accurate, never describe planned behaviour as implemented, and record justified deviations.
+
+## CI and Releases
+
+CI is path-scoped and differs per app; a check may legitimately not run for your change:
+
+- `test.yml` runs backend `pytest` (+ specific PostgreSQL suites) and RAG-UI Storybook on every PR to `main`.
+- `test-admin.yml` runs only when `apps/admin/**`, `packages/assistant-widget/**`, `package.json`, lockfiles, or the workflow files themselves change.
+- `test-assistant-widget.yml` runs only when `packages/assistant-widget/**`, `.changeset/**`, `package.json`, lockfiles, or workflow files change.
+- `publish-assistant-widget.yml` publishes the widget on release.
+
+The `@redmoor/assistant-widget` package is versioned and released with Changesets (`.changeset/`). CI
+enforces a changeset for widget modifications via `npx changeset status`; `npm run release` runs
+`changeset publish`. Add a changeset when you change the published widget.
 
 ## Completion Report
 
