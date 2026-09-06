@@ -11,6 +11,12 @@ const assistant:Assistant={id:'11111111-1111-4111-8111-111111111111',slug:'legal
 function deferred<T>(){let resolve!:(value:T)=>void,reject!:(reason?:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}}
 type TestLocation=string|{pathname:string;state:unknown};
 function renderApp(api:AdminApi,path:TestLocation='/admin'){const router=createMemoryRouter([{path:'*',element:<AuthProvider api={api}><App/></AuthProvider>}],{initialEntries:[path]});return{...render(<RouterProvider router={router}/>),router}}
+async function openAssistantActions(name:string){
+  const trigger=await screen.findByRole('button',{name:`Actions for ${name}`});
+  await userEvent.click(trigger);
+  expect(trigger).toHaveAttribute('aria-expanded','true');
+  return trigger;
+}
 function useMobileViewport(){
   let matches=true;
   let listener:((event:MediaQueryListEvent)=>void)|undefined;
@@ -249,7 +255,7 @@ describe('administrator application workflows',()=>{
     renderApp(apiWith({listAssistants}),'/admin/assistants');
     expect(await screen.findByText('Showing 1–1 of 51')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button',{name:'Next'}));
-    expect(await screen.findByText('Page two')).toBeInTheDocument();
+    expect(await screen.findByRole('button',{name:'Actions for Page two'})).toBeInTheDocument();
     expect(listAssistants).toHaveBeenLastCalledWith({limit:50,offset:50,status:undefined,visibility:undefined},expect.any(AbortSignal));
   });
   it('filters assistants through the supported backend contract',async()=>{
@@ -272,19 +278,21 @@ describe('administrator application workflows',()=>{
       .mockResolvedValueOnce({items:[assistant],total:50,limit:50,offset:0});
     renderApp(apiWith({listAssistants,deleteAssistant:vi.fn().mockResolvedValue(undefined)}),'/admin/assistants');
     await userEvent.click(await screen.findByRole('button',{name:'Next'}));
-    await userEvent.click(await screen.findByRole('button',{name:'Delete Page two'}));
+    await openAssistantActions('Page two');
+    await userEvent.click(screen.getByRole('menuitem',{name:/Delete/}));
     await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
     const notice=await screen.findByRole('status');
     expect(notice).toHaveTextContent('Assistant deleted. List refreshed.');
     expect(notice).toHaveFocus();
-    expect(await screen.findByText('Legal review')).toBeInTheDocument();
+    expect(await screen.findByRole('button',{name:'Actions for Legal review'})).toBeInTheDocument();
     expect(listAssistants).toHaveBeenLastCalledWith({limit:50,offset:0,status:undefined,visibility:undefined},expect.any(AbortSignal));
   });
   it('maps protected and already-deleted assistants to their contractual outcomes',async()=>{
     const deleteAssistant=vi.fn().mockRejectedValueOnce(new AdminApiError('conflict','protected_assistant')).mockRejectedValueOnce(new AdminApiError('not_found','assistant_not_found'));
     const listAssistants=vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0});
     renderApp(apiWith({listAssistants,deleteAssistant}),'/admin/assistants');
-    await userEvent.click(await screen.findByRole('button',{name:'Delete Legal review'}));
+    await openAssistantActions('Legal review');
+    await userEvent.click(screen.getByRole('menuitem',{name:/Delete/}));
     await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
     expect(await screen.findByRole('alert')).toHaveTextContent('seeded assistant is protected');
     await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
@@ -304,7 +312,8 @@ describe('administrator application workflows',()=>{
   });
   it('invalidates the session when a status mutation returns 401',async()=>{
     renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0}),updateAssistant:vi.fn().mockRejectedValue(new AdminApiError('unauthenticated'))}),'/admin/assistants');
-    await userEvent.click(await screen.findByRole('button',{name:'Activate Legal review'}));
+    await openAssistantActions('Legal review');
+    await userEvent.click(screen.getByRole('menuitem',{name:/Activate/}));
     await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
     expect(await screen.findByRole('heading',{name:'Welcome back'})).toBeInTheDocument();
   });
@@ -312,21 +321,145 @@ describe('administrator application workflows',()=>{
     const activePublic={...assistant,status:'active' as const,visibility:'public' as const};
     const updateAssistant=vi.fn().mockRejectedValue(new AdminApiError('network'));
     renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[activePublic],total:1,limit:50,offset:0}),updateAssistant}),'/admin/assistants');
-    await userEvent.click(await screen.findByRole('button',{name:'Deactivate Legal review'}));
+    await openAssistantActions('Legal review');
+    await userEvent.click(screen.getByRole('menuitem',{name:/Deactivate/}));
     expect(screen.getByRole('dialog')).toHaveTextContent('may make the assistant unavailable through public interfaces');
     await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
     expect(await screen.findByRole('alert')).toHaveTextContent('backend could not be reached');
     expect(screen.getByRole('cell',{name:'Active'})).toBeInTheDocument();
-    expect(screen.getByRole('button',{name:'Deactivate Legal review'})).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Actions for Legal review'})).toBeInTheDocument();
     expect(updateAssistant).toHaveBeenCalledWith(assistant.id,{concurrency_token:assistant.concurrencyToken,status:'inactive'});
   });
   it('keeps the delete dialog open after a dependency conflict',async()=>{
     renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0}),deleteAssistant:vi.fn().mockRejectedValue(new AdminApiError('conflict','assistant_has_dependencies'))}),'/admin/assistants');
-    await userEvent.click(await screen.findByRole('button',{name:'Delete Legal review'}));
+    await openAssistantActions('Legal review');
+    await userEvent.click(screen.getByRole('menuitem',{name:/Delete/}));
     await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
     expect(await screen.findByRole('alert')).toHaveTextContent('dependent records');
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('Legal review')).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog')).getByText(/Delete Legal review/)).toBeInTheDocument();
+  });
+  it('exposes a primary New Assistant link and a Refresh button in the introduction',async()=>{
+    renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0})}),'/admin/assistants');
+    const newAssistant=await screen.findByRole('link',{name:'New Assistant'});
+    expect(newAssistant).toHaveAttribute('href','/admin/assistants/new');
+    const refresh=screen.getByRole('button',{name:'Refresh assistants list'});
+    expect(refresh).toBeEnabled();
+  });
+  it('shows authoritative backend total and on-this-page counts that differ from item count',async()=>{
+    const activePublic={...assistant,id:'22222222-2222-4222-8222-222222222222',name:'Sales helper',status:'active' as const,visibility:'public' as const,updatedAt:'2026-08-04T09:00:00Z'};
+    const inactivePrivate={...assistant,id:'33333333-3333-4333-8333-333333333333',name:'Archive bot',status:'inactive' as const,visibility:'private' as const,updatedAt:'2026-08-06T09:00:00Z'};
+    const invalidDate={...assistant,id:'44444444-4444-4444-8444-444444444444',name:'Invalid date',updatedAt:'not-a-date'};
+    const listAssistants=vi.fn().mockResolvedValue({items:[invalidDate,assistant,activePublic,inactivePrivate],total:120,limit:50,offset:0});
+    renderApp(apiWith({listAssistants}),'/admin/assistants');
+    const summary=await screen.findByRole('region',{name:'Collection summary'});
+    expect(within(summary).getByText('120')).toBeInTheDocument();
+    expect(within(summary).getByText('Total')).toBeInTheDocument();
+    expect(within(summary).getByText('Active')).toBeInTheDocument();
+    expect(within(summary).getByText('Public')).toBeInTheDocument();
+    expect(within(summary).getByText('Private')).toBeInTheDocument();
+    expect(within(summary).getByText('Latest update')).toBeInTheDocument();
+    const active=within(summary).getByText('Active').closest<HTMLElement>('.assistants-summary-card')!;
+    expect(within(active).getByText('1')).toBeInTheDocument();
+    const publicCard=within(summary).getByText('Public').closest<HTMLElement>('.assistants-summary-card')!;
+    expect(within(publicCard).getByText('1')).toBeInTheDocument();
+    const privateCard=within(summary).getByText('Private').closest<HTMLElement>('.assistants-summary-card')!;
+    expect(within(privateCard).getByText('3')).toBeInTheDocument();
+    const latest=within(summary).getByText('Latest update').closest<HTMLElement>('.assistants-summary-card')!;
+    expect(within(latest).getByText('Archive bot')).toBeInTheDocument();
+    expect(within(summary).getAllByText(/^1$/)).toHaveLength(2);
+  });
+  it('renders zero and dash values for an empty loaded collection',async()=>{
+    const listAssistants=vi.fn().mockResolvedValue({items:[],total:0,limit:50,offset:0});
+    renderApp(apiWith({listAssistants}),'/admin/assistants');
+    const summary=await screen.findByRole('region',{name:'Collection summary'});
+    const cards=summary.querySelectorAll('.assistants-summary-card');
+    expect(cards).toHaveLength(5);
+    for(const card of Array.from(cards).slice(0,4)) expect(within(card as HTMLElement).getByText('0')).toBeInTheDocument();
+    const latest=within(summary).getByText('Latest update').closest<HTMLElement>('.assistants-summary-card')!;
+    expect(within(latest).getByText('—')).toBeInTheDocument();
+    expect(within(latest).getByText('no assistants loaded')).toBeInTheDocument();
+  });
+  it('refreshes the collection while preserving the current backend offset',async()=>{
+    const refreshRequest=deferred<{items:Assistant[];total:number;limit:number;offset:number}>();
+    const pageTwo={...assistant,id:'22222222-2222-4222-8222-222222222222',name:'Page two'};
+    const listAssistants=vi.fn()
+      .mockResolvedValueOnce({items:[assistant],total:51,limit:50,offset:0})
+      .mockResolvedValueOnce({items:[pageTwo],total:51,limit:50,offset:50})
+      .mockImplementationOnce(()=>refreshRequest.promise);
+    renderApp(apiWith({listAssistants}),'/admin/assistants');
+    await userEvent.click(await screen.findByRole('button',{name:'Next'}));
+    await screen.findByRole('button',{name:'Actions for Page two'});
+    const refresh=screen.getByRole('button',{name:'Refresh assistants list'});
+    await userEvent.click(refresh);
+    expect(refresh).toBeDisabled();
+    expect(refresh).toHaveAttribute('aria-busy','true');
+    expect(listAssistants).toHaveBeenLastCalledWith({limit:50,offset:50,status:undefined,visibility:undefined},expect.any(AbortSignal));
+    await userEvent.click(refresh);
+    expect(listAssistants).toHaveBeenCalledTimes(3);
+    refreshRequest.resolve({items:[pageTwo],total:51,limit:50,offset:50});
+    await waitFor(()=>expect(refresh).toBeEnabled());
+  });
+  it('refreshes with active filters and prevents a duplicate pending request',async()=>{
+    const refreshRequest=deferred<{items:Assistant[];total:number;limit:number;offset:number}>();
+    const listAssistants=vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0});
+    renderApp(apiWith({listAssistants}),'/admin/assistants');
+    await screen.findByRole('button',{name:'Actions for Legal review'});
+    await userEvent.selectOptions(screen.getByLabelText('Status'),'active');
+    await screen.findByRole('button',{name:'Actions for Legal review'});
+    await userEvent.selectOptions(screen.getByLabelText('Visibility'),'public');
+    await screen.findByRole('button',{name:'Actions for Legal review'});
+    listAssistants.mockClear();
+    listAssistants.mockImplementation(()=>refreshRequest.promise);
+    const refresh=screen.getByRole('button',{name:'Refresh assistants list'});
+    await userEvent.click(refresh);
+    expect(listAssistants).toHaveBeenCalledWith({limit:50,offset:0,status:'active',visibility:'public'},expect.any(AbortSignal));
+    await userEvent.click(refresh);
+    expect(listAssistants).toHaveBeenCalledTimes(1);
+    refreshRequest.resolve({items:[assistant],total:1,limit:50,offset:0});
+    await waitFor(()=>expect(refresh).toBeEnabled());
+  });
+  it('opens the row-action menu with an assistant-specific accessible name',async()=>{
+    const other={...assistant,id:'22222222-2222-4222-8222-222222222222',name:'Other helper'};
+    renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[assistant,other],total:2,limit:50,offset:0})}),'/admin/assistants');
+    const trigger=await openAssistantActions('Legal review');
+    const menu=screen.getByRole('menu',{name:'Actions for Legal review'});
+    expect(menu).toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-expanded','true');
+    expect(within(menu).getByRole('menuitem',{name:/^Edit/})).toHaveAttribute('href',`/admin/assistants/${assistant.id}/edit`);
+    expect(within(menu).getByRole('menuitem',{name:/Activate/})).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem',{name:/Delete/})).toBeInTheDocument();
+    const otherTrigger=screen.getByRole('button',{name:'Actions for Other helper'});
+    expect(otherTrigger).toHaveAttribute('aria-expanded','false');
+    await userEvent.click(otherTrigger);
+    expect(otherTrigger).toHaveAttribute('aria-expanded','true');
+    expect(screen.getByRole('menu',{name:'Actions for Other helper'})).toBeInTheDocument();
+    expect(screen.queryByRole('menu',{name:'Actions for Legal review'})).not.toBeInTheDocument();
+  });
+  it('navigates to the edit route from the row-action menu',async()=>{
+    const {router}=renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0})}),'/admin/assistants');
+    await openAssistantActions('Legal review');
+    await userEvent.click(screen.getByRole('menuitem',{name:/^Edit/}));
+    expect(router.state.location.pathname).toBe(`/admin/assistants/${assistant.id}/edit`);
+  });
+  it('closes the row-action menu with Escape and restores focus to its trigger',async()=>{
+    renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0})}),'/admin/assistants');
+    const trigger=await openAssistantActions('Legal review');
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('menu',{name:'Actions for Legal review'})).not.toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-expanded','false');
+    expect(trigger).toHaveFocus();
+  });
+  it('keeps the originating row highlighted through confirmation and restores trigger focus on cancel',async()=>{
+    renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0})}),'/admin/assistants');
+    const trigger=await openAssistantActions('Legal review');
+    const row=trigger.closest('tr')!;
+    expect(row).toHaveClass('assistants-row-active');
+    await userEvent.click(screen.getByRole('menuitem',{name:/Delete/}));
+    expect(row).toHaveClass('assistants-row-active');
+    await userEvent.click(screen.getByRole('button',{name:'Cancel'}));
+    await waitFor(()=>expect(trigger).toHaveFocus());
+    expect(row).not.toHaveClass('assistants-row-active');
   });
   it('warns before discarding a dirty form',async()=>{
     const confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
@@ -358,7 +491,7 @@ describe('administrator application workflows',()=>{
     await userEvent.type(await screen.findByLabelText('Name'),'Legal review');
     await userEvent.type(screen.getByLabelText('Slug'),'legal-review');
     await userEvent.click(screen.getByRole('button',{name:'Save assistant'}));
-    expect(await screen.findByText('Legal review')).toBeInTheDocument();
+    expect(await screen.findByRole('button',{name:'Actions for Legal review'})).toBeInTheDocument();
     expect(fetchMock.mock.calls[1]?.[0]).toBe('https://api.example.test/admin/assistants');
     expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({method:'POST',credentials:'include',body:JSON.stringify({name:'Legal review',slug:'legal-review',status:'inactive',visibility:'private'})}));
     expect(fetchMock.mock.calls[2]?.[0]).toBe('https://api.example.test/admin/assistants?limit=50&offset=0');
@@ -375,10 +508,11 @@ describe('administrator application workflows',()=>{
       .mockResolvedValueOnce(Response.json({items:[],total:0,limit:50,offset:0}));
     vi.stubGlobal('fetch',fetchMock);
     renderApp(createAdminApi('https://api.example.test'),'/admin/assistants');
-    await userEvent.click(await screen.findByRole('button',{name:'Activate Legal review'}));
+    await openAssistantActions('Legal review');
+    await userEvent.click(screen.getByRole('menuitem',{name:/Activate/}));
     await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
-    await screen.findByRole('button',{name:'Deactivate Legal review'});
-    await userEvent.click(screen.getByRole('button',{name:'Delete Legal review'}));
+    await openAssistantActions('Legal review');
+    await userEvent.click(screen.getByRole('menuitem',{name:/Delete/}));
     await userEvent.click(screen.getByRole('button',{name:'Confirm'}));
     expect(await screen.findByRole('heading',{name:'No assistants yet'})).toBeInTheDocument();
     expect(fetchMock.mock.calls[2]?.[1]).toEqual(expect.objectContaining({method:'PATCH',credentials:'include',body:JSON.stringify({concurrency_token:assistant.concurrencyToken,status:'active'})}));

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import {
   Link,
   unstable_usePrompt as usePrompt,
@@ -48,6 +48,106 @@ export function Badge({
   );
 }
 
+function initialsFor(name: string): string {
+  const words = name.replace(/[^A-Za-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '·';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+function IdentityTile({ name }: { name: string }) {
+  const initials = useMemo(() => initialsFor(name), [name]);
+  return (
+    <span aria-hidden="true" className="assistant-identity-tile">
+      {initials}
+    </span>
+  );
+}
+
+function statusIcon(value: AssistantStatus | AssistantVisibility) {
+  if (value === 'active') {
+    return (
+      <svg
+        aria-hidden="true"
+        focusable="false"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+  if (value === 'inactive') {
+    return (
+      <svg
+        aria-hidden="true"
+        focusable="false"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="12" cy="12" r="4" />
+      </svg>
+    );
+  }
+  if (value === 'public') {
+    return (
+      <svg
+        aria-hidden="true"
+        focusable="false"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="12" cy="12" r="9" />
+        <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      aria-hidden="true"
+      focusable="false"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </svg>
+  );
+}
+
+function BadgeWithIcon({
+  value,
+  Icon,
+}: {
+  value: AssistantStatus | AssistantVisibility;
+  Icon: ReactNode;
+}) {
+  return (
+    <span className={`badge assistants-badge-with-icon badge-${value}`}>
+      <span aria-hidden="true" className="assistants-badge-icon">
+        {Icon}
+      </span>
+      {value[0].toUpperCase() + value.slice(1)}
+    </span>
+  );
+}
+
 export function AssistantsPage() {
   const { api } = useAuth();
   const [page, setPage] = useState<{
@@ -58,10 +158,13 @@ export function AssistantsPage() {
   } | null>(null);
   const [error, setError] = useState<unknown>();
   const [attempt, setAttempt] = useState(0);
+  const [refreshAttempt, setRefreshAttempt] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshPendingRef = useRef(false);
   const [offset, setOffset] = useState(0);
   const [statusFilter, setStatusFilter] = useState<AssistantStatus | ''>('');
   const [visibilityFilter, setVisibilityFilter] = useState<AssistantVisibility | ''>('');
-  const [action, setAction] = useState<Assistant>();
+  const [action, setAction] = useState<{ assistant: Assistant; intent: 'status' | 'delete' } | undefined>();
   const [notice, setNotice] = useState('');
   const noticeRef = useRef<HTMLParagraphElement>(null);
   useSessionError(error);
@@ -70,6 +173,7 @@ export function AssistantsPage() {
   }, [notice]);
   useEffect(() => {
     const controller = new AbortController();
+    const manualRefresh = refreshPendingRef.current;
     api
       .listAssistants(
         {
@@ -85,76 +189,76 @@ export function AssistantsPage() {
           setOffset(result.total === 0 ? 0 : Math.floor((result.total - 1) / result.limit) * result.limit);
           return;
         }
+        setError(undefined);
         setPage(result);
       })
       .catch((e) => {
         if (e?.name !== 'AbortError') setError(e);
+      })
+      .finally(() => {
+        if (manualRefresh) {
+          refreshPendingRef.current = false;
+          setRefreshing(false);
+        }
       });
     return () => controller.abort();
-  }, [api, attempt, offset, statusFilter, visibilityFilter]);
+  }, [api, attempt, offset, refreshAttempt, statusFilter, visibilityFilter]);
+  function refresh() {
+    if (refreshPendingRef.current) return;
+    refreshPendingRef.current = true;
+    setRefreshing(true);
+    setError(undefined);
+    setRefreshAttempt((value) => value + 1);
+  }
   if (error)
     return (
-      <State
-        title="Unable to load assistants"
-        text={message(error)}
-        action={() => {
-          setError(undefined);
-          setPage(null);
-          setAttempt((x) => x + 1);
-        }}
-      />
+      <section className="feature assistants-collection">
+        <PageIntroduction refreshing={refreshing} onRefresh={refresh} />
+        <State
+          title="Unable to load assistants"
+          text={message(error)}
+          action={() => {
+            setError(undefined);
+            setPage(null);
+            setAttempt((x) => x + 1);
+          }}
+        />
+      </section>
     );
-  if (!page) return <p role="status">Loading assistants…</p>;
+  if (!page) {
+    return (
+      <section className="feature">
+        <PageIntroduction refreshing={refreshing} onRefresh={refresh} />
+        <p role="status">Loading assistants…</p>
+      </section>
+    );
+  }
   return (
-    <section className="feature">
-      <div className="page-intro">
-        <p>
-          Manage each assistant’s identity, operational status, and public
-          visibility.
-        </p>
-        <Link className="button" to="/admin/assistants/new">
-          Create assistant
-        </Link>
-      </div>
-      <div className="filters" aria-label="Filter assistants">
-        <label>
-          Status
-          <select
-            value={statusFilter}
-            onChange={(event) => {
-              setPage(null);
-              setOffset(0);
-              setStatusFilter(event.target.value as AssistantStatus | '');
-            }}
-          >
-            <option value="">All statuses</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </select>
-        </label>
-        <label>
-          Visibility
-          <select
-            value={visibilityFilter}
-            onChange={(event) => {
-              setPage(null);
-              setOffset(0);
-              setVisibilityFilter(event.target.value as AssistantVisibility | '');
-            }}
-          >
-            <option value="">All visibilities</option>
-            <option value="public">Public</option>
-            <option value="private">Private</option>
-          </select>
-        </label>
-      </div>
+    <section className="feature assistants-collection">
+      <PageIntroduction refreshing={refreshing} onRefresh={refresh} />
+      <SummaryCards items={page.items} total={page.total} />
+      <Filters
+        statusFilter={statusFilter}
+        visibilityFilter={visibilityFilter}
+        onStatusFilter={(value) => {
+          setPage(null);
+          setOffset(0);
+          setStatusFilter(value);
+        }}
+        onVisibilityFilter={(value) => {
+          setPage(null);
+          setOffset(0);
+          setVisibilityFilter(value);
+        }}
+        resultCount={page.total}
+      />
       {notice && (
         <p ref={noticeRef} tabIndex={-1} className="success" role="status">
           {notice}
         </p>
       )}
       {page.items.length === 0 && page.total === 0 ? (
-        <div className="empty">
+        <div className="empty assistants-empty">
           {statusFilter || visibilityFilter ? (
             <>
               <h2>No matching assistants</h2>
@@ -174,60 +278,18 @@ export function AssistantsPage() {
             <>
               <h2>No assistants yet</h2>
               <p>Create the first assistant to get started.</p>
+              <Link className="button" to="/admin/assistants/new">
+                New Assistant
+              </Link>
             </>
           )}
         </div>
       ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Slug</th>
-                <th>Status</th>
-                <th>Visibility</th>
-                <th>Updated</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {page.items.map((a) => (
-                <tr key={a.id}>
-                  <td>{a.name}</td>
-                  <td>
-                    <code>{a.slug}</code>
-                  </td>
-                  <td>
-                    <Badge value={a.status} />
-                  </td>
-                  <td>
-                    <Badge value={a.visibility} />
-                  </td>
-                  <td>{new Date(a.updatedAt).toLocaleDateString()}</td>
-                  <td className="actions">
-                    <Link to={`/admin/assistants/${a.id}/edit`}>Edit</Link>
-                    <button
-                      className="link-button"
-                      aria-label={`${a.status === 'active' ? 'Deactivate' : 'Activate'} ${a.name}`}
-                      onClick={() => setAction(a)}
-                    >
-                      {a.status === 'active' ? 'Deactivate' : 'Activate'}
-                    </button>
-                    <button
-                      className="danger-link"
-                      aria-label={`Delete ${a.name}`}
-                      onClick={() =>
-                        setAction({ ...a, name: `DELETE:${a.name}` })
-                      }
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <AssistantsTable
+          items={page.items}
+          activeAssistantId={action?.assistant.id}
+          onAction={setAction}
+        />
       )}
       {page.total > page.limit && (
         <nav className="pagination" aria-label="Assistants pages">
@@ -256,11 +318,20 @@ export function AssistantsPage() {
             </button>
           </div>
         </nav>
-      )}{' '}
+      )}
       {action && (
         <ActionDialog
-          assistant={action}
-          onClose={() => setAction(undefined)}
+          assistant={action.assistant}
+          intent={action.intent}
+          onClose={() => {
+            const assistantId = action.assistant.id;
+            setAction(undefined);
+            requestAnimationFrame(() => {
+              document
+                .querySelector<HTMLButtonElement>(`[data-assistant-action-id="${assistantId}"]`)
+                ?.focus();
+            });
+          }}
           onDone={(deleted) => {
             setAction(undefined);
             setNotice(deleted ? 'Assistant deleted. List refreshed.' : 'Assistant status updated.');
@@ -269,6 +340,437 @@ export function AssistantsPage() {
         />
       )}
     </section>
+  );
+}
+
+function PageIntroduction({
+  refreshing,
+  onRefresh,
+}: {
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="assistants-intro">
+      <div className="assistants-intro-text">
+        <p className="assistants-intro-lead">
+          Manage identity, availability and public access for every assistant.
+        </p>
+      </div>
+      <div className="assistants-intro-actions">
+        <button
+          type="button"
+          className="assistants-refresh-button"
+          aria-label="Refresh assistants list"
+          aria-busy={refreshing}
+          disabled={refreshing}
+          onClick={onRefresh}
+        >
+          <span aria-hidden="true" className="assistants-refresh-icon">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              focusable="false"
+            >
+              <path d="M21 12a9 9 0 1 1-3-6.7" />
+              <path d="M21 4v5h-5" />
+            </svg>
+          </span>
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
+        <Link to="/admin/assistants/new" className="button assistants-primary-button">
+          <span aria-hidden="true" className="assistants-primary-icon">
+            +
+          </span>
+          New Assistant
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function SummaryCards({
+  items,
+  total,
+}: {
+  items: Assistant[];
+  total: number;
+}) {
+  const active = items.filter((a) => a.status === 'active').length;
+  const publicCount = items.filter((a) => a.visibility === 'public').length;
+  const privateCount = items.filter((a) => a.visibility === 'private').length;
+  const mostRecent = items.reduce<Assistant | null>((latest, current) => {
+    const currentTime = Date.parse(current.updatedAt);
+    if (!Number.isFinite(currentTime)) return latest;
+    const latestTime = latest ? Date.parse(latest.updatedAt) : -Infinity;
+    return currentTime > latestTime ? current : latest;
+  }, null);
+  return (
+    <div className="assistants-summary" role="region" aria-label="Collection summary">
+      <SummaryCard
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" focusable="false">
+            <circle cx="9" cy="8" r="4" />
+            <path d="M2.5 21a6.5 6.5 0 0 1 13 0M16 4.5a4 4 0 0 1 0 7M18 15a6 6 0 0 1 3.5 6" />
+          </svg>
+        }
+        label="Total"
+        value={total.toString()}
+        note="authoritative backend count"
+      />
+      <SummaryCard
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" focusable="false">
+            <path d="M5 12l5 5L20 7" />
+          </svg>
+        }
+        label="Active"
+        value={active.toString()}
+        note="on this page"
+      />
+      <SummaryCard
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" focusable="false">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+          </svg>
+        }
+        label="Public"
+        value={publicCount.toString()}
+        note="on this page"
+      />
+      <SummaryCard
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" focusable="false">
+            <rect x="5" y="11" width="14" height="10" rx="2" />
+            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+          </svg>
+        }
+        label="Private"
+        value={privateCount.toString()}
+        note="on this page"
+      />
+      <SummaryCard
+        icon={
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" focusable="false">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+        }
+        label="Latest update"
+        value={mostRecent ? formatUpdated(mostRecent.updatedAt) : '—'}
+        note={mostRecent ? `${mostRecent.name}` : 'no assistants loaded'}
+        title={mostRecent ? `${mostRecent.name} — ${formatUpdatedLong(mostRecent.updatedAt)}` : undefined}
+      />
+    </div>
+  );
+}
+
+function formatUpdated(value: string): string {
+  return new Date(value).toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'UTC',
+  });
+}
+
+function formatUpdatedLong(value: string): string {
+  return new Date(value).toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'UTC',
+  });
+}
+
+function SummaryCard({
+  icon,
+  label,
+  value,
+  note,
+  title,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  note: string;
+  title?: string;
+}) {
+  return (
+    <div className="assistants-summary-card" title={title}>
+      <span aria-hidden="true" className="assistants-summary-icon">
+        {icon}
+      </span>
+      <div className="assistants-summary-body">
+        <p className="assistants-summary-label">{label}</p>
+        <p className="assistants-summary-value">{value}</p>
+        <p className="assistants-summary-note">{note}</p>
+      </div>
+    </div>
+  );
+}
+
+function Filters({
+  statusFilter,
+  visibilityFilter,
+  onStatusFilter,
+  onVisibilityFilter,
+  resultCount,
+}: {
+  statusFilter: AssistantStatus | '';
+  visibilityFilter: AssistantVisibility | '';
+  onStatusFilter: (value: AssistantStatus | '') => void;
+  onVisibilityFilter: (value: AssistantVisibility | '') => void;
+  resultCount: number;
+}) {
+  return (
+    <div className="filters assistants-filters" aria-label="Filter assistants">
+      <label>
+        Status
+        <select
+          value={statusFilter}
+          onChange={(event) => onStatusFilter(event.target.value as AssistantStatus | '')}
+        >
+          <option value="">All statuses</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </label>
+      <label>
+        Visibility
+        <select
+          value={visibilityFilter}
+          onChange={(event) => onVisibilityFilter(event.target.value as AssistantVisibility | '')}
+        >
+          <option value="">All visibilities</option>
+          <option value="public">Public</option>
+          <option value="private">Private</option>
+        </select>
+      </label>
+      <p className="assistants-filter-count" aria-live="polite">
+        {resultCount} {resultCount === 1 ? 'result' : 'results'}
+      </p>
+    </div>
+  );
+}
+
+function AssistantsTable({
+  items,
+  activeAssistantId,
+  onAction,
+}: {
+  items: Assistant[];
+  activeAssistantId?: string;
+  onAction: (entry: { assistant: Assistant; intent: 'status' | 'delete' }) => void;
+}) {
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  return (
+    <div className="table-wrap assistants-table-wrap">
+      <table className="assistants-table">
+        <thead>
+          <tr>
+            <th scope="col">Assistant</th>
+            <th scope="col">Status</th>
+            <th scope="col">Visibility</th>
+            <th scope="col">Updated</th>
+            <th scope="col" className="assistants-actions-column">
+              Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((a) => {
+            const isOpen = openMenu === a.id;
+            const isActive = isOpen || activeAssistantId === a.id;
+            const statusLabel = a.status[0].toUpperCase() + a.status.slice(1);
+            const visibilityLabel = a.visibility[0].toUpperCase() + a.visibility.slice(1);
+            const statusToggleLabel = a.status === 'active' ? `Deactivate ${a.name}` : `Activate ${a.name}`;
+            return (
+              <tr
+                key={a.id}
+                className={isActive ? 'assistants-row assistants-row-active' : 'assistants-row'}
+              >
+                <td className="assistants-identity-cell">
+                  <IdentityTile name={a.name} />
+                  <span className="assistants-identity-text">
+                    <span className="assistants-name">{a.name}</span>
+                    <span className="assistants-slug">{a.slug}</span>
+                  </span>
+                </td>
+                <td data-label="Status">
+                  <BadgeWithIcon value={a.status} Icon={statusIcon(a.status)} />
+                </td>
+                <td data-label="Visibility">
+                  <BadgeWithIcon value={a.visibility} Icon={statusIcon(a.visibility)} />
+                </td>
+                <td data-label="Updated" className="assistants-updated-cell">
+                  {formatUpdated(a.updatedAt)}
+                </td>
+                <td data-label="Actions" className="assistants-actions-cell">
+                  <RowActionMenu
+                    assistant={a}
+                    isOpen={isOpen}
+                    onOpenChange={(next) => setOpenMenu(next ? a.id : null)}
+                    onChoose={(intent) => {
+                      setOpenMenu(null);
+                      if (intent === 'edit') return;
+                      onAction({ assistant: a, intent });
+                    }}
+                    labels={{ statusToggleLabel, statusLabel, visibilityLabel }}
+                  />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RowActionMenu({
+  assistant,
+  isOpen,
+  onOpenChange,
+  onChoose,
+  labels,
+}: {
+  assistant: Assistant;
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChoose: (intent: 'edit' | 'status' | 'delete') => void;
+  labels: { statusToggleLabel: string; statusLabel: string; visibilityLabel: string };
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+  useEffect(() => {
+    if (!isOpen) return;
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    function onPointer(event: MouseEvent) {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (triggerRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      onOpenChange(false);
+    }
+    function onKey(event: globalThis.KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      onOpenChange(false);
+      triggerRef.current?.focus();
+    }
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [isOpen, onOpenChange]);
+  function onTriggerKey(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === 'Escape') {
+      onOpenChange(false);
+      triggerRef.current?.focus();
+    }
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && !isOpen) {
+      event.preventDefault();
+      onOpenChange(true);
+    }
+  }
+  function onMenuKey(event: KeyboardEvent<HTMLDivElement>) {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+    );
+    if (items.length === 0) return;
+    const current = items.indexOf(document.activeElement as HTMLElement);
+    const next = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? items.length - 1
+        : event.key === 'ArrowDown'
+          ? (current + 1) % items.length
+          : (current <= 0 ? items.length : current) - 1;
+    items[next]?.focus();
+  }
+  return (
+    <div className="assistants-row-menu">
+      <button
+        ref={triggerRef}
+        type="button"
+        className="assistants-row-menu-trigger"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        aria-controls={menuId}
+        aria-label={`Actions for ${assistant.name}`}
+        data-assistant-action-id={assistant.id}
+        onKeyDown={onTriggerKey}
+        onClick={() => onOpenChange(!isOpen)}
+      >
+        <span aria-hidden="true" className="assistants-row-menu-dots">
+          <svg viewBox="0 0 24 24" focusable="false" fill="currentColor">
+            <circle cx="6" cy="12" r="2" />
+            <circle cx="12" cy="12" r="2" />
+            <circle cx="18" cy="12" r="2" />
+          </svg>
+        </span>
+      </button>
+      {isOpen && (
+        <div
+          ref={menuRef}
+          id={menuId}
+          role="menu"
+          aria-label={`Actions for ${assistant.name}`}
+          className="assistants-row-menu-panel"
+          onKeyDown={onMenuKey}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) onOpenChange(false);
+          }}
+        >
+          <Link
+            to={`/admin/assistants/${assistant.id}/edit`}
+            role="menuitem"
+            className="assistants-row-menu-item"
+            onClick={() => onOpenChange(false)}
+          >
+            Edit
+          </Link>
+          <button
+            type="button"
+            role="menuitem"
+            className="assistants-row-menu-item"
+            onClick={() => onChoose('status')}
+          >
+            {labels.statusLabel === 'Active' ? 'Deactivate' : 'Activate'}
+            <span className="assistants-row-menu-item-detail">
+              {labels.statusLabel === 'Active' ? 'Make unavailable' : 'Make available'}
+            </span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="assistants-row-menu-item assistants-row-menu-item-danger"
+            onClick={() => onChoose('delete')}
+          >
+            Delete
+            <span className="assistants-row-menu-item-detail">
+              Permanently remove {labels.visibilityLabel.toLowerCase()} assistant
+            </span>
+          </button>
+        </div>
+      )}
+      <span className="visually-hidden">{labels.statusToggleLabel}</span>
+    </div>
   );
 }
 
@@ -294,10 +796,12 @@ function State({
 }
 function ActionDialog({
   assistant,
+  intent,
   onClose,
   onDone,
 }: {
   assistant: Assistant;
+  intent: 'status' | 'delete';
   onClose: () => void;
   onDone: (deleted: boolean) => void;
 }) {
@@ -305,8 +809,8 @@ function ActionDialog({
   const ref = useRef<HTMLDialogElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
-  const deleting = assistant.name.startsWith('DELETE:');
-  const name = deleting ? assistant.name.slice(7) : assistant.name;
+  const deleting = intent === 'delete';
+  const name = assistant.name;
   useEffect(() => ref.current?.showModal(), []);
   async function confirm() {
     setPending(true);
