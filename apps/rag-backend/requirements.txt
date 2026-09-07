@@ -1,0 +1,6 @@
+fastapi
+openai
+psycopg[binary]
+redis
+PySBD
+uvicorn
