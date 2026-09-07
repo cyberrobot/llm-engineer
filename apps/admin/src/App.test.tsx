@@ -437,10 +437,22 @@ describe('administrator application workflows',()=>{
     expect(screen.queryByRole('menu',{name:'Actions for Legal review'})).not.toBeInTheDocument();
   });
   it('navigates to the edit route from the row-action menu',async()=>{
-    const {router}=renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0})}),'/admin/assistants');
+    const {router}=renderApp(apiWith({
+      listAssistants:vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0}),
+      getAssistant:vi.fn().mockResolvedValue({...assistant,knowledgeSourceCount:0,deletionAllowed:true}),
+    }),'/admin/assistants');
     await openAssistantActions('Legal review');
     await userEvent.click(screen.getByRole('menuitem',{name:/^Edit/}));
     expect(router.state.location.pathname).toBe(`/admin/assistants/${assistant.id}/edit`);
+    expect(await screen.findByRole('heading',{name:'Edit assistant'})).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Legal review')).toBeInTheDocument();
+  });
+  it('derives deterministic Unicode initials without duplicating the accessible assistant name',async()=>{
+    const unicodeAssistant={...assistant,name:'Юридический обзор',slug:'legal-review-cyrillic'};
+    renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[unicodeAssistant],total:1,limit:50,offset:0})}),'/admin/assistants');
+    const tile=await screen.findByText('ЮО');
+    expect(tile).toHaveAttribute('aria-hidden','true');
+    expect(screen.getAllByText('Юридический обзор')).toHaveLength(2);
   });
   it('closes the row-action menu with Escape and restores focus to its trigger',async()=>{
     renderApp(apiWith({listAssistants:vi.fn().mockResolvedValue({items:[assistant],total:1,limit:50,offset:0})}),'/admin/assistants');

@@ -127,7 +127,13 @@ test.describe('Assistants collection', () => {
     await expect(page.getByRole('cell', { name: /Updated 8 Aug 2026, 13:30/ })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     await page.getByRole('button', { name: 'Actions for Customer support' }).click();
-    await expect(page.getByRole('menu', { name: 'Actions for Customer support' })).toBeVisible();
+    const menu = page.getByRole('menu', { name: 'Actions for Customer support' });
+    await expect(menu).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    expect(await menu.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.left >= 0 && bounds.right <= window.innerWidth;
+    })).toBe(true);
     await expect(page).toHaveScreenshot('assistants-populated-mobile-linux.png', { fullPage: true });
   });
 });

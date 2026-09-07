@@ -1188,9 +1188,9 @@ dialog::backdrop {
     justify-content: flex-start;
   }
   .assistants-row-menu-panel {
-    right: auto;
-    left: 0;
-    width: max-content;
-    max-width: calc(100vw - 3rem);
+    right: 0;
+    left: auto;
+    width: min(13rem, calc(100vw - 2rem));
+    max-width: calc(100vw - 2rem);
   }
 }

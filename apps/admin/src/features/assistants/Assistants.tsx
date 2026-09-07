@@ -49,10 +49,14 @@ export function Badge({
 }
 
 function initialsFor(name: string): string {
-  const words = name.replace(/[^A-Za-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  const segmenter = new Intl.Segmenter('und', { granularity: 'grapheme' });
+  const graphemes = (value: string) => Array.from(segmenter.segment(value), ({ segment }) => segment);
+  const words = name.match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}]*/gu) ?? [];
   if (words.length === 0) return '·';
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return (words[0][0] + words[1][0]).toUpperCase();
+  const initials = words.length === 1
+    ? graphemes(words[0]!).slice(0, 2).join('')
+    : `${graphemes(words[0]!)[0]}${graphemes(words[1]!)[0]}`;
+  return graphemes(initials.toUpperCase()).slice(0, 2).join('');
 }
 
 function IdentityTile({ name }: { name: string }) {
