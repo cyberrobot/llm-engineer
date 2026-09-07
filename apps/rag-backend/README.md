@@ -12,10 +12,13 @@ timeout, and a 30-second provider timeout.
 
 `RAG_KNOWLEDGE_DATABASE_URL` is a read-only credential with access only to the RAG knowledge
 schema (`documents` and `chunks`). `RAG_AUTH_AUDIT_DATABASE_URL` is a distinct credential limited
-to administrator-session lookup plus `audit_logs` reads/inserts; it must not be granted ingestion,
+to administrator-session lookup, maintenance-state read, plus `rag.audit_logs` reads/inserts; it must not be granted ingestion,
 document, chunk, or administrator-management write privileges.
-Apply `auth_audit_role.sql` as the database owner after migrations, then grant its
+Run `RAG_MIGRATION_DATABASE_URL=... python migrations.py upgrade` from a release job, apply
+`auth_audit_role.sql` as the database owner, then grant its
 `rag_auth_audit` group role to the login used by `RAG_AUTH_AUDIT_DATABASE_URL`.
+Application startup never runs migrations. The generic backend `DATABASE_URL` is not a supported
+runtime fallback.
 
 Configuration defaults: `RAG_CHAT_MODEL=gpt-5.4-nano`,
 `RAG_AI_PROVIDER=openai`,
@@ -35,6 +38,9 @@ uvicorn main:app --app-dir apps/rag-backend --port 8001
 
 It intentionally exposes only `/health/live`, `/health/ready`, `/rag-chat`, and `/audit-logs`.
 Production routing and the RAG UI base URL remain unchanged during extraction.
+
+Deployment ordering, credential ownership, maintenance fallback, monitoring definitions, alert
+thresholds, failure isolation, and rollback are documented in [OPERATIONS.md](OPERATIONS.md).
 
 Focused tests run with `venv/bin/python -m pytest -q apps/rag-backend/tests`. PostgreSQL-backed
 contract and parity tests require the repository's disposable PostgreSQL setup and are not

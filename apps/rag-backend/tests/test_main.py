@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
@@ -11,6 +12,15 @@ import application
 import main
 from main import app, rate_windows
 from security import Authorization
+
+
+@pytest.fixture(autouse=True)
+def available_maintenance_state(monkeypatch):
+    class Maintenance:
+        def is_enabled(self, _deadline):
+            return False
+
+    monkeypatch.setattr(main, "MaintenanceRepository", Maintenance)
 
 
 def test_service_exposes_only_rag_routes():
@@ -159,7 +169,69 @@ def test_readiness_fails_when_enabled_cache_is_unavailable(monkeypatch):
     assert response.json() == {"detail": "Service unavailable"}
 
 
-def test_rag_rate_limit_matches_the_frozen_error_contract():
+def test_maintenance_mode_fails_closed_without_starting_rag_work(monkeypatch):
+    class Maintenance:
+        def is_enabled(self, _deadline):
+            return True
+
+    class Provider:
+        created = False
+
+        def __init__(self):
+            self.created = True
+
+    monkeypatch.setattr(main, "MaintenanceRepository", Maintenance)
+    monkeypatch.setattr(main, "Provider", Provider)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/rag-chat",
+            json={"message": "sensitive question"},
+            headers={"Origin": "http://localhost:5173"},
+        )
+        assert client.get("/health/live").status_code == 200
+        assert client.get("/audit-logs").status_code == 401
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": {
+            "code": "maintenance_mode",
+            "message": "The service is undergoing maintenance.",
+        }
+    }
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
+    assert Provider.created is False
+
+
+def test_unavailable_maintenance_state_fails_closed(monkeypatch):
+    class Maintenance:
+        def is_enabled(self, _deadline):
+            raise main.MaintenanceStateUnavailable
+
+    monkeypatch.setattr(main, "MaintenanceRepository", Maintenance)
+
+    with TestClient(app) as client:
+        response = client.post("/rag-chat", json={"message": "hello"})
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "maintenance_state_unavailable"
+
+
+def test_rag_rate_limit_matches_the_frozen_error_contract(monkeypatch):
+    events = []
+
+    class Logger:
+        def info(self, event, *, extra):
+            events.append((event, extra))
+
+        def warning(self, event, *, extra=None):
+            events.append((event, extra))
+
+        def error(self, event, *, extra=None):
+            events.append((event, extra))
+
+    monkeypatch.setattr(main, "logger", Logger())
     rate_windows.clear()
     with TestClient(app) as client:
         for _ in range(20):
@@ -178,6 +250,14 @@ def test_rag_rate_limit_matches_the_frozen_error_contract():
             "retry_after_seconds": 60,
         }
     }
+    assert any(event == "rate_limit_rejected" for event, _extra in events)
+    assert any(
+        event == "http_request_completed"
+        and extra["path"] == "/rag-chat"
+        and extra["status_code"] == 429
+        and extra["duration_ms"] >= 0
+        for event, extra in events
+    )
 
 
 def test_early_request_body_failure_has_a_normalized_request_id_and_no_store():

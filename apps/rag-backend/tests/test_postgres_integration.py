@@ -26,9 +26,20 @@ def postgres_schema(monkeypatch):
             pytest.fail("DATABASE_URL is required for extracted RAG PostgreSQL tests")
         pytest.skip("DATABASE_URL is not configured")
     schema = f"rag_backend_{uuid4().hex}"
+    created_rag_schema = False
     try:
         with psycopg.connect(database_url, connect_timeout=2) as connection:
             connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            if connection.execute("SELECT to_regnamespace('rag')").fetchone()[0]:
+                if required:
+                    pytest.fail(
+                        "RAG PostgreSQL tests require a clean disposable database"
+                    )
+                pytest.skip(
+                    "rag schema already exists; refusing destructive test setup"
+                )
+            connection.execute("CREATE SCHEMA rag")
+            created_rag_schema = True
             connection.execute(
                 sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema))
             )
@@ -48,7 +59,7 @@ def postgres_schema(monkeypatch):
                 access_roles jsonb NOT NULL, assistant_id uuid NOT NULL)"""
             )
             connection.execute(
-                """CREATE TABLE audit_logs (
+                """CREATE TABLE rag.audit_logs (
                 id bigserial PRIMARY KEY, timestamp timestamptz NOT NULL,
                 user_role text NOT NULL, question text NOT NULL, queries jsonb NOT NULL,
                 reply jsonb NOT NULL, retrieved_chunks jsonb NOT NULL,
@@ -65,6 +76,12 @@ def postgres_schema(monkeypatch):
                 token_hash text NOT NULL, revoked_at timestamptz,
                 expires_at timestamptz NOT NULL)"""
             )
+            connection.execute(
+                """CREATE TABLE operations_runtime_state (
+                singleton boolean PRIMARY KEY DEFAULT TRUE CHECK(singleton),
+                maintenance_enabled boolean NOT NULL DEFAULT FALSE)"""
+            )
+            connection.execute("INSERT INTO operations_runtime_state DEFAULT VALUES")
 
         @contextmanager
         def connection_factory(*_args, **_kwargs):
@@ -87,6 +104,8 @@ def postgres_schema(monkeypatch):
                     sql.Identifier(schema)
                 )
             )
+            if created_rag_schema:
+                connection.execute("DROP SCHEMA rag CASCADE")
 
 
 def test_extracted_repository_enforces_assistant_role_state_and_ranking(
@@ -248,18 +267,19 @@ def test_auth_audit_role_allows_required_operations_and_denies_unrelated_access(
 
     assert execute_as_role("SELECT id,role,status FROM administrators") == []
     inserted = execute_as_role(
-        """INSERT INTO audit_logs
+        """INSERT INTO rag.audit_logs
         (timestamp,user_role,question,queries,reply,retrieved_chunks,
          reranked_chunks,evaluation,metrics)
         VALUES (%s,'doctor','allowed','[]','{}','[]','[]','{}','{}') RETURNING id""",
         (datetime.now(timezone.utc),),
     )
     assert inserted[0][0] > 0
-    assert execute_as_role("SELECT question FROM audit_logs") == [("allowed",)]
+    assert execute_as_role("SELECT question FROM rag.audit_logs") == [("allowed",)]
 
     for forbidden in (
         "UPDATE administrators SET status='inactive'",
         "DELETE FROM administrator_sessions",
+        "UPDATE operations_runtime_state SET maintenance_enabled=TRUE",
         "SELECT id FROM documents",
         (
             "INSERT INTO documents (id,assistant_id,retrieval_state) "

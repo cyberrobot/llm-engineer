@@ -136,13 +136,17 @@ jobs:
           cache-dependency-path: apps/rag-backend/requirements.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest ruff mypy
+        run: pip install -r requirements.txt -r ../backend/requirements.txt pytest ruff mypy
 
       - name: Run focused RAG backend tests
         run: pytest -q tests
 
       - name: Run extracted-service PostgreSQL tests without skips
-        run: pytest -q -o "addopts=" --strict-markers tests/test_postgres_integration.py
+        run: >-
+          pytest -q -o "addopts=" --strict-markers
+          tests/test_postgres_integration.py
+          tests/test_migrations.py
+          tests/test_cross_service_contract.py
 
       - name: Verify extracted-service import boundary
         run: pytest -q tests/test_import_boundary.py
@@ -152,3 +156,7 @@ jobs:
 
       - name: Type check
         run: mypy .
+
+      - name: Build standalone RAG image
+        working-directory: ${{ github.workspace }}
+        run: docker build -t llm-engineer-rag-backend apps/rag-backend

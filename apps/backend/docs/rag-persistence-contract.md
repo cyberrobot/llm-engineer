@@ -55,3 +55,12 @@ real retrieval, and denied document, chunk, ingestion-job, administrative, and s
 test database user cannot create roles or emulate login authentication, that test skips with the
 PostgreSQL permission error; deployment validation must then apply the SQL as the database owner and
 repeat the topology and grant checks.
+
+## Standalone service ownership
+
+`apps/backend` remains the only migration owner for `documents`, `chunks`, their indexes and
+text-search trigger, and the legacy `public.audit_logs`. `apps/rag-backend` consumes knowledge with
+the `rag_reader` contract and independently owns only `rag.schema_migrations` and
+`rag.audit_logs`. Neither application migrates the other's audit store, and migration-owner
+credentials are never runtime credentials. See `apps/rag-backend/OPERATIONS.md` for deployment and
+rollback order.
