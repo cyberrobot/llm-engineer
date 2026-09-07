@@ -17,7 +17,10 @@ from infrastructure import (
     auth_audit_connection,
     knowledge_connection,
 )
+from logging_config import initialize_logging, request_id_context
 from security import effective_role, require_admin
+
+logger = initialize_logging()
 
 
 @asynccontextmanager
@@ -54,6 +57,7 @@ async def correlation(request: Request, call_next):
     except (ValueError, AttributeError):
         request_id = str(uuid4())
     request.state.request_id = request_id
+    request_id_context.set(request_id)
 
     def early_response(
         status_code: int, content: str, *, retry_after: str | None = None
@@ -121,6 +125,7 @@ def ready():
             raise RuntimeError("Redis unavailable")
         return {"status": "ok"}
     except Exception as exc:
+        logger.error("readiness_check_failed", extra={"error_type": type(exc).__name__})
         raise HTTPException(503, detail="Service unavailable") from exc
 
 
@@ -171,12 +176,14 @@ async def chat(request: Request, response: Response, body: RagChatRequest):
                 await commit
             raise
     except (asyncio.TimeoutError, RequestTimedOut) as exc:
+        logger.warning("rag_chat_timed_out")
         raise HTTPException(
             504, detail="Request timed out", headers={"Cache-Control": "no-store"}
         ) from exc
     except HTTPException:
         raise
     except Exception as exc:
+        logger.error("rag_chat_failed", extra={"error_type": type(exc).__name__})
         raise HTTPException(
             500, detail="Internal server error", headers={"Cache-Control": "no-store"}
         ) from exc
@@ -189,6 +196,7 @@ def audit(request: Request, response: Response, limit: int = Query(10, ge=1, le=
     try:
         return request.app.state.audit.list(limit)
     except Exception as exc:
+        logger.error("audit_log_read_failed", extra={"error_type": type(exc).__name__})
         raise HTTPException(
             500, detail="Internal server error", headers={"Cache-Control": "no-store"}
         ) from exc

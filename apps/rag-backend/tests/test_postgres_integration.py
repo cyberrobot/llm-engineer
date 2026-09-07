@@ -268,3 +268,39 @@ def test_auth_audit_role_allows_required_operations_and_denies_unrelated_access(
     ):
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             execute_as_role(forbidden)
+
+
+def test_rag_reader_role_allows_knowledge_reads_and_denies_all_writes(postgres_schema):
+    repository_root = Path(__file__).parents[3]
+    role_sql = (
+        repository_root / "apps/backend/infrastructure/database/rag_read_role.sql"
+    ).read_text()
+    with postgres_schema() as connection:
+        schema = connection.execute("SELECT current_schema()").fetchone()[0]
+        scoped_sql = role_sql.replace("public.", f'"{schema}".').replace(
+            "SCHEMA public", f'SCHEMA "{schema}"'
+        )
+        connection.execute(scoped_sql)
+
+    def execute_as_role(statement):
+        with postgres_schema() as connection:
+            connection.execute("SET ROLE rag_reader")
+            return connection.execute(statement).fetchall()
+
+    assert execute_as_role("SELECT id FROM documents") == []
+    assert execute_as_role("SELECT id FROM chunks") == []
+    for forbidden in (
+        f"INSERT INTO documents VALUES ('denied','{uuid4()}','enabled')",
+        "UPDATE documents SET retrieval_state='disabled'",
+        "DELETE FROM documents",
+        (
+            "INSERT INTO chunks (id,doc_id,text,embedding,access_roles,assistant_id) "
+            "VALUES ('denied','missing','text','[1,0]','[]',"
+            "'00000000-0000-0000-0000-000000000000')"
+        ),
+        "UPDATE chunks SET text='denied'",
+        "DELETE FROM chunks",
+        "SELECT id FROM administrators",
+    ):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            execute_as_role(forbidden)

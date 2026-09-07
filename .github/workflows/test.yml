@@ -144,6 +144,9 @@ jobs:
       - name: Run extracted-service PostgreSQL tests without skips
         run: pytest -q -o "addopts=" --strict-markers tests/test_postgres_integration.py
 
+      - name: Verify extracted-service import boundary
+        run: pytest -q tests/test_import_boundary.py
+
       - name: Lint and format check
         run: ruff check . && ruff format --check .
 
