@@ -2,8 +2,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 
-from config import settings
 from fastapi import HTTPException, Request
+
+from config import settings
 from infrastructure import auth_audit_connection
 
 PERMITTED_ROLES = ("doctor", "nurse", "analyst", "manager", "agent")

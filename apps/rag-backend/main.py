@@ -4,11 +4,12 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager, suppress
 from uuid import UUID, uuid4
 
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+
 from application import RequestTimedOut, commit_rag_chat_outcome, prepare_rag_chat
 from config import settings
 from contracts import RagChatRequest, RagChatResponse
-from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
 from infrastructure import (
     AuditRepository,
     Cache,

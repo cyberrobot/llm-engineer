@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import pysbd  # type: ignore[import-untyped]
+
 from config import settings
 from domain import REDMOOR_ASSISTANT_ID, RequestTimedOut
 

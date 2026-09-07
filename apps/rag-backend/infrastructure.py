@@ -8,9 +8,10 @@ from typing import Any, cast
 
 import psycopg
 import redis
+from openai import OpenAI
+
 from config import settings
 from domain import RequestTimedOut
-from openai import OpenAI
 
 
 def _remaining_milliseconds(deadline: float | None) -> int:
