@@ -8,10 +8,15 @@ BEGIN
         CREATE ROLE rag_reader
             NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT
             NOREPLICATION NOBYPASSRLS;
-    ELSE
-        ALTER ROLE rag_reader
-            NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT
-            NOREPLICATION NOBYPASSRLS;
+    ELSIF EXISTS (
+        SELECT 1 FROM pg_roles
+        WHERE rolname = 'rag_reader'
+          AND (
+              rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole
+              OR rolreplication OR rolbypassrls
+          )
+    ) THEN
+        RAISE EXCEPTION 'rag_reader has forbidden elevated attributes';
     END IF;
 END
 $$;

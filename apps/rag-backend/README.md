@@ -14,11 +14,14 @@ timeout, and a 30-second provider timeout.
 schema (`documents` and `chunks`). `RAG_AUTH_AUDIT_DATABASE_URL` is a distinct credential limited
 to administrator-session lookup, maintenance-state read, plus `rag.audit_logs` reads/inserts; it must not be granted ingestion,
 document, chunk, or administrator-management write privileges.
-Run `RAG_MIGRATION_DATABASE_URL=... python migrations.py upgrade` from a release job, apply
-`auth_audit_role.sql` as the database owner, then grant its
+As the database/bootstrap owner, apply `migration_owner_role.sql`, create a separate migration
+LOGIN that inherits `rag_migrator`, and run
+`RAG_MIGRATION_DATABASE_URL=... python migrations.py upgrade` from a release job. Then apply
+`auth_audit_role.sql` as the bootstrap owner and grant its
 `rag_auth_audit` group role to the login used by `RAG_AUTH_AUDIT_DATABASE_URL`.
-Application startup never runs migrations. The generic backend `DATABASE_URL` is not a supported
-runtime fallback.
+Migration objects are owned by the NOLOGIN `rag_migrator` role, while the migration LOGIN has no
+knowledge-table access. Application startup never runs migrations or DDL. The generic backend
+`DATABASE_URL` is not a supported runtime fallback.
 
 Configuration defaults: `RAG_CHAT_MODEL=gpt-5.4-nano`,
 `RAG_AI_PROVIDER=openai`,

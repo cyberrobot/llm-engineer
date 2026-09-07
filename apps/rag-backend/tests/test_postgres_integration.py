@@ -38,7 +38,10 @@ def postgres_schema(monkeypatch):
                 pytest.skip(
                     "rag schema already exists; refusing destructive test setup"
                 )
-            connection.execute("CREATE SCHEMA rag")
+            migration_owner_sql = (
+                Path(__file__).parents[1] / "migration_owner_role.sql"
+            ).read_text()
+            connection.execute(migration_owner_sql)
             created_rag_schema = True
             connection.execute(
                 sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema))
@@ -58,6 +61,7 @@ def postgres_schema(monkeypatch):
                 (to_tsvector('english', text)) STORED, embedding vector(2) NOT NULL,
                 access_roles jsonb NOT NULL, assistant_id uuid NOT NULL)"""
             )
+            connection.execute("SET LOCAL ROLE rag_migrator")
             connection.execute(
                 """CREATE TABLE rag.audit_logs (
                 id bigserial PRIMARY KEY, timestamp timestamptz NOT NULL,
@@ -66,6 +70,7 @@ def postgres_schema(monkeypatch):
                 reranked_chunks jsonb NOT NULL, evaluation jsonb NOT NULL,
                 metrics jsonb NOT NULL)"""
             )
+            connection.execute("RESET ROLE")
             connection.execute(
                 """CREATE TABLE administrators (
                 id uuid PRIMARY KEY, role text NOT NULL, status text NOT NULL)"""

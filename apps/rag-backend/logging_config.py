@@ -16,6 +16,7 @@ class JsonFormatter(logging.Formatter):
 
     _fields = (
         "operation",
+        "outcome",
         "path",
         "status_code",
         "duration_ms",

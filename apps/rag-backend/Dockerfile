@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY application.py config.py contracts.py domain.py infrastructure.py logging_config.py main.py migrations.py security.py ./
+COPY application.py config.py contracts.py domain.py infrastructure.py logging_config.py main.py migrations.py migration_owner_role.sql auth_audit_role.sql security.py ./
 COPY prompts ./prompts
 
 RUN useradd --create-home --uid 10001 rag && chown -R rag:rag /app

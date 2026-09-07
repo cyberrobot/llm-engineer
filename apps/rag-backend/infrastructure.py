@@ -318,6 +318,8 @@ class Provider:
 
     def _call(self, operation: str, value: str, deadline: float | None):
         started = time.perf_counter()
+        outcome = "success"
+        failure_category = None
         try:
             client = self.client.with_options(
                 timeout=_remaining_seconds(deadline, settings.provider_timeout_seconds)
@@ -334,15 +336,31 @@ class Provider:
                 model=settings.chat_model, input=value
             ).output_text.strip()
         except Exception as exc:
+            failure_category = _failure_category(exc)
+            outcome = (
+                "timeout"
+                if failure_category in {"provider_timeout", "deadline_timeout"}
+                else "failure"
+            )
             logger.error(
                 "provider_request_failed",
                 extra={
                     "operation": operation,
-                    "failure_category": _failure_category(exc),
+                    "failure_category": failure_category,
                     "duration_ms": round((time.perf_counter() - started) * 1000, 3),
                 },
             )
             raise
+        finally:
+            logger.info(
+                "provider_request_completed",
+                extra={
+                    "operation": operation,
+                    "outcome": outcome,
+                    "failure_category": failure_category,
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                },
+            )
 
     def close(self) -> None:
         self.client.close()

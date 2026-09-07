@@ -9,6 +9,10 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 import migrations
 
+MIGRATION_OWNER_SQL = (
+    Path(__file__).parents[1] / "migration_owner_role.sql"
+).read_text()
+
 
 def _database_url() -> str:
     value = os.getenv("DATABASE_URL")
@@ -28,9 +32,15 @@ def _require_clean_database(database_url: str) -> None:
             pytest.skip("rag schema already exists; refusing destructive test setup")
 
 
+def _install_migration_owner(database_url: str) -> None:
+    with psycopg.connect(database_url) as connection:
+        connection.execute(MIGRATION_OWNER_SQL)
+
+
 def test_upgrade_is_versioned_repeatable_and_does_not_touch_backend_tables():
     database_url = _database_url()
     _require_clean_database(database_url)
+    _install_migration_owner(database_url)
     with psycopg.connect(database_url) as connection:
         connection.execute(
             "CREATE TABLE IF NOT EXISTS public.rag_migration_ownership_sentinel (id integer)"
@@ -59,6 +69,10 @@ def test_upgrade_is_versioned_repeatable_and_does_not_touch_backend_tables():
             "SELECT to_regclass('rag.audit_logs_timestamp_idx')"
         ).fetchone()[0]
         assert connection.execute(
+            """SELECT tableowner FROM pg_tables
+            WHERE schemaname='rag' AND tablename='audit_logs'"""
+        ).fetchone() == ("rag_migrator",)
+        assert connection.execute(
             "SELECT to_regclass('public.rag_migration_ownership_sentinel')"
         ).fetchone()[0]
         assert connection.execute(
@@ -74,6 +88,7 @@ def test_upgrade_is_versioned_repeatable_and_does_not_touch_backend_tables():
 def test_failed_migration_rolls_back_schema_and_version(monkeypatch):
     database_url = _database_url()
     _require_clean_database(database_url)
+    _install_migration_owner(database_url)
 
     monkeypatch.setattr(
         migrations,

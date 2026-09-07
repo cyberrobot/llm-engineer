@@ -33,7 +33,7 @@ def upgrade(database_url: str) -> list[str]:
     """Apply pending RAG migrations in one transaction per invocation."""
     applied: list[str] = []
     with psycopg.connect(database_url) as connection:
-        connection.execute("CREATE SCHEMA IF NOT EXISTS rag")
+        connection.execute("SET LOCAL ROLE rag_migrator")
         connection.execute(
             """CREATE TABLE IF NOT EXISTS rag.schema_migrations (
                 version TEXT PRIMARY KEY,
@@ -60,6 +60,7 @@ def upgrade(database_url: str) -> list[str]:
 def status(database_url: str) -> list[str]:
     """Return applied migration versions without changing database state."""
     with psycopg.connect(database_url) as connection:
+        connection.execute("SET LOCAL ROLE rag_migrator")
         relation = connection.execute(
             "SELECT to_regclass('rag.schema_migrations')"
         ).fetchone()

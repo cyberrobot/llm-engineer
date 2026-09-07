@@ -7,10 +7,14 @@ indexes/triggers, administrator/session tables, `public.operations_runtime_state
 `public.audit_logs`. The standalone service consumes knowledge through the backend-owned
 `rag_reader` group and never runs backend migrations.
 
-`apps/rag-backend` is the sole migration owner for `rag.schema_migrations` and `rag.audit_logs`.
-Run `python migrations.py upgrade` in a release job with `RAG_MIGRATION_DATABASE_URL`; normal
-`uvicorn` startup never migrates. The migration login needs ownership/DDL rights only for `rag` and
-must not be supplied to the runtime service. Run `python migrations.py status` to inspect state.
+`rag_migrator` is the NOLOGIN owner of `rag`, `rag.schema_migrations`, and `rag.audit_logs`.
+A database/bootstrap owner applies `migration_owner_role.sql` once. A separate deployment-only
+LOGIN inherits `rag_migrator` and is supplied through `RAG_MIGRATION_DATABASE_URL`; the migration
+command explicitly assumes the owner role so objects never belong to the LOGIN. The owner role can
+create objects only in `rag` and has no access to backend knowledge tables. Normal `uvicorn` startup
+never migrates or performs DDL. Run `python migrations.py status` with the same deployment-only
+credential to inspect state. The bootstrap owner needs `CREATEROLE`; when reusing an existing
+cluster-wide group role, it must also hold that role with `ADMIN OPTION`.
 
 Runtime secrets are `RAG_KNOWLEDGE_DATABASE_URL` (a login inheriting only `rag_reader`),
 `RAG_AUTH_AUDIT_DATABASE_URL` (a login inheriting only `rag_auth_audit`),
@@ -30,16 +34,21 @@ non-destructive copy job with counts/checkpoints; it must never run during appli
 
 ## Deployment order
 
-1. Run the normal backend migration and verify `public.documents`/`public.chunks`.
-2. Apply `apps/backend/infrastructure/database/rag_read_role.sql` and verify effective privileges
-   through the actual knowledge runtime login.
-3. Run `RAG_MIGRATION_DATABASE_URL=... python migrations.py upgrade` as the RAG migration owner.
-4. Apply `auth_audit_role.sql` and verify effective privileges through the actual auth/audit login.
-5. Build `docker build -t llm-engineer-rag-backend apps/rag-backend` and deploy that image with only
+1. As the database/bootstrap owner, run the normal backend migration and verify
+   `public.documents`/`public.chunks`.
+2. As that owner, apply `apps/backend/infrastructure/database/rag_read_role.sql` and
+   `apps/rag-backend/migration_owner_role.sql`.
+3. Create distinct LOGIN roles for migration, knowledge reads, and auth/audit. Grant the migration
+   LOGIN only `rag_migrator`, and grant the knowledge LOGIN only `rag_reader`.
+4. Run `RAG_MIGRATION_DATABASE_URL=... python migrations.py upgrade` with the migration LOGIN.
+   Verify `rag` objects are owned by `rag_migrator`, not by that LOGIN.
+5. As the bootstrap owner, apply `auth_audit_role.sql`, then grant only `rag_auth_audit` to the
+   auth/audit LOGIN. Verify effective privileges through all three actual logins.
+6. Build `docker build -t llm-engineer-rag-backend apps/rag-backend` and deploy that image with only
    runtime settings/secrets. Configure the traffic health check as `/health/ready`.
-6. Verify `/health/live`, then `/health/ready`, then authenticated staging chat/audit behavior.
-7. Verify structured events reach the dashboard and exercise alert test notifications.
-8. Leave production routing unchanged unless a separate cutover explicitly authorizes it.
+7. Verify `/health/live`, then `/health/ready`, then authenticated staging chat/audit behavior.
+8. Verify structured events reach the dashboard and exercise alert test notifications.
+9. Leave production routing unchanged unless a separate cutover explicitly authorizes it.
 
 The repository contains no Railway service manifest, gateway configuration, or monitoring-as-code.
 Those settings are deployment-managed. This change therefore uses the application fallback for
@@ -49,10 +58,13 @@ remains its only writer.
 ## Telemetry, dashboard, and alerts
 
 The service emits JSON logs with `service=rag-backend`, a stable event, safe low-cardinality fields,
-duration, status, and request ID. It never emits prompts, questions, answers, chunks, embeddings,
-cookies, credentials, database URLs, SQL, provider payloads, or raw exceptions. Stable events are
-`http_request_completed`, `provider_request_failed`, `retrieval_failed`, `rate_limit_rejected`,
-`audit_write_failed`, `readiness_check_failed`, `rag_chat_timed_out`, and `rag_chat_failed`.
+duration, status, and request ID. Every provider attempt emits `provider_request_completed` with
+`operation`, `outcome` (`success`, `timeout`, or `failure`), `failure_category` when applicable, and
+`duration_ms`, providing a denominator for rate calculations. It never emits prompts, questions,
+answers, chunks, embeddings, cookies, credentials, database URLs, SQL, provider payloads, or raw
+exceptions. Stable events are `http_request_completed`, `provider_request_completed`,
+`provider_request_failed`, `retrieval_failed`, `rate_limit_rejected`, `audit_write_failed`,
+`readiness_check_failed`, `rag_chat_timed_out`, and `rag_chat_failed`.
 
 Deployment owners must create dashboard **RAG Backend Operations** in the platform-managed
 monitoring workspace, filtered by `service="rag-backend"`:
@@ -61,18 +73,20 @@ monitoring workspace, filtered by `service="rag-backend"`:
 | --- | --- |
 | Request volume/status | count `http_request_completed`, grouped by `path,status_code` |
 | Chat p50/p95/p99 | percentile `duration_ms` where `path="/rag-chat"` |
-| OpenAI failures/timeouts | rate `provider_request_failed`, grouped by `operation,failure_category` |
+| Provider volume/outcomes | count `provider_request_completed`, grouped by `operation,outcome,failure_category` |
 | Retrieval failures | rate `retrieval_failed`, grouped by `failure_category` |
 | Rate limiting | count `rate_limit_rejected`, grouped by `path` |
 | Audit failures | count `audit_write_failed`, grouped by `failure_category` |
 | Availability | count `readiness_check_failed` plus deployment-ready instance count |
 
 No production baseline is stored in the repository. Start with conservative five-minute alerts:
-p95 chat latency above 10 seconds with at least 20 chats; provider failures/timeouts above 10% with
-at least 20 provider operations; at least 5 retrieval failures; at least 100 rate-limit rejections;
-at least 2 audit-write failures; and readiness unavailable continuously for 5 minutes. The platform
-operations owner must tune these after seven days of staging data. This document is a configuration
-contract, not evidence that deployment-managed dashboards or alerts are installed.
+p95 chat latency above 10 seconds with at least 20 chats; provider failure/timeout completions
+divided by all provider completions above 10% with at least 20 provider operations; at least 5
+retrieval failures; at least 100 rate-limit rejections; at least 2 audit-write failures; and
+readiness unavailable continuously for 5 minutes. The platform operations owner must tune these
+after seven days of staging data. This document is a configuration contract. The repository and
+this PR do not install or verify deployment-managed dashboards, alert rules, or notification
+delivery; those remain an explicit external deployment follow-up.
 
 ## Rollback
 

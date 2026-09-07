@@ -12,6 +12,9 @@ class RecordingLogger:
     def error(self, event, *, extra):
         self.events.append((event, extra))
 
+    def info(self, event, *, extra):
+        self.events.append((event, extra))
+
 
 @contextmanager
 def unavailable_connection(*_args, **_kwargs):
@@ -52,16 +55,27 @@ def test_retrieval_and_audit_failures_emit_separate_safe_events(monkeypatch):
     assert all("sensitive" not in repr(extra) for _event, extra in logger.events)
 
 
-def test_provider_timeout_identifies_operation_without_logging_input(monkeypatch):
+def test_successful_provider_operations_emit_denominator_events(monkeypatch):
     logger = RecordingLogger()
-    timeout_error = type("APITimeoutError", (Exception,), {})
+
+    class EmbeddingResult:
+        def __init__(self):
+            self.data = [type("Datum", (), {"embedding": [1.0]})()]
+
+    class TextResult:
+        output_text = " answer "
 
     class Embeddings:
         def create(self, **_kwargs):
-            raise timeout_error("sensitive provider payload")
+            return EmbeddingResult()
+
+    class Responses:
+        def create(self, **_kwargs):
+            return TextResult()
 
     class Client:
         embeddings = Embeddings()
+        responses = Responses()
 
         def with_options(self, **_kwargs):
             return self
@@ -70,17 +84,66 @@ def test_provider_timeout_identifies_operation_without_logging_input(monkeypatch
     provider.client = Client()
     monkeypatch.setattr(infrastructure, "logger", logger)
 
-    with pytest.raises(timeout_error):
-        provider.embedding("sensitive embedding input")
+    assert provider.embedding("sensitive embedding input") == [1.0]
+    assert provider.text("sensitive prompt") == "answer"
 
-    assert logger.events == [
-        (
-            "provider_request_failed",
-            {
-                "operation": "embedding",
-                "failure_category": "provider_timeout",
-                "duration_ms": logger.events[0][1]["duration_ms"],
-            },
-        )
+    assert [
+        (event, extra["operation"], extra["outcome"]) for event, extra in logger.events
+    ] == [
+        ("provider_request_completed", "embedding", "success"),
+        ("provider_request_completed", "text_generation", "success"),
     ]
+    assert all(extra["duration_ms"] >= 0 for _event, extra in logger.events)
+    assert "sensitive" not in repr(logger.events)
+
+
+@pytest.mark.parametrize(
+    ("operation", "error_name", "expected_outcome", "expected_category"),
+    [
+        ("embedding", "APITimeoutError", "timeout", "provider_timeout"),
+        ("text_generation", "ProviderError", "failure", "operation_failed"),
+    ],
+)
+def test_failed_provider_operations_emit_outcome_and_safe_category(
+    monkeypatch, operation, error_name, expected_outcome, expected_category
+):
+    logger = RecordingLogger()
+    provider_error = type(error_name, (Exception,), {})
+
+    class Embeddings:
+        def create(self, **_kwargs):
+            raise provider_error("sensitive provider payload")
+
+    class Responses:
+        def create(self, **_kwargs):
+            raise provider_error("sensitive provider payload")
+
+    class Client:
+        embeddings = Embeddings()
+        responses = Responses()
+
+        def with_options(self, **_kwargs):
+            return self
+
+    provider = object.__new__(infrastructure.Provider)
+    provider.client = Client()
+    monkeypatch.setattr(infrastructure, "logger", logger)
+
+    with pytest.raises(provider_error):
+        if operation == "embedding":
+            provider.embedding("sensitive embedding input")
+        else:
+            provider.text("sensitive prompt")
+
+    assert [event for event, _extra in logger.events] == [
+        "provider_request_failed",
+        "provider_request_completed",
+    ]
+    assert logger.events[0][1]["operation"] == operation
+    assert logger.events[0][1]["failure_category"] == expected_category
+    completion = logger.events[1][1]
+    assert completion["operation"] == operation
+    assert completion["outcome"] == expected_outcome
+    assert completion["failure_category"] == expected_category
+    assert completion["duration_ms"] >= 0
     assert "sensitive" not in repr(logger.events)
