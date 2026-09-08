@@ -110,3 +110,4 @@ def test_failed_migration_rolls_back_schema_and_version(monkeypatch):
             ).fetchone()[0]
             is None
         )
+        connection.execute("DROP SCHEMA rag CASCADE")
