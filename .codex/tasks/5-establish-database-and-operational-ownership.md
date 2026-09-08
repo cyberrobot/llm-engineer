@@ -233,6 +233,33 @@ Operational ownership must also become explicit:
 - deployment and rollback are documented and reproducible;
 - failure of `rag-backend` cannot impair ingestion or administrator APIs.
 
+## Delivery split
+
+PR #99 completes the repository-verifiable scope of this task:
+
+- database ownership boundaries and least-privilege credentials;
+- RAG-owned audit migrations while leaving `public.audit_logs` unchanged;
+- backend-owned maintenance behaviour shared by both traffic paths;
+- liveness and readiness implementation;
+- structured, safe operational telemetry;
+- dashboard query and alert threshold definitions;
+- deployment instructions and the rollback runbook;
+- PostgreSQL topology, cross-service maintenance, failure-isolation, and observability tests.
+
+The deployment-managed acceptance work is explicitly deferred to
+`.codex/tasks/6-verify-rag-deployment-and-operational-monitoring.md`. That task must verify in the
+actual environment:
+
+- `/health/ready` is configured as the deployed traffic health check;
+- the **RAG Backend Operations** dashboard is installed;
+- real staging telemetry reaches that dashboard;
+- the documented alert rules are installed and notification delivery works;
+- the rollback runbook has been exercised without destructive database rollback;
+- the final deployment, monitoring location, and operational owner are recorded.
+
+This split does not mark those environment-dependent criteria complete or weaken their required
+behaviour. PR #99 must not be cited as evidence that they were operationally verified.
+
 ## Current architecture
 
 `apps/backend` currently calls `init_db()` during startup when `DATABASE_URL` is configured.
@@ -976,13 +1003,13 @@ Update `docs/architecture/repository-map.md` if required so future changes do no
 - [ ] Retrieval failures are observable.
 - [ ] Rate-limit rejections are observable.
 - [ ] Audit-write failures are observable.
-- [ ] Required dashboard panels exist in the production/staging monitoring system.
-- [ ] Required alerts exist and have documented thresholds.
+- [ ] Deferred to PR 6: required dashboard panels exist in the staging/production monitoring system.
+- [ ] Deferred to PR 6: required alerts are installed with the documented thresholds.
 - [ ] Operational telemetry contains no prompts, user questions, document/chunk contents, credentials or raw provider payloads.
 - [ ] `rag-backend` has independent deployment/build configuration.
-- [ ] Deployment uses `/health/ready` as its traffic readiness check.
+- [ ] Deferred to PR 6: the actual deployment uses `/health/ready` as its traffic readiness check.
 - [ ] Deployment instructions distinguish runtime credentials from migration credentials.
-- [ ] A rollback runbook exists.
+- [ ] A rollback runbook exists; exercising it in staging is deferred to PR 6.
 - [ ] RAG deployment rollback does not require reverting backend knowledge migrations.
 - [ ] `apps/backend` starts and operates when `rag-backend` is unavailable.
 - [ ] Ingestion continues when `rag-backend` is unavailable.
