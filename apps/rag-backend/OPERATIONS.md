@@ -13,8 +13,10 @@ LOGIN inherits `rag_migrator` and is supplied through `RAG_MIGRATION_DATABASE_UR
 command explicitly assumes the owner role so objects never belong to the LOGIN. The owner role can
 create objects only in `rag` and has no access to backend knowledge tables. Normal `uvicorn` startup
 never migrates or performs DDL. Run `python migrations.py status` with the same deployment-only
-credential to inspect state. The bootstrap owner needs `CREATEROLE`; when reusing an existing
-cluster-wide group role, it must also hold that role with `ADMIN OPTION`.
+credential to inspect state. For a non-superuser database/bootstrap owner, a cluster role
+administrator must first create the group role with the attributes in `migration_owner_role.sql`
+and grant `rag_migrator` to the bootstrap owner with `ADMIN OPTION`. This one-time cluster role
+provisioning does not grant the migration LOGIN any runtime access.
 
 Runtime secrets are `RAG_KNOWLEDGE_DATABASE_URL` (a login inheriting only `rag_reader`),
 `RAG_AUTH_AUDIT_DATABASE_URL` (a login inheriting only `rag_auth_audit`),
@@ -36,7 +38,9 @@ non-destructive copy job with counts/checkpoints; it must never run during appli
 
 1. As the database/bootstrap owner, run the normal backend migration and verify
    `public.documents`/`public.chunks`.
-2. As that owner, apply `apps/backend/infrastructure/database/rag_read_role.sql` and
+2. Have the cluster role administrator provision `rag_migrator` and grant it to the non-superuser
+   database/bootstrap owner with `ADMIN OPTION`. As that bootstrap owner, apply
+   `apps/backend/infrastructure/database/rag_read_role.sql` and
    `apps/rag-backend/migration_owner_role.sql`.
 3. Create distinct LOGIN roles for migration, knowledge reads, and auth/audit. Grant the migration
    LOGIN only `rag_migrator`, and grant the knowledge LOGIN only `rag_reader`.

@@ -1,5 +1,7 @@
--- Run once as the database/bootstrap owner. The bootstrap owner needs CREATEROLE
--- but does not need to be a superuser. Deployment creates a separate LOGIN role,
+-- Run once as the database/bootstrap owner. For a non-superuser bootstrap owner,
+-- a cluster role administrator must first create rag_migrator with the attributes
+-- below and grant it to the bootstrap owner WITH ADMIN OPTION. A superuser can use
+-- this script to create it directly. Deployment creates a separate LOGIN role,
 -- grants it membership in rag_migrator, and supplies that login only through
 -- RAG_MIGRATION_DATABASE_URL.
 DO $$

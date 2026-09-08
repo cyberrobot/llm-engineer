@@ -48,6 +48,14 @@ def _separate_role_database(admin_url: str):
                 sql.Identifier(bootstrap_login), sql.Literal(password)
             )
         )
+        if not connection.execute(
+            "SELECT 1 FROM pg_roles WHERE rolname='rag_migrator'"
+        ).fetchone():
+            connection.execute(
+                """CREATE ROLE rag_migrator
+                NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT
+                NOREPLICATION NOBYPASSRLS"""
+            )
         connection.execute(
             sql.SQL("CREATE DATABASE {} OWNER {}").format(
                 sql.Identifier(database), sql.Identifier(bootstrap_login)
@@ -84,6 +92,7 @@ def _separate_role_database(admin_url: str):
         yield (
             urls,
             {
+                "bootstrap": bootstrap_login,
                 "migration": migration_login,
                 "reader": reader_login,
                 "auth": auth_login,
@@ -231,6 +240,27 @@ def test_separate_ownership_topology_and_cross_service_maintenance_http(monkeypa
             assert owners == {
                 "audit_logs": "rag_migrator",
                 "schema_migrations": "rag_migrator",
+            }
+            role_capabilities = {
+                row[0]: row[1:]
+                for row in connection.execute(
+                    """SELECT rolname,rolcanlogin,rolsuper,rolcreatedb,rolcreaterole
+                    FROM pg_roles WHERE rolname = ANY(%s)""",
+                    (
+                        [
+                            roles["bootstrap"],
+                            roles["migration"],
+                            roles["reader"],
+                            roles["auth"],
+                        ],
+                    ),
+                ).fetchall()
+            }
+            assert role_capabilities == {
+                roles["bootstrap"]: (True, False, False, True),
+                roles["migration"]: (True, False, False, False),
+                roles["reader"]: (True, False, False, False),
+                roles["auth"]: (True, False, False, False),
             }
             legacy_audit_count = connection.execute(
                 "SELECT count(*) FROM public.audit_logs"
