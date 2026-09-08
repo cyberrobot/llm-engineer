@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import time
 from collections.abc import Sequence
@@ -12,6 +13,20 @@ from openai import OpenAI
 
 from config import settings
 from domain import RequestTimedOut
+
+logger = logging.getLogger("rag_backend")
+
+
+def _failure_category(exc: Exception) -> str:
+    if isinstance(exc, RequestTimedOut):
+        return "deadline_timeout"
+    if isinstance(exc, psycopg.errors.QueryCanceled):
+        return "database_timeout"
+    if isinstance(exc, psycopg.OperationalError):
+        return "database_connectivity"
+    if exc.__class__.__name__ == "APITimeoutError":
+        return "provider_timeout"
+    return "operation_failed"
 
 
 def _remaining_milliseconds(deadline: float | None) -> int:
@@ -70,9 +85,11 @@ class PostgresKnowledgeRepository:
         limit: int,
         deadline: float | None = None,
     ) -> list[dict[str, Any]]:
-        with knowledge_connection(deadline) as conn:
-            rows = conn.execute(
-                """WITH vector_candidates AS (
+        started = time.perf_counter()
+        try:
+            with knowledge_connection(deadline) as conn:
+                rows = conn.execute(
+                    """WITH vector_candidates AS (
                 SELECT c.id, c.doc_id, c.text, c.text_search,
                        c.embedding <=> %s::vector AS distance
                 FROM chunks c JOIN documents d ON d.id = c.doc_id
@@ -84,17 +101,28 @@ class PostgresKnowledgeRepository:
                   ((1-distance)*0.8 + ts_rank(text_search,
                     plainto_tsquery('english', %s))*0.2)
                 FROM vector_candidates ORDER BY 6 DESC LIMIT %s""",
-                (
-                    query_embedding,
-                    str(assistant_id),
-                    str(assistant_id),
-                    role,
-                    query_embedding,
-                    query,
-                    query,
-                    limit,
-                ),
-            ).fetchall()
+                    (
+                        query_embedding,
+                        str(assistant_id),
+                        str(assistant_id),
+                        role,
+                        query_embedding,
+                        query,
+                        query,
+                        limit,
+                    ),
+                ).fetchall()
+        except Exception as exc:
+            logger.error(
+                "retrieval_failed",
+                extra={
+                    "operation": "knowledge_search",
+                    "failure_category": _failure_category(exc),
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                },
+            )
+            raise
+
         return [
             {
                 "id": r[0],
@@ -114,7 +142,7 @@ class AuditRepository:
             rows = conn.execute(
                 """SELECT id,timestamp,user_role,question,reply,
                 retrieved_chunks,reranked_chunks,metrics,queries,evaluation
-                FROM audit_logs ORDER BY id DESC LIMIT %s""",
+                FROM rag.audit_logs ORDER BY id DESC LIMIT %s""",
                 (limit,),
             ).fetchall()
         return [
@@ -146,23 +174,35 @@ class AuditRepository:
         metrics: dict,
         deadline: float | None = None,
     ) -> None:
-        with auth_audit_connection(deadline) as conn:
-            conn.execute(
-                """INSERT INTO audit_logs
+        started = time.perf_counter()
+        try:
+            with auth_audit_connection(deadline) as conn:
+                conn.execute(
+                    """INSERT INTO rag.audit_logs
                 (timestamp,user_role,question,queries,reply,retrieved_chunks,
                  reranked_chunks,evaluation,metrics) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (
-                    datetime.now(timezone.utc),
-                    role,
-                    question,
-                    json.dumps(queries),
-                    json.dumps(reply),
-                    json.dumps(retrieved),
-                    json.dumps(reranked),
-                    json.dumps(evaluation),
-                    json.dumps(metrics),
-                ),
+                    (
+                        datetime.now(timezone.utc),
+                        role,
+                        question,
+                        json.dumps(queries),
+                        json.dumps(reply),
+                        json.dumps(retrieved),
+                        json.dumps(reranked),
+                        json.dumps(evaluation),
+                        json.dumps(metrics),
+                    ),
+                )
+        except Exception as exc:
+            logger.error(
+                "audit_write_failed",
+                extra={
+                    "operation": "audit_write",
+                    "failure_category": _failure_category(exc),
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                },
             )
+            raise
 
     def latest(
         self, *, question: str, role: str, deadline: float | None = None
@@ -170,7 +210,7 @@ class AuditRepository:
         with auth_audit_connection(deadline) as conn:
             row = conn.execute(
                 """SELECT reply,retrieved_chunks,reranked_chunks,metrics,queries,evaluation
-                FROM audit_logs WHERE question = %s AND user_role = %s
+                FROM rag.audit_logs WHERE question = %s AND user_role = %s
                 ORDER BY id DESC LIMIT 1""",
                 (question, role),
             ).fetchone()
@@ -271,22 +311,75 @@ class Provider:
         )
 
     def embedding(self, text: str, *, deadline: float | None = None) -> list[float]:
-        client = self.client.with_options(
-            timeout=_remaining_seconds(deadline, settings.provider_timeout_seconds)
-        )
-        return (
-            client.embeddings.create(model=settings.embedding_model, input=text)
-            .data[0]
-            .embedding
-        )
+        return self._call("embedding", text, deadline)
 
     def text(self, prompt: str, *, deadline: float | None = None) -> str:
-        client = self.client.with_options(
-            timeout=_remaining_seconds(deadline, settings.provider_timeout_seconds)
-        )
-        return client.responses.create(
-            model=settings.chat_model, input=prompt
-        ).output_text.strip()
+        return self._call("text_generation", prompt, deadline)
+
+    def _call(self, operation: str, value: str, deadline: float | None):
+        started = time.perf_counter()
+        outcome = "success"
+        failure_category = None
+        try:
+            client = self.client.with_options(
+                timeout=_remaining_seconds(deadline, settings.provider_timeout_seconds)
+            )
+            if operation == "embedding":
+                return (
+                    client.embeddings.create(
+                        model=settings.embedding_model, input=value
+                    )
+                    .data[0]
+                    .embedding
+                )
+            return client.responses.create(
+                model=settings.chat_model, input=value
+            ).output_text.strip()
+        except Exception as exc:
+            failure_category = _failure_category(exc)
+            outcome = (
+                "timeout"
+                if failure_category in {"provider_timeout", "deadline_timeout"}
+                else "failure"
+            )
+            logger.error(
+                "provider_request_failed",
+                extra={
+                    "operation": operation,
+                    "failure_category": failure_category,
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                },
+            )
+            raise
+        finally:
+            logger.info(
+                "provider_request_completed",
+                extra={
+                    "operation": operation,
+                    "outcome": outcome,
+                    "failure_category": failure_category,
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                },
+            )
 
     def close(self) -> None:
         self.client.close()
+
+
+class MaintenanceStateUnavailable(RuntimeError):
+    pass
+
+
+class MaintenanceRepository:
+    def is_enabled(self, deadline: float | None = None) -> bool:
+        try:
+            with auth_audit_connection(deadline) as conn:
+                row = conn.execute(
+                    """SELECT maintenance_enabled
+                    FROM operations_runtime_state WHERE singleton=TRUE"""
+                ).fetchone()
+        except Exception as exc:
+            raise MaintenanceStateUnavailable from exc
+        if row is None:
+            raise MaintenanceStateUnavailable
+        return bool(row[0])

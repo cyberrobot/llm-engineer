@@ -8,9 +8,8 @@ ROLE_SQL = (
 def test_rag_read_role_sql_defines_only_the_required_read_privileges():
     normalized = " ".join(ROLE_SQL.upper().split())
 
-    assert "NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT" in normalized
-    assert "NOINHERIT" not in normalized
-    assert "NOREPLICATION NOBYPASSRLS" in normalized
+    assert "CREATE ROLE RAG_READER" not in normalized
+    assert "RAG_READER MUST BE PROVISIONED BY THE CLUSTER ROLE ADMINISTRATOR" in normalized
     assert "GRANT CONNECT ON DATABASE" in normalized
     assert "GRANT USAGE ON SCHEMA PUBLIC TO RAG_READER" in normalized
     assert "GRANT SELECT ON TABLE PUBLIC.DOCUMENTS, PUBLIC.CHUNKS TO RAG_READER" in normalized

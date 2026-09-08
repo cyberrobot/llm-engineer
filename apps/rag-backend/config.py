@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True)
@@ -38,8 +39,23 @@ class Settings:
     def validate(self) -> None:
         if self.ai_provider != "openai":
             raise ValueError("RAG_AI_PROVIDER must be openai")
-        if "*" in self.allowed_origins:
-            raise ValueError("RAG_ALLOWED_ORIGINS must not contain a wildcard")
+        if not self.allowed_origins:
+            raise ValueError("RAG_ALLOWED_ORIGINS must contain at least one origin")
+        for origin in self.allowed_origins:
+            parsed = urlsplit(origin)
+            if (
+                origin == "*"
+                or parsed.scheme not in {"http", "https"}
+                or not parsed.netloc
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError(
+                    "RAG_ALLOWED_ORIGINS must contain exact HTTP(S) origins"
+                )
         if (
             self.provider_timeout_seconds <= 0
             or self.request_timeout_seconds <= 0
@@ -57,7 +73,7 @@ class Settings:
             raise ValueError("RAG_AUTH_AUDIT_DATABASE_URL must be configured")
         if not self.openai_api_key:
             raise ValueError("RAG_OPENAI_API_KEY must be configured")
-        if not self.chat_model or not self.embedding_model:
+        if not self.chat_model.strip() or not self.embedding_model.strip():
             raise ValueError("RAG model configuration must not be empty")
         if not self.redis_url and not self.disable_cache:
             raise ValueError("RAG_REDIS_URL must be configured when caching is enabled")

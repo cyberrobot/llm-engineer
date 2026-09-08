@@ -57,6 +57,10 @@ Inspect these paths first:
 Staged standalone FastAPI RAG extraction. It owns only the RAG health, chat, and audit routes and
 is intentionally not production-routed yet. Its local configuration, provider, Redis, PostgreSQL,
 prompt, and lifecycle code must remain independent from `apps/backend` until a later cutover.
+The backend exclusively migrates the shared knowledge schema and legacy `public.audit_logs`;
+`rag-backend` reads knowledge through `rag_reader` and exclusively migrates `rag.audit_logs` via an
+explicit release command. Both runtimes observe the backend-owned maintenance state, whose only
+write boundary is the backend Operations API.
 
 Backend dependency rules:
 

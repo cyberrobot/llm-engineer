@@ -1,17 +1,19 @@
--- Run with psql as the database owner after application migrations.
--- This group role intentionally has no login or credentials. Deployments create a
--- separate INHERIT LOGIN role, grant it rag_reader membership, and supply that credential
--- only when the application supports a distinct RAG connection factory.
+-- Run as the database/bootstrap owner after application migrations. A cluster
+-- role administrator must provision rag_reader first and grant it to the
+-- bootstrap owner WITH ADMIN OPTION. This script performs database grants only.
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rag_reader') THEN
-        CREATE ROLE rag_reader
-            NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT
-            NOREPLICATION NOBYPASSRLS;
-    ELSE
-        ALTER ROLE rag_reader
-            NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT
-            NOREPLICATION NOBYPASSRLS;
+        RAISE EXCEPTION 'rag_reader must be provisioned by the cluster role administrator';
+    ELSIF EXISTS (
+        SELECT 1 FROM pg_roles
+        WHERE rolname = 'rag_reader'
+          AND (
+              rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole
+              OR rolreplication OR rolbypassrls
+          )
+    ) THEN
+        RAISE EXCEPTION 'rag_reader has forbidden elevated attributes';
     END IF;
 END
 $$;

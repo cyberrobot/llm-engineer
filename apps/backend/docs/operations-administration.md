@@ -101,6 +101,10 @@ audit records in PostgreSQL. This shared state keeps maintenance behaviour consi
 application instances and process restarts. Development and test processes use the same service
 interfaces with process-local stores. The schema is created by the normal database initialization
 path and includes timestamp plus supported-filter indexes for audit pagination.
+The standalone RAG service has read-only access to the same `operations_runtime_state` row and
+fails closed when it cannot read it. It cannot update that state, so this Operations API remains the
+single control boundary. Standalone `/rag-chat` is gated consistently; its health and audit routes
+remain reachable.
 
 Whole-cache clearing, region clearing, and maintenance updates are idempotent. Invalidating a
 specific absent key returns `cache_key_not_found`. Before an authenticated state-changing action is

@@ -13,6 +13,8 @@ from contracts import RagChatRequest, RagChatResponse
 from infrastructure import (
     AuditRepository,
     Cache,
+    MaintenanceRepository,
+    MaintenanceStateUnavailable,
     PostgresKnowledgeRepository,
     Provider,
     auth_audit_connection,
@@ -30,6 +32,7 @@ async def lifespan(app: FastAPI):
     app.state.repository = PostgresKnowledgeRepository()
     app.state.audit = AuditRepository()
     app.state.cache = Cache()
+    app.state.maintenance = MaintenanceRepository()
     app.state.provider = None
     try:
         yield
@@ -52,6 +55,7 @@ rate_windows: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 
 @app.middleware("http")
 async def correlation(request: Request, call_next):
+    started = time.perf_counter()
     raw_request_id = request.headers.get("X-Request-ID")
     try:
         request_id = str(UUID(raw_request_id)) if raw_request_id else str(uuid4())
@@ -59,6 +63,19 @@ async def correlation(request: Request, call_next):
         request_id = str(uuid4())
     request.state.request_id = request_id
     request_id_context.set(request_id)
+
+    def record_response(status_code: int) -> None:
+        logger.info(
+            "http_request_completed",
+            extra={
+                "path": request.url.path
+                if request.url.path
+                in {"/rag-chat", "/audit-logs", "/health/live", "/health/ready"}
+                else "other",
+                "status_code": status_code,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+            },
+        )
 
     def early_response(
         status_code: int, content: str, *, retry_after: str | None = None
@@ -68,12 +85,34 @@ async def correlation(request: Request, call_next):
             headers["Cache-Control"] = "no-store"
         if retry_after is not None:
             headers["Retry-After"] = retry_after
+        origin = request.headers.get("origin")
+        if origin and origin in settings.allowed_origins:
+            headers["Access-Control-Allow-Origin"] = origin
+            headers["Access-Control-Allow-Credentials"] = "true"
+        record_response(status_code)
         return Response(
             status_code=status_code,
             content=content,
             media_type="application/json",
             headers=headers,
         )
+
+    if request.url.path == "/rag-chat" and request.method != "OPTIONS":
+        try:
+            maintenance_deadline = time.monotonic() + settings.health_timeout_seconds
+            maintenance_enabled = await asyncio.to_thread(
+                request.app.state.maintenance.is_enabled, maintenance_deadline
+            )
+        except MaintenanceStateUnavailable:
+            return early_response(
+                503,
+                '{"detail":{"code":"maintenance_state_unavailable","message":"Service availability cannot currently be determined."}}',
+            )
+        if maintenance_enabled:
+            return early_response(
+                503,
+                '{"detail":{"code":"maintenance_mode","message":"The service is undergoing maintenance."}}',
+            )
 
     if request.url.path == "/rag-chat" and request.method in {"POST", "PUT", "PATCH"}:
         declared_size = request.headers.get("content-length")
@@ -95,6 +134,10 @@ async def correlation(request: Request, call_next):
         while window and window[0] <= now - 60:
             window.popleft()
         if len(window) >= limit:
+            logger.warning(
+                "rate_limit_rejected",
+                extra={"path": request.url.path, "failure_category": "rate_limit"},
+            )
             return early_response(
                 429,
                 '{"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests. Please wait a moment before trying again.","retry_after_seconds":60}}',
@@ -105,6 +148,7 @@ async def correlation(request: Request, call_next):
     if request.url.path in {"/rag-chat", "/audit-logs"}:
         response.headers["Cache-Control"] = "no-store"
     response.headers["X-Request-ID"] = request_id
+    record_response(response.status_code)
     return response
 
 
@@ -116,17 +160,76 @@ def live():
 @app.get("/health/ready")
 def ready():
     try:
-        settings.validate_runtime()
+        try:
+            settings.validate_runtime()
+        except Exception:
+            logger.error(
+                "readiness_check_failed",
+                extra={
+                    "dependency": "configuration",
+                    "failure_category": "configuration_invalid",
+                },
+            )
+            raise
         deadline = time.monotonic() + settings.health_timeout_seconds
-        with knowledge_connection(deadline) as conn:
-            conn.execute("SELECT 1")
-        with auth_audit_connection(deadline) as conn:
-            conn.execute("SELECT 1")
-        if not settings.disable_cache and not app.state.cache.ping(deadline):
-            raise RuntimeError("Redis unavailable")
+        try:
+            with knowledge_connection(deadline) as conn:
+                conn.execute(
+                    """SELECT d.id, c.id, c.text_search, c.embedding
+                    FROM public.documents d JOIN public.chunks c ON c.doc_id=d.id
+                    LIMIT 0"""
+                )
+        except Exception:
+            logger.error(
+                "readiness_check_failed",
+                extra={
+                    "dependency": "knowledge_database",
+                    "failure_category": "dependency_unavailable",
+                },
+            )
+            raise
+        try:
+            with auth_audit_connection(deadline) as conn:
+                conn.execute(
+                    """SELECT a.id, a.role, a.status, s.token_hash, s.revoked_at, s.expires_at
+                    FROM public.administrators a
+                    JOIN public.administrator_sessions s ON s.administrator_id=a.id
+                    LIMIT 0"""
+                )
+                conn.execute(
+                    """SELECT maintenance_enabled FROM public.operations_runtime_state
+                    WHERE singleton=TRUE LIMIT 0"""
+                )
+                if not settings.disable_audit:
+                    conn.execute(
+                        """SELECT id,timestamp,user_role,question,queries,reply,
+                        retrieved_chunks,reranked_chunks,evaluation,metrics
+                        FROM rag.audit_logs LIMIT 0"""
+                    )
+        except Exception:
+            logger.error(
+                "readiness_check_failed",
+                extra={
+                    "dependency": "auth_audit_database",
+                    "failure_category": "dependency_unavailable",
+                },
+            )
+            raise
+        if not settings.disable_cache:
+            try:
+                if not app.state.cache.ping(deadline):
+                    raise RuntimeError
+            except Exception:
+                logger.error(
+                    "readiness_check_failed",
+                    extra={
+                        "dependency": "redis",
+                        "failure_category": "dependency_unavailable",
+                    },
+                )
+                raise
         return {"status": "ok"}
     except Exception as exc:
-        logger.error("readiness_check_failed", extra={"error_type": type(exc).__name__})
         raise HTTPException(503, detail="Service unavailable") from exc
 
 

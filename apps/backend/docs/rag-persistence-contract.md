@@ -22,20 +22,23 @@ retains the existing maximum-distance cutoff.
 
 ## Least-privilege role
 
-After migrations, a database owner can apply
-`infrastructure/database/rag_read_role.sql` with `psql`. It creates or hardens `rag_reader` as an
-inheritable, non-login group role, removes table and sequence privileges in `public`, denies schema
-creation, and grants only database `CONNECT`, schema `USAGE`, and `SELECT` on `documents` and
-`chunks`. Do not grant this group role membership in administrative or write-capable roles. Audit
-effective privileges as well as direct grants if a deployment changes PostgreSQL's `PUBLIC` grants.
+Before migrations, a cluster role administrator applies `apps/rag-backend/cluster_roles.sql` to
+provision `rag_reader` as an inheritable, non-login group role and grants it to the database owner
+with `ADMIN OPTION`. After migrations, that database owner applies
+`infrastructure/database/rag_read_role.sql` with `psql`; this script performs database and object
+grants only and does not require `CREATEROLE`. It removes table and sequence privileges in `public`,
+denies schema creation, and grants only database `CONNECT`, schema `USAGE`, and `SELECT` on
+`documents` and `chunks`. Do not grant this group role membership in administrative or write-capable
+roles. Audit effective privileges as well as direct grants if a deployment changes PostgreSQL's
+`PUBLIC` grants.
 
-Deployments create a separate inheritable login role and credential outside source control, then
-grant that login membership in `rag_reader`. The login automatically inherits the group's RAG read
-privileges and executes retrieval directly; no `SET ROLE` step is required. Ingestion and
-administrative connections must continue using write-capable credentials. The backend currently has
-one `DATABASE_URL` and does **not** activate a distinct RAG credential in this change. Activating
-separate credentials later requires wiring a distinct RAG connection factory while leaving
-ingestion and administration on their write credential.
+The cluster role administrator creates a separate inheritable login role and credential outside
+source control, then grants that login membership only in `rag_reader`. The login automatically
+inherits the group's RAG read privileges and executes retrieval directly; no `SET ROLE` step is
+required. Ingestion and administrative connections must continue using write-capable credentials.
+The backend currently has one `DATABASE_URL` and does **not** activate a distinct RAG credential in
+this change. Activating separate credentials later requires wiring a distinct RAG connection factory
+while leaving ingestion and administration on their write credential.
 
 ## Verification
 
@@ -53,5 +56,14 @@ the configured test user can create roles—creates a non-login read group and a
 emulates authentication as that login without switching to the group, and verifies inherited reads,
 real retrieval, and denied document, chunk, ingestion-job, administrative, and schema writes. If the
 test database user cannot create roles or emulate login authentication, that test skips with the
-PostgreSQL permission error; deployment validation must then apply the SQL as the database owner and
-repeat the topology and grant checks.
+PostgreSQL permission error; deployment validation must then use the documented cluster-role
+administrator and database-owner sequence and repeat the topology and grant checks.
+
+## Standalone service ownership
+
+`apps/backend` remains the only migration owner for `documents`, `chunks`, their indexes and
+text-search trigger, and the legacy `public.audit_logs`. `apps/rag-backend` consumes knowledge with
+the `rag_reader` contract and independently owns only `rag.schema_migrations` and
+`rag.audit_logs`. Neither application migrates the other's audit store, and migration-owner
+credentials are never runtime credentials. See `apps/rag-backend/OPERATIONS.md` for deployment and
+rollback order.
