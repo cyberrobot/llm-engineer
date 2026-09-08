@@ -230,7 +230,7 @@ Operational ownership must also become explicit:
 - public Assistant and RAG maintenance behaviour remains consistent;
 - `rag-backend` exposes reliable liveness/readiness probes;
 - important RAG failures and latency are observable;
-- deployment and rollback are documented and reproducible;
+- deployment and rollback contracts are documented for environment verification;
 - failure of `rag-backend` cannot impair ingestion or administrator APIs.
 
 ## Delivery split
@@ -743,9 +743,11 @@ Do not record the audit payload itself.
 
 Audit-write failure telemetry is required even where the HTTP request ultimately maps that failure to an existing generic error response.
 
-### 19. Add operational dashboard coverage
+### 19. Define operational dashboard coverage
 
-Use the deployment's established monitoring/dashboard system.
+For PR 5, define the required dashboard panels and queries for the deployment's established
+monitoring system. Installing the dashboard and verifying it against live telemetry are deferred to
+`.codex/tasks/6-verify-rag-deployment-and-operational-monitoring.md`.
 
 At minimum provide panels/views for:
 
@@ -759,7 +761,7 @@ At minimum provide panels/views for:
 
 Clearly distinguish `rag-backend` from `apps/backend`.
 
-If dashboards are maintained as code, commit the configuration.
+If dashboards are maintained as code and the established configuration is available, commit it.
 
 If they are deployment-managed, document:
 
@@ -767,14 +769,14 @@ If they are deployment-managed, document:
 - panel definitions;
 - metric/log queries;
 - service filter;
-- ownership;
-- where the configured dashboard lives.
+- the required ownership;
+- that PR 6 must record where the configured dashboard lives.
 
 Documentation alone must not be presented as a configured dashboard when the deployment system is accessible and configuration is required.
 
-### 20. Add operational alerts
+### 20. Define operational alerts
 
-Configure alerts for at least:
+For PR 5, define alerts for at least:
 
 - sustained excessive RAG response latency;
 - sustained OpenAI failure/timeout rate;
@@ -791,6 +793,9 @@ If no baseline exists, define conservative initial thresholds, document them, an
 
 Avoid alerting on ordinary zero-result retrievals.
 
+Installing these alert rules, verifying their live inputs, and testing notification delivery are
+deferred to `.codex/tasks/6-verify-rag-deployment-and-operational-monitoring.md`.
+
 ### 21. Add independent deployment configuration for `rag-backend`
 
 Make `apps/rag-backend` buildable and deployable without using the backend application image.
@@ -803,11 +808,14 @@ The start command should follow the current service entry point, conceptually:
 
 `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}`
 
-Configure the deployment health check to use:
+The deployment contract and any repository-managed configuration must use:
 
 `/health/ready`
 
 Do not use `/health/live` as the only traffic-readiness gate.
+
+Verification of the actual deployment-platform health-check setting is deferred to
+`.codex/tasks/6-verify-rag-deployment-and-operational-monitoring.md`.
 
 ### 22. Document required deployment credentials
 
@@ -850,6 +858,9 @@ At minimum:
 10. verify telemetry reaches the dashboard;
 11. verify alert configuration;
 12. leave production routing unchanged unless a separate cutover change explicitly authorizes it.
+
+PR 5 documents this sequence and verifies its repository-owned prerequisites. PR 6 performs and
+records the steps that require access to the actual deployment and monitoring environment.
 
 A failed RAG deployment must not require rolling back the backend or ingestion service.
 
@@ -1003,7 +1014,9 @@ Update `docs/architecture/repository-map.md` if required so future changes do no
 - [ ] Retrieval failures are observable.
 - [ ] Rate-limit rejections are observable.
 - [ ] Audit-write failures are observable.
+- [ ] Dashboard definitions cover all required panels, queries, service filters and ownership requirements.
 - [ ] Deferred to PR 6: required dashboard panels exist in the staging/production monitoring system.
+- [ ] Alert definitions include all required failure classes, thresholds and minimum event counts.
 - [ ] Deferred to PR 6: required alerts are installed with the documented thresholds.
 - [ ] Operational telemetry contains no prompts, user questions, document/chunk contents, credentials or raw provider payloads.
 - [ ] `rag-backend` has independent deployment/build configuration.
@@ -1201,15 +1214,25 @@ CI:
 - keep existing backend and `rag-backend` required jobs passing;
 - do not weaken or skip existing PostgreSQL or import-boundary checks.
 
-Operational verification before completion:
+Operational verification split:
 
-- verify effective PostgreSQL grants using the actual RAG runtime roles;
-- verify migration credentials are absent from the normal RAG runtime;
-- verify maintenance mode against both public Assistant and RAG traffic;
-- verify `rag-backend` failure leaves backend ingestion and administrator APIs healthy;
-- verify the deployment health check uses `/health/ready`;
-- verify dashboard data is arriving;
-- verify required alerts are configured;
-- exercise the rollback runbook far enough to prove its commands/settings are accurate.
+Required before PR 5 / PR #99 completion:
+
+- verify effective PostgreSQL grants using the test/runtime role topology;
+- verify migration credentials are absent from normal RAG runtime configuration;
+- verify maintenance behaviour against both the backend public Assistant and standalone RAG HTTP paths;
+- verify `rag-backend` failure does not make backend ingestion or administrator APIs depend on it;
+- verify application telemetry and observability tests;
+- verify deployment, dashboard, alert, and rollback contracts are documented;
+- pass the affected CI and regression suites.
+
+Deployment-managed verification is required for PR 6 completion, not PR #99 completion. The sole
+owner for these checks is `.codex/tasks/6-verify-rag-deployment-and-operational-monitoring.md`:
+
+- verify the deployed traffic health check uses `/health/ready`;
+- verify the installed **RAG Backend Operations** dashboard and real staging telemetry;
+- verify installed alert rules and notification delivery;
+- exercise the staging rollback runbook without destructive database rollback;
+- record the final deployment/monitoring location and operational ownership.
 
 Do not claim any deployment, dashboard, alert or rollback verification passed unless it was actually performed successfully.
