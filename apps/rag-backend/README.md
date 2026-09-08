@@ -14,11 +14,14 @@ timeout, and a 30-second provider timeout.
 schema (`documents` and `chunks`). `RAG_AUTH_AUDIT_DATABASE_URL` is a distinct credential limited
 to administrator-session lookup, maintenance-state read, plus `rag.audit_logs` reads/inserts; it must not be granted ingestion,
 document, chunk, or administrator-management write privileges.
-As the database/bootstrap owner, apply `migration_owner_role.sql`, create a separate migration
-LOGIN that inherits `rag_migrator`, and run
+As a cluster role administrator, apply `cluster_roles.sql`, create the migration, knowledge, and
+auth/audit LOGIN roles, grant each only its matching NOLOGIN group role, and grant the three group
+roles to the database/bootstrap owner with `ADMIN OPTION`. The bootstrap owner requires no
+`CREATEROLE`, `CREATEDB`, or superuser attribute. As that owner, apply
+`apps/backend/infrastructure/database/rag_read_role.sql` and `migration_owner_role.sql`, then run
 `RAG_MIGRATION_DATABASE_URL=... python migrations.py upgrade` from a release job. Then apply
-`auth_audit_role.sql` as the bootstrap owner and grant its
-`rag_auth_audit` group role to the login used by `RAG_AUTH_AUDIT_DATABASE_URL`.
+`auth_audit_role.sql` as the bootstrap owner; the auth/audit LOGIN already received only
+`rag_auth_audit` from the cluster role administrator.
 Migration objects are owned by the NOLOGIN `rag_migrator` role, while the migration LOGIN has no
 knowledge-table access. Application startup never runs migrations or DDL. The generic backend
 `DATABASE_URL` is not a supported runtime fallback.

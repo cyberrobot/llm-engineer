@@ -38,9 +38,13 @@ def postgres_schema(monkeypatch):
                 pytest.skip(
                     "rag schema already exists; refusing destructive test setup"
                 )
+            cluster_roles_sql = (
+                Path(__file__).parents[1] / "cluster_roles.sql"
+            ).read_text()
             migration_owner_sql = (
                 Path(__file__).parents[1] / "migration_owner_role.sql"
             ).read_text()
+            connection.execute(cluster_roles_sql)
             connection.execute(migration_owner_sql)
             created_rag_schema = True
             connection.execute(

@@ -1,14 +1,11 @@
--- Run as the database/bootstrap owner after RAG migrations. The bootstrap owner
--- must first apply migration_owner_role.sql, which makes it a member of the
--- rag_migrator object-owner role. Deployments should
--- grant this NOLOGIN group role to the LOGIN role used by
--- RAG_AUTH_AUDIT_DATABASE_URL.
+-- Run as the database/bootstrap owner after RAG migrations. A cluster role
+-- administrator must provision rag_auth_audit and grant both rag_auth_audit and
+-- rag_migrator to the bootstrap owner WITH ADMIN OPTION. This script performs
+-- database/schema/table/sequence grants only.
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rag_auth_audit') THEN
-        CREATE ROLE rag_auth_audit
-            NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT
-            NOREPLICATION NOBYPASSRLS;
+        RAISE EXCEPTION 'rag_auth_audit must be provisioned by the cluster role administrator';
     ELSIF EXISTS (
         SELECT 1 FROM pg_roles
         WHERE rolname = 'rag_auth_audit'

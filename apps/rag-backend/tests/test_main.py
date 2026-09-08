@@ -14,6 +14,20 @@ from main import app, rate_windows
 from security import Authorization
 
 
+class RecordingLogger:
+    def __init__(self):
+        self.events = []
+
+    def info(self, event, *, extra=None):
+        self.events.append((event, extra))
+
+    def warning(self, event, *, extra=None):
+        self.events.append((event, extra))
+
+    def error(self, event, *, extra=None):
+        self.events.append((event, extra))
+
+
 @pytest.fixture(autouse=True)
 def available_maintenance_state(monkeypatch):
     class Maintenance:
@@ -40,12 +54,111 @@ def test_liveness_does_not_require_authentication():
     assert response.json() == {"status": "ok"}
 
 
+def test_successful_request_emits_status_and_latency_telemetry(monkeypatch):
+    logger = RecordingLogger()
+    monkeypatch.setattr(main, "logger", logger)
+
+    with TestClient(app) as client:
+        response = client.get("/health/live")
+
+    assert response.status_code == 200
+    completions = [
+        extra for event, extra in logger.events if event == "http_request_completed"
+    ]
+    assert len(completions) == 1
+    assert completions[0]["path"] == "/health/live"
+    assert completions[0]["status_code"] == 200
+    assert completions[0]["duration_ms"] >= 0
+
+
 def test_readiness_rejects_missing_runtime_configuration():
     with TestClient(app) as client:
         response = client.get("/health/ready")
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Service unavailable"}
+
+
+@pytest.mark.parametrize(
+    ("failed_dependency", "expected_category"),
+    [
+        ("configuration", "configuration_invalid"),
+        ("knowledge_database", "dependency_unavailable"),
+        ("auth_audit_database", "dependency_unavailable"),
+        ("redis", "dependency_unavailable"),
+    ],
+)
+def test_readiness_failures_emit_safe_dependency_telemetry(
+    monkeypatch, failed_dependency, expected_category
+):
+    logger = RecordingLogger()
+
+    @contextmanager
+    def available_database(*_args, **_kwargs):
+        class Connection:
+            def execute(self, _query):
+                return None
+
+        yield Connection()
+
+    @contextmanager
+    def unavailable_database(*_args, **_kwargs):
+        raise RuntimeError("sensitive raw database exception")
+        yield
+
+    class Cache:
+        def ping(self, _deadline):
+            if failed_dependency == "redis":
+                raise RuntimeError("sensitive redis credential")
+            return True
+
+        def close(self):
+            pass
+
+    configured = replace(
+        main.settings,
+        knowledge_database_url="postgresql://sensitive-knowledge-credential",
+        auth_audit_database_url="postgresql://sensitive-auth-credential",
+        redis_url="redis://sensitive-cache-credential",
+        openai_api_key="sensitive-provider-credential",
+        disable_cache=failed_dependency != "redis",
+    )
+    if failed_dependency == "configuration":
+        configured = replace(configured, knowledge_database_url=None)
+    monkeypatch.setattr(main, "settings", configured)
+    monkeypatch.setattr(main, "logger", logger)
+    monkeypatch.setattr(
+        main,
+        "knowledge_connection",
+        unavailable_database
+        if failed_dependency == "knowledge_database"
+        else available_database,
+    )
+    monkeypatch.setattr(
+        main,
+        "auth_audit_connection",
+        unavailable_database
+        if failed_dependency == "auth_audit_database"
+        else available_database,
+    )
+    monkeypatch.setattr(main, "Cache", Cache)
+
+    with TestClient(app) as client:
+        ready = client.get("/health/ready")
+        live = client.get("/health/live")
+
+    assert ready.status_code == 503
+    assert live.status_code == 200
+    failures = [
+        extra for event, extra in logger.events if event == "readiness_check_failed"
+    ]
+    assert failures == [
+        {
+            "dependency": failed_dependency,
+            "failure_category": expected_category,
+        }
+    ]
+    assert "sensitive" not in repr(logger.events)
 
 
 def test_rag_routes_reject_anonymous_callers():

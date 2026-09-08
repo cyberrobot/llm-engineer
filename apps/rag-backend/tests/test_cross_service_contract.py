@@ -42,34 +42,28 @@ def _separate_role_database(admin_url: str):
     reader_login = f"rag_reader_{suffix}"
     auth_login = f"rag_auth_{suffix}"
     password = uuid4().hex
+    cluster_roles_sql = (ROOT / "apps/rag-backend/cluster_roles.sql").read_text()
     with psycopg.connect(admin_url, autocommit=True) as connection:
+        connection.execute(cluster_roles_sql)
         connection.execute(
-            sql.SQL("CREATE ROLE {} LOGIN CREATEROLE PASSWORD {}").format(
+            sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
                 sql.Identifier(bootstrap_login), sql.Literal(password)
             )
         )
-        if not connection.execute(
-            "SELECT 1 FROM pg_roles WHERE rolname='rag_migrator'"
-        ).fetchone():
-            connection.execute(
-                """CREATE ROLE rag_migrator
-                NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT
-                NOREPLICATION NOBYPASSRLS"""
-            )
         connection.execute(
             sql.SQL("CREATE DATABASE {} OWNER {}").format(
                 sql.Identifier(database), sql.Identifier(bootstrap_login)
             )
         )
         for group in ("rag_reader", "rag_migrator", "rag_auth_audit"):
-            if connection.execute(
-                "SELECT 1 FROM pg_roles WHERE rolname=%s", (group,)
-            ).fetchone():
-                connection.execute(
-                    sql.SQL("GRANT {} TO {} WITH ADMIN OPTION").format(
-                        sql.Identifier(group), sql.Identifier(bootstrap_login)
-                    )
+            connection.execute(
+                sql.SQL("GRANT {} TO {} WITH ADMIN OPTION").format(
+                    sql.Identifier(group), sql.Identifier(bootstrap_login)
                 )
+            )
+        _create_login(connection, migration_login, password, "rag_migrator")
+        _create_login(connection, reader_login, password, "rag_reader")
+        _create_login(connection, auth_login, password, "rag_auth_audit")
     admin_database_url = make_conninfo(admin_url, dbname=database)
     with psycopg.connect(admin_database_url) as connection:
         connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
@@ -208,29 +202,12 @@ def test_separate_ownership_topology_and_cross_service_maintenance_http(monkeypa
         with psycopg.connect(urls["bootstrap"]) as connection:
             connection.execute(reader_sql)
             connection.execute(migration_owner_sql)
-            _create_login(
-                connection,
-                roles["migration"],
-                roles["password"],
-                "rag_migrator",
-            )
-            _create_login(connection, roles["reader"], roles["password"], "rag_reader")
-            connection.execute(
-                sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
-                    sql.Identifier(roles["auth"]), sql.Literal(roles["password"])
-                )
-            )
 
         assert migrations.upgrade(urls["migration"]) == [
             "20260907_001_create_rag_audit_logs"
         ]
         with psycopg.connect(urls["bootstrap"]) as connection:
             connection.execute(auth_sql)
-            connection.execute(
-                sql.SQL("GRANT rag_auth_audit TO {}").format(
-                    sql.Identifier(roles["auth"])
-                )
-            )
             owners = dict(
                 connection.execute(
                     """SELECT tablename,tableowner FROM pg_tables
@@ -252,15 +229,21 @@ def test_separate_ownership_topology_and_cross_service_maintenance_http(monkeypa
                             roles["migration"],
                             roles["reader"],
                             roles["auth"],
+                            "rag_reader",
+                            "rag_migrator",
+                            "rag_auth_audit",
                         ],
                     ),
                 ).fetchall()
             }
             assert role_capabilities == {
-                roles["bootstrap"]: (True, False, False, True),
+                roles["bootstrap"]: (True, False, False, False),
                 roles["migration"]: (True, False, False, False),
                 roles["reader"]: (True, False, False, False),
                 roles["auth"]: (True, False, False, False),
+                "rag_reader": (False, False, False, False),
+                "rag_migrator": (False, False, False, False),
+                "rag_auth_audit": (False, False, False, False),
             }
             legacy_audit_count = connection.execute(
                 "SELECT count(*) FROM public.audit_logs"
@@ -329,16 +312,20 @@ def test_separate_ownership_topology_and_cross_service_maintenance_http(monkeypa
             (urls["reader"], "UPDATE documents SET retrieval_state='disabled'"),
             (urls["reader"], "CREATE TABLE reader_forbidden(id integer)"),
             (urls["reader"], "CREATE SCHEMA reader_forbidden_schema"),
+            (urls["reader"], "CREATE ROLE reader_forbidden_role"),
             (urls["auth"], "SELECT id FROM documents"),
             (urls["auth"], "ALTER TABLE rag.audit_logs ADD COLUMN forbidden text"),
             (urls["auth"], "DROP TABLE rag.audit_logs"),
             (urls["auth"], "CREATE SCHEMA auth_forbidden_schema"),
+            (urls["auth"], "CREATE ROLE auth_forbidden_role"),
             (
                 urls["auth"],
                 "UPDATE operations_runtime_state SET maintenance_enabled=TRUE",
             ),
             (urls["migration"], "SELECT id FROM public.documents"),
+            (urls["migration"], "SELECT id FROM public.chunks"),
             (urls["migration"], "CREATE SCHEMA migration_forbidden_schema"),
+            (urls["migration"], "CREATE ROLE migration_forbidden_role"),
         ):
             with (
                 pytest.raises(psycopg.errors.InsufficientPrivilege),

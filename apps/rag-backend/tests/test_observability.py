@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 
+import psycopg
 import pytest
 
 import infrastructure
@@ -53,6 +54,41 @@ def test_retrieval_and_audit_failures_emit_separate_safe_events(monkeypatch):
         "audit_write_failed",
     ]
     assert all("sensitive" not in repr(extra) for _event, extra in logger.events)
+
+
+def test_retrieval_timeout_emits_safe_stable_timeout_telemetry(monkeypatch):
+    logger = RecordingLogger()
+
+    @contextmanager
+    def timed_out_connection(*_args, **_kwargs):
+        raise psycopg.errors.QueryCanceled("sensitive SQL and database details")
+        yield
+
+    monkeypatch.setattr(infrastructure, "logger", logger)
+    monkeypatch.setattr(infrastructure, "knowledge_connection", timed_out_connection)
+
+    with pytest.raises(psycopg.errors.QueryCanceled):
+        infrastructure.PostgresKnowledgeRepository().search(
+            assistant_id="sensitive-document-owner",
+            query_embedding=[0.1, 0.2],
+            query="sensitive retrieval query",
+            role="doctor",
+            limit=8,
+        )
+
+    assert logger.events == [
+        (
+            "retrieval_failed",
+            {
+                "operation": "knowledge_search",
+                "failure_category": "database_timeout",
+                "duration_ms": logger.events[0][1]["duration_ms"],
+            },
+        )
+    ]
+    assert logger.events[0][1]["duration_ms"] >= 0
+    assert "sensitive" not in repr(logger.events)
+    assert "SELECT" not in repr(logger.events)
 
 
 def test_successful_provider_operations_emit_denominator_events(monkeypatch):

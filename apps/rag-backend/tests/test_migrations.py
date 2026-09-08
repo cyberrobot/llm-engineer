@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 import migrations
 
+CLUSTER_ROLES_SQL = (Path(__file__).parents[1] / "cluster_roles.sql").read_text()
 MIGRATION_OWNER_SQL = (
     Path(__file__).parents[1] / "migration_owner_role.sql"
 ).read_text()
@@ -34,6 +35,7 @@ def _require_clean_database(database_url: str) -> None:
 
 def _install_migration_owner(database_url: str) -> None:
     with psycopg.connect(database_url) as connection:
+        connection.execute(CLUSTER_ROLES_SQL)
         connection.execute(MIGRATION_OWNER_SQL)
 
 

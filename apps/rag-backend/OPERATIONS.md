@@ -8,15 +8,14 @@ indexes/triggers, administrator/session tables, `public.operations_runtime_state
 `rag_reader` group and never runs backend migrations.
 
 `rag_migrator` is the NOLOGIN owner of `rag`, `rag.schema_migrations`, and `rag.audit_logs`.
-A database/bootstrap owner applies `migration_owner_role.sql` once. A separate deployment-only
-LOGIN inherits `rag_migrator` and is supplied through `RAG_MIGRATION_DATABASE_URL`; the migration
-command explicitly assumes the owner role so objects never belong to the LOGIN. The owner role can
-create objects only in `rag` and has no access to backend knowledge tables. Normal `uvicorn` startup
-never migrates or performs DDL. Run `python migrations.py status` with the same deployment-only
-credential to inspect state. For a non-superuser database/bootstrap owner, a cluster role
-administrator must first create the group role with the attributes in `migration_owner_role.sql`
-and grant `rag_migrator` to the bootstrap owner with `ADMIN OPTION`. This one-time cluster role
-provisioning does not grant the migration LOGIN any runtime access.
+A cluster role administrator applies `cluster_roles.sql`, creates the three distinct LOGIN roles,
+grants each LOGIN only its matching NOLOGIN role, and grants the three NOLOGIN roles to the
+database/bootstrap owner with `ADMIN OPTION`. The database/bootstrap owner needs no `CREATEROLE`,
+`CREATEDB`, or superuser attribute; it applies only database/object grants. The deployment-only
+migration LOGIN is supplied through `RAG_MIGRATION_DATABASE_URL`, and the migration command assumes
+`rag_migrator` so objects never belong to the LOGIN. `rag_migrator` can create objects only in `rag`
+and has no access to backend knowledge tables. Normal `uvicorn` startup never migrates or performs
+DDL. Run `python migrations.py status` with the migration credential to inspect state.
 
 Runtime secrets are `RAG_KNOWLEDGE_DATABASE_URL` (a login inheriting only `rag_reader`),
 `RAG_AUTH_AUDIT_DATABASE_URL` (a login inheriting only `rag_auth_audit`),
@@ -36,18 +35,19 @@ non-destructive copy job with counts/checkpoints; it must never run during appli
 
 ## Deployment order
 
-1. As the database/bootstrap owner, run the normal backend migration and verify
+1. As the cluster role administrator, apply `apps/rag-backend/cluster_roles.sql`. Create distinct
+   migration, knowledge, and auth/audit LOGIN roles; grant them only `rag_migrator`, `rag_reader`,
+   and `rag_auth_audit`, respectively. Grant all three NOLOGIN roles to the database/bootstrap owner
+   with `ADMIN OPTION`. Do not give that owner or any runtime LOGIN `CREATEROLE`.
+2. As the database/bootstrap owner, run the normal backend migration and verify
    `public.documents`/`public.chunks`.
-2. Have the cluster role administrator provision `rag_migrator` and grant it to the non-superuser
-   database/bootstrap owner with `ADMIN OPTION`. As that bootstrap owner, apply
-   `apps/backend/infrastructure/database/rag_read_role.sql` and
+3. As the same bootstrap owner, apply `apps/backend/infrastructure/database/rag_read_role.sql` and
    `apps/rag-backend/migration_owner_role.sql`.
-3. Create distinct LOGIN roles for migration, knowledge reads, and auth/audit. Grant the migration
-   LOGIN only `rag_migrator`, and grant the knowledge LOGIN only `rag_reader`.
 4. Run `RAG_MIGRATION_DATABASE_URL=... python migrations.py upgrade` with the migration LOGIN.
    Verify `rag` objects are owned by `rag_migrator`, not by that LOGIN.
-5. As the bootstrap owner, apply `auth_audit_role.sql`, then grant only `rag_auth_audit` to the
-   auth/audit LOGIN. Verify effective privileges through all three actual logins.
+5. As the bootstrap owner, apply `apps/rag-backend/auth_audit_role.sql`. Verify effective
+   privileges through all three actual logins; their matching group memberships were already
+   assigned by the cluster role administrator in step 1.
 6. Build `docker build -t llm-engineer-rag-backend apps/rag-backend` and deploy that image with only
    runtime settings/secrets. Configure the traffic health check as `/health/ready`.
 7. Verify `/health/live`, then `/health/ready`, then authenticated staging chat/audit behavior.
@@ -77,7 +77,8 @@ monitoring workspace, filtered by `service="rag-backend"`:
 | --- | --- |
 | Request volume/status | count `http_request_completed`, grouped by `path,status_code` |
 | Chat p50/p95/p99 | percentile `duration_ms` where `path="/rag-chat"` |
-| Provider volume/outcomes | count `provider_request_completed`, grouped by `operation,outcome,failure_category` |
+| OpenAI/provider failure/timeout rate | `(count provider_request_completed where outcome in ("failure","timeout")) / (count all provider_request_completed)`, grouped by `operation` |
+| Provider volume/outcomes | count `provider_request_completed`, grouped by `operation,outcome` |
 | Retrieval failures | rate `retrieval_failed`, grouped by `failure_category` |
 | Rate limiting | count `rate_limit_rejected`, grouped by `path` |
 | Audit failures | count `audit_write_failed`, grouped by `failure_category` |
@@ -89,8 +90,11 @@ divided by all provider completions above 10% with at least 20 provider operatio
 retrieval failures; at least 100 rate-limit rejections; at least 2 audit-write failures; and
 readiness unavailable continuously for 5 minutes. The platform operations owner must tune these
 after seven days of staging data. This document is a configuration contract. The repository and
-this PR do not install or verify deployment-managed dashboards, alert rules, or notification
-delivery; those remain an explicit external deployment follow-up.
+this PR complete application telemetry, dashboard query definitions, alert thresholds, deployment
+documentation, and rollback documentation. External deployment verification remains outstanding for
+dashboard and alert installation, incoming staging/production telemetry, notification delivery,
+the configured `/health/ready` deployment health check, and an exercised rollback. None of those
+deployment-managed acceptance items are claimed as verified by this PR.
 
 ## Rollback
 

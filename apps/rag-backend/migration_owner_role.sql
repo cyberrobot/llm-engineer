@@ -1,15 +1,10 @@
--- Run once as the database/bootstrap owner. For a non-superuser bootstrap owner,
--- a cluster role administrator must first create rag_migrator with the attributes
--- below and grant it to the bootstrap owner WITH ADMIN OPTION. A superuser can use
--- this script to create it directly. Deployment creates a separate LOGIN role,
--- grants it membership in rag_migrator, and supplies that login only through
--- RAG_MIGRATION_DATABASE_URL.
+-- Run once as the database/bootstrap owner. A cluster role administrator must
+-- provision rag_migrator first and grant it to the bootstrap owner WITH ADMIN
+-- OPTION. This script performs database/schema grants only.
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rag_migrator') THEN
-        CREATE ROLE rag_migrator
-            NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT
-            NOREPLICATION NOBYPASSRLS;
+        RAISE EXCEPTION 'rag_migrator must be provisioned by the cluster role administrator';
     ELSIF EXISTS (
         SELECT 1 FROM pg_roles
         WHERE rolname = 'rag_migrator'
@@ -33,16 +28,8 @@ BEGIN
         'GRANT CONNECT ON DATABASE %I TO rag_migrator',
         current_database()
     );
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_auth_members membership
-        JOIN pg_roles granted_role ON granted_role.oid = membership.roleid
-        JOIN pg_roles member_role ON member_role.oid = membership.member
-        WHERE granted_role.rolname = 'rag_migrator'
-          AND member_role.rolname = current_user
-          AND membership.admin_option
-    ) THEN
-        EXECUTE format('GRANT rag_migrator TO %I WITH ADMIN OPTION', current_user);
+    IF NOT pg_has_role(current_user, 'rag_migrator', 'SET') THEN
+        RAISE EXCEPTION 'bootstrap owner must be able to SET ROLE rag_migrator';
     END IF;
 END
 $$;
